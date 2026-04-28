@@ -1,0 +1,21 @@
+# Prefect Server Dockerfile
+# 用于 Railway 部署
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 安装 Prefect 和 PostgreSQL 驱动
+RUN pip install --no-cache-dir \
+    prefect==3.4.19 \
+    asyncpg \
+    psycopg2-binary
+
+# 暴露端口 (Railway 会自动分配 PORT)
+EXPOSE 4200
+
+# 启动脚本
+COPY apps/server/docker/start-prefect-server.sh /start.sh
+RUN chmod +x /start.sh
+
+CMD ["/start.sh"]

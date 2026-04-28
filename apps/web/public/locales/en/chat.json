@@ -1,0 +1,255 @@
+{
+  "panel": {
+    "title": "AI Creative Partner",
+    "processing": "Processing",
+    "loadingHistory": "Loading history...",
+    "aiMemory": "AI Memory",
+    "newSession": "New Session",
+    "clearChat": "Clear Chat",
+    "selectProject": "Please select a project first",
+    "loadingMessages": "Loading messages...",
+    "welcome": "I'm your creative partner. How can I help?",
+    "suggestions": "Try: Write an outline / Create a character sheet / Continue writing",
+    "editing": "Editing:",
+    "thinking": "Thinking",
+    "jumpToLatest": "Jump to latest",
+    "source": "Source:",
+    "sources": "Sources:",
+    "operation": "Operation:",
+    "resizeHandle": "Drag to adjust input area height (double-click to reset)",
+    "skillMatched": "Skill activated: {{name}}",
+    "skillMatchedMulti": "Skill {{index}}: {{name}}",
+    "streamErrorTitle": "Generation was interrupted",
+    "quotaExceededTitle": "Today's AI quota is used up",
+    "quotaExceededHint": "This is an account quota limit, not this run's step limit."
+  },
+  "input": {
+    "placeholder": "Describe the character, scene, or plot you want to create...",
+    "placeholderWhileProcessing": "AI is generating — you can type now and send when it finishes…",
+    "mode": {
+      "label": "Mode",
+      "fast": "Fast",
+      "quality": "Quality",
+      "fastHint": "Faster output (may be more concise)",
+      "qualityHint": "More thorough (may take longer)",
+      "switchedFast": "Switched to Fast mode: faster output, less detail.",
+      "switchedQuality": "Switched to Quality mode: better output quality, longer generation."
+    },
+    "attachedMaterials": "Referenced materials:",
+    "quotedText": "Quoted text:",
+    "addToContext": "Add to context",
+    "quoteAdded": "Quote added",
+    "remove": "Remove",
+    "refresh": "Shuffle",
+    "staticSuggestions": [
+      "Help me brainstorm the core conflict for a time-travel story",
+      "Create a character sheet for a cunning female lead",
+      "Design a morally ambiguous villain character",
+      "Build a power system for a cultivation world",
+      "Help me establish the historical period setting",
+      "Expand this scene with more sensory details",
+      "Polish this dialogue to make characters more vivid",
+      "Design a character bio for this role",
+      "Start writing Chapter 1"
+    ]
+  },
+  "suggestions": {
+    "outline": "Write an outline",
+    "character": "Create character sheet",
+    "continue": "Continue writing",
+    "setting": "Add world building",
+    "expand": "Expand plot",
+    "polish": "Polish prose"
+  },
+  "actions": {
+    "confirm": "Confirm",
+    "reject": "Reject",
+    "undo": "Undo",
+    "apply": "Apply Changes"
+  },
+  "status": {
+    "thinking": "Thinking...",
+    "writing": "Creating...",
+    "assembling": "Assembling context...",
+    "completed": "Completed {{count}} operations",
+    "currentFile": "Current file ID: {{id}}",
+    "fileType": "File type: {{type}}",
+    "selectedText": "Selected text:",
+    "context": "Context:"
+  },
+  "projectType": {
+    "novel": {
+      "name": "Long-form Novel",
+      "description": "For long-form novels over 50,000 words"
+    },
+    "short": {
+      "name": "Short Story",
+      "description": "For standalone stories of 5,000-20,000 words"
+    },
+    "screenplay": {
+      "name": "Screenplay",
+      "description": "For short video scripts and mini-dramas"
+    }
+  },
+  "message": {
+    "aiEdit": "AI Edit: {{files}}{{extra}}",
+    "aiDone": "AI Chat Finished",
+    "createProject": "I want to create a {{type}}. Here's my idea:\n\n{{content}}\n\nPlease help me brainstorm the story framework, including main characters, story background, core conflicts, and general plot direction.",
+    "aiDoneFilesModified": "AI Chat Finished - files modified",
+    "aiConversationAt": "AI Assistant Conversation - {{time}}"
+  },
+  "context": {
+    "priority": {
+      "critical": "Critical",
+      "constraint": "Constraint",
+      "relevant": "Relevant",
+      "inspiration": "Inspiration",
+      "default": "Source"
+    },
+    "label": "Context",
+    "relevanceScore": "Relevant {{score}}%",
+    "citations": "Citations"
+  },
+  "workflow": {
+    "iteration": "Turn",
+    "remaining": "remaining",
+    "agentCollaboration": "AI Collaboration",
+    "toolCall": "AI Auto Steps",
+    "iterationExhausted": "{{layer}} turns exhausted",
+    "lowTurnWarning": "Only {{remaining}} steps left in this run. Prioritize your top goal first.",
+    "collaborationExhaustedSummary": "AI collaboration reached its cap ({{max}} turns), so we paused here to avoid drift.",
+    "toolCallExhaustedSummary": "AI auto steps reached their cap ({{max}} steps), so we paused here to avoid getting stuck.",
+    "nextStepHint": "You can continue now, or split the task into smaller steps.",
+    "viewTechnicalDetails": "View technical details",
+    "actionContinue": "Continue (Recommended)",
+    "actionSplit": "Split into steps",
+    "actionManual": "I'll edit first",
+    "actionPrompt": {
+      "continue": "Please continue from the previous result and finish the remaining work, prioritizing the most critical goal.",
+      "split": "Please break the remaining work into 2-3 smaller steps and complete step 1 first.",
+      "manual": "I'll manually edit first. Please give me the smallest viable edit suggestions."
+    },
+    "workflowLabel": "Workflow",
+    "waitingForReply": "Waiting for your reply",
+    "needsConfirmation": "AI needs your confirmation to continue",
+    "taskCompleted": "Task completed"
+  },
+  "tool": {
+    "create_file": "Create File",
+    "update_file": "Update File",
+    "edit_file": "Edit File",
+    "delete_file": "Delete File",
+    "query_files": "Query Files",
+    "update_project": "Update Project Status",
+    "processing": "Processing",
+    "processing_ellipsis": "Processing...",
+    "created": "Created {{type}}",
+    "updated": "Updated",
+    "deleted": "File deleted",
+    "no_files_found": "No relevant files found",
+    "files_found": "Found {{count}} files",
+    "status_updated": "Project status updated",
+    "undo_edit": "Undo this edit",
+    "completed": "{{label}} completed",
+    "query_description": "Find {{label}}",
+    "query_files_default": "Find files",
+    "update_status_description": "Record project information",
+    "edit_success": "Edit successful",
+    "edits_summary": "{{editsApplied}} edits · {{size}}",
+    "complete_suffix": " completed",
+    "view_edit_details": "View change details ({{count}})",
+    "failed": "{{label}} failed"
+  },
+  "fileType": {
+    "outline": "Outline",
+    "draft": "Manuscript",
+    "character": "Character Sheet",
+    "lore": "World Building",
+    "snippet": "Reference Material",
+    "default": "File"
+  },
+  "action": {
+    "insert": "Insert after cursor",
+    "replace": "Replace selected text",
+    "new_snippet": "Create as reference material",
+    "reference_only": "Reference only",
+    "apply": "Apply"
+  },
+  "size": {
+    "characters": "{{length}} characters",
+    "kCharacters": "{{length}}k characters"
+  },
+  "edit": {
+    "replace": "Replace",
+    "append": "Append",
+    "prepend": "Prepend",
+    "insert_after": "Insert after",
+    "insert_before": "Insert before",
+    "delete": "Delete",
+    "label_delete": "Delete",
+    "label_add": "Add",
+    "append_content": "Appended content",
+    "prepend_content": "Prepended content",
+    "insert_after_label": "Insert after",
+    "insert_before_label": "Insert before",
+    "insert_content": "Inserted content",
+    "delete_content": "Deleted content"
+  },
+  "conflict": {
+    "suggestions_label": "Suggestions:",
+    "location": "Location: {{location}}",
+    "fix_suggestions": "Fix suggestions:"
+  },
+  "response": {
+    "generated_result": "Generated Result",
+    "used_snippets": "Referenced Materials",
+    "reasoning_label": "AI Reasoning Process:",
+    "conflicts_detected": "{{count}} potential issues detected"
+  },
+  "voice": {
+    "recognition_success": "Recognition successful",
+    "cancelled": "Recording cancelled",
+    "unavailable": "Voice input unavailable",
+    "recognizing": "Recognizing...",
+    "mobile_stop": "Release to stop recording",
+    "desktop_stop": "Click to stop recording, right-click to cancel",
+    "mobile_hold": "Hold to speak",
+    "input": "Voice input"
+  },
+  "stream": {
+    "processing": "Processing..."
+  },
+  "thinking": {
+    "title": "AI Reasoning Process",
+    "expand": "Expand reasoning process",
+    "collapse": "Collapse reasoning process",
+    "toggleLabel": "Show reasoning process",
+    "toggleHide": "Hide reasoning process"
+  },
+  "skill": {
+    "loading": "Loading skills...",
+    "noResults": "No matching skills found",
+    "builtin": "Built-in",
+    "user": "Custom",
+    "hint": "↑↓ Navigate · Enter Select · Esc Cancel",
+    "triggerLabel": "Active Skill"
+  },
+  "feedback": {
+    "like": "Like",
+    "dislike": "Dislike",
+    "pendingSave": "Message is being saved. Feedback will be available shortly.",
+    "submitFailed": "Failed to submit feedback. Please try again later.",
+    "unsupported": "Feedback is not available for this message yet."
+  },
+  "fileDefault": "File",
+  "defaultTitle": "New Chat",
+  "exportFilename": "Export",
+  "project": {
+    "field": {
+      "summary": "Summary",
+      "current_phase": "Current Phase",
+      "writing_style": "Writing Style",
+      "notes": "Notes"
+    }
+  }
+}

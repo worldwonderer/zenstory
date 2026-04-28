@@ -1,0 +1,21 @@
+{# ==================== 配置参数 ==================== #}
+{% set synopsis_max_length = 200 %}
+{# ================================================= #}
+
+现在有两个来自相邻章节块的剧情，请判断它们是否应该合并。
+
+【剧情A】
+- 标题：{{ story1_title }}
+- 章节范围：{{ story1_range }}
+- 核心目标：{{ story1_objective }}
+- 主要冲突：{{ story1_conflict }}
+- 剧情概述：{{ story1_synopsis[:synopsis_max_length] }}
+
+【剧情B】
+- 标题：{{ story2_title }}
+- 章节范围：{{ story2_range }}
+- 核心目标：{{ story2_objective }}
+- 主要冲突：{{ story2_conflict }}
+- 剧情概述：{{ story2_synopsis[:synopsis_max_length] }}
+
+请根据判断标准，分析这两个剧情是否应该合并。

@@ -1,0 +1,522 @@
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useLocation, useNavigate } from "react-router-dom";
+import {
+  ArrowRight,
+  BarChart3,
+  BookOpen,
+  Briefcase,
+  CalendarCheck,
+  Check,
+  Compass,
+  Lightbulb,
+  Sparkles,
+  Target,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { useAuth } from "../contexts/AuthContext";
+import { cn } from "../lib/utils";
+import { toast } from "../lib/toast";
+import {
+  getPersonaOnboardingData,
+  savePersonaOnboardingData,
+  type PersonaExperienceLevel,
+} from "../lib/onboardingPersona";
+import { onboardingPersonaApi } from "../lib/onboardingPersonaApi";
+
+const MAX_PERSONA_SELECTION = 3;
+
+type PersonaId = "explorer" | "serial" | "professional" | "fanfic" | "studio";
+type GoalId = "finishBook" | "buildHabit" | "improveQuality" | "growAudience" | "monetize";
+
+interface PersonaOption {
+  id: PersonaId;
+  icon: LucideIcon;
+  badgeVariant: "info" | "purple" | "cyan" | "success" | "warning";
+}
+
+interface GoalOption {
+  id: GoalId;
+  icon: LucideIcon;
+}
+
+const PERSONA_OPTIONS: PersonaOption[] = [
+  { id: "explorer", icon: Compass, badgeVariant: "info" },
+  { id: "serial", icon: CalendarCheck, badgeVariant: "purple" },
+  { id: "professional", icon: Briefcase, badgeVariant: "warning" },
+  { id: "fanfic", icon: Lightbulb, badgeVariant: "cyan" },
+  { id: "studio", icon: Users, badgeVariant: "success" },
+];
+
+const GOAL_OPTIONS: GoalOption[] = [
+  { id: "finishBook", icon: BookOpen },
+  { id: "buildHabit", icon: CalendarCheck },
+  { id: "improveQuality", icon: Sparkles },
+  { id: "growAudience", icon: BarChart3 },
+  { id: "monetize", icon: Target },
+];
+
+const EXPERIENCE_LEVELS: PersonaExperienceLevel[] = ["beginner", "intermediate", "advanced"];
+
+interface OnboardingLocationState {
+  from?: {
+    pathname?: string;
+    search?: string;
+    hash?: string;
+  };
+}
+
+const sanitizeNextPath = (
+  from: OnboardingLocationState["from"] | undefined,
+): string => {
+  const pathname = from?.pathname;
+  if (!pathname || !pathname.startsWith("/") || pathname.startsWith("/onboarding")) {
+    return "/dashboard";
+  }
+
+  return `${pathname}${from?.search ?? ""}${from?.hash ?? ""}`;
+};
+
+export default function OnboardingPersonaPage() {
+  const { t } = useTranslation(["onboarding", "common"]);
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const locationState = location.state as OnboardingLocationState | null;
+  const nextPath = sanitizeNextPath(locationState?.from);
+
+  const existingData = useMemo(
+    () => (user ? getPersonaOnboardingData(user.id) : null),
+    [user]
+  );
+
+  const [selectedPersonas, setSelectedPersonas] = useState<PersonaId[]>(
+    (existingData?.selected_personas ?? []).filter((value): value is PersonaId =>
+      PERSONA_OPTIONS.some((option) => option.id === value)
+    )
+  );
+  const [selectedGoals, setSelectedGoals] = useState<GoalId[]>(
+    (existingData?.selected_goals ?? []).filter((value): value is GoalId =>
+      GOAL_OPTIONS.some((option) => option.id === value)
+    )
+  );
+  const [experienceLevel, setExperienceLevel] = useState<PersonaExperienceLevel>(
+    existingData?.experience_level ?? "beginner"
+  );
+  const [hasRestoredProfile, setHasRestoredProfile] = useState(Boolean(existingData));
+  const [limitReached, setLimitReached] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setHasRestoredProfile(Boolean(existingData));
+  }, [existingData]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    void onboardingPersonaApi
+      .getState()
+      .then((state) => {
+        if (cancelled || !state.profile) return;
+
+        const profile = state.profile;
+        const normalizedPersonas = (profile.selected_personas ?? []).filter(
+          (value): value is PersonaId => PERSONA_OPTIONS.some((option) => option.id === value)
+        );
+        const normalizedGoals = (profile.selected_goals ?? []).filter(
+          (value): value is GoalId => GOAL_OPTIONS.some((option) => option.id === value)
+        );
+        const normalizedLevel: PersonaExperienceLevel =
+          EXPERIENCE_LEVELS.includes(profile.experience_level)
+            ? profile.experience_level
+            : "beginner";
+
+        setSelectedPersonas(normalizedPersonas);
+        setSelectedGoals(normalizedGoals);
+        setExperienceLevel(normalizedLevel);
+        setHasRestoredProfile(true);
+
+        savePersonaOnboardingData(user.id, {
+          selected_personas: normalizedPersonas,
+          selected_goals: normalizedGoals,
+          experience_level: normalizedLevel,
+          skipped: Boolean(profile.skipped),
+        });
+      })
+      .catch(() => {
+        // keep local fallback data
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const selectedPersonaLabels = useMemo(
+    () =>
+      selectedPersonas.map((id) =>
+        t(`onboarding:persona.options.${id}.title`, id)
+      ),
+    [selectedPersonas, t]
+  );
+
+  const personalizedTips = useMemo(() => {
+    const tips: string[] = [];
+
+    if (selectedPersonas.includes("explorer")) {
+      tips.push(t("onboarding:preview.items.explorer", "给你更明确的下一步提示和模板"));
+    }
+    if (selectedPersonas.includes("serial")) {
+      tips.push(t("onboarding:preview.items.serial", "优先强化日更/周更节奏管理"));
+    }
+    if (selectedPersonas.includes("professional")) {
+      tips.push(t("onboarding:preview.items.professional", "突出效率与商业化导向能力"));
+    }
+    if (selectedPersonas.includes("fanfic")) {
+      tips.push(t("onboarding:preview.items.fanfic", "提供人物关系和设定一致性支持"));
+    }
+    if (selectedPersonas.includes("studio")) {
+      tips.push(t("onboarding:preview.items.studio", "推荐更适合团队协作的工作流"));
+    }
+
+    if (selectedGoals.includes("monetize")) {
+      tips.push(t("onboarding:preview.items.monetize", "优先展示增长与变现相关能力"));
+    }
+    if (selectedGoals.includes("improveQuality")) {
+      tips.push(t("onboarding:preview.items.quality", "加强剧情、角色与文本质量建议"));
+    }
+
+    tips.push(t(`onboarding:preview.level.${experienceLevel}`, "按你的经验动态调整引导深度"));
+
+    return Array.from(new Set(tips)).slice(0, 4);
+  }, [experienceLevel, selectedGoals, selectedPersonas, t]);
+
+  const canSubmit = selectedPersonas.length > 0;
+
+  const togglePersona = (id: PersonaId) => {
+    setSelectedPersonas((prev) => {
+      setLimitReached(false);
+      if (prev.includes(id)) {
+        return prev.filter((item) => item !== id);
+      }
+
+      if (prev.length >= MAX_PERSONA_SELECTION) {
+        setLimitReached(true);
+        return prev;
+      }
+
+      return [...prev, id];
+    });
+  };
+
+  const toggleGoal = (id: GoalId) => {
+    setSelectedGoals((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSubmit = async (skip = false) => {
+    if (!user || saving) return;
+    if (!skip && !canSubmit) return;
+
+    setSaving(true);
+    const payload = {
+      selected_personas: skip ? [] : selectedPersonas,
+      selected_goals: skip ? [] : selectedGoals,
+      experience_level: experienceLevel,
+      skipped: skip,
+    };
+
+    try {
+      const result = await onboardingPersonaApi.save(payload);
+      const profile = result.profile;
+      if (profile) {
+        savePersonaOnboardingData(user.id, {
+          selected_personas: profile.selected_personas,
+          selected_goals: profile.selected_goals,
+          experience_level: profile.experience_level,
+          skipped: profile.skipped,
+        });
+      } else {
+        savePersonaOnboardingData(user.id, payload);
+      }
+    } catch {
+      // Graceful fallback: keep local cache so onboarding flow is not blocked by network issues.
+      savePersonaOnboardingData(user.id, payload);
+      toast.error(t("common:errors.network", "网络异常，已为你保存本地画像"));
+    } finally {
+      setSaving(false);
+      navigate(nextPath, {
+        replace: true,
+        state: nextPath === "/dashboard" ? { startDashboardCoachmark: true } : undefined,
+      });
+    }
+  };
+
+  if (!user) return null;
+
+  return (
+    <div className="min-h-screen bg-[hsl(var(--bg-primary))] relative overflow-hidden">
+      <div className="pointer-events-none absolute -top-24 -left-20 h-72 w-72 rounded-full bg-[hsl(var(--accent-primary)/0.12)] blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-32 right-0 h-80 w-80 rounded-full bg-[hsl(var(--purple)/0.14)] blur-3xl" />
+
+      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <Badge variant="purple">{t("onboarding:hero.step", "新用户引导 · 1/1")}</Badge>
+          <Badge variant="info">{t("onboarding:hero.badge", "2 分钟完成")}</Badge>
+        </div>
+
+        <h1 className="text-2xl sm:text-3xl font-bold text-[hsl(var(--text-primary))]">
+          {t("onboarding:hero.title", "先认识你，再给你更懂创作的工作台")}
+        </h1>
+        <p className="mt-2 text-sm sm:text-base text-[hsl(var(--text-secondary))] max-w-3xl">
+          {t(
+            "onboarding:hero.subtitle",
+            "选择你的创作画像与目标，我们会据此个性化推荐模板、任务节奏和能力入口。"
+          )}
+        </p>
+
+        {hasRestoredProfile && (
+          <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[hsl(var(--accent-primary)/0.35)] bg-[hsl(var(--accent-primary)/0.1)] px-3 py-1.5 text-xs text-[hsl(var(--accent-primary))]">
+            <Check className="w-3.5 h-3.5" />
+            {t("onboarding:hero.restore", "已读取你之前的画像，可随时更新")}
+          </div>
+        )}
+
+        <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1.35fr_0.9fr] gap-5">
+          <div className="space-y-5">
+            <Card variant="outlined" padding="lg" className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-[hsl(var(--text-primary))]">
+                    {t("onboarding:persona.title", "你是哪类创作者？")}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[hsl(var(--text-secondary))] mt-1">
+                    {t(
+                      "onboarding:persona.subtitle",
+                      "最多选择 3 项，我们将按你当前阶段匹配最合适的产品体验。"
+                    )}
+                  </p>
+                </div>
+                <Badge variant="neutral">
+                  {t("onboarding:persona.counter", "{{selected}} / {{max}} 已选", {
+                    selected: selectedPersonas.length,
+                    max: MAX_PERSONA_SELECTION,
+                  })}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {PERSONA_OPTIONS.map((option) => {
+                  const Icon = option.icon;
+                  const selected = selectedPersonas.includes(option.id);
+
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => togglePersona(option.id)}
+                      aria-pressed={selected}
+                      className={cn(
+                        "text-left rounded-xl border p-4 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.5)]",
+                        selected
+                          ? "border-[hsl(var(--accent-primary))] bg-[hsl(var(--accent-primary)/0.12)]"
+                          : "border-[hsl(var(--border-color))] bg-[hsl(var(--bg-secondary))] hover:border-[hsl(var(--accent-primary)/0.55)] hover:bg-[hsl(var(--bg-tertiary)/0.35)]"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <Badge variant={option.badgeVariant} icon={<Icon className="w-3.5 h-3.5" />}>
+                          {t(`onboarding:persona.options.${option.id}.tag`, "画像")}
+                        </Badge>
+                        {selected && (
+                          <span className="rounded-full bg-[hsl(var(--accent-primary))] text-white p-1">
+                            <Check className="w-3 h-3" />
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-3 text-sm font-semibold text-[hsl(var(--text-primary))]">
+                        {t(`onboarding:persona.options.${option.id}.title`, option.id)}
+                      </p>
+                      <p className="mt-1 text-xs text-[hsl(var(--text-secondary))] leading-relaxed">
+                        {t(`onboarding:persona.options.${option.id}.desc`, "")}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {limitReached && (
+                <p className="text-xs text-[hsl(var(--warning))]">
+                  {t(
+                    "onboarding:persona.limitReached",
+                    "最多可选 3 项。可先取消一个，再继续选择。"
+                  )}
+                </p>
+              )}
+            </Card>
+
+            <Card variant="outlined" padding="lg" className="space-y-4">
+              <div>
+                <h2 className="text-base font-semibold text-[hsl(var(--text-primary))]">
+                  {t("onboarding:goal.title", "你当前最想达成什么？")}
+                </h2>
+                <p className="text-xs sm:text-sm text-[hsl(var(--text-secondary))] mt-1">
+                  {t(
+                    "onboarding:goal.subtitle",
+                    "可多选，我们会把重点功能放在你最关心的位置。"
+                  )}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2.5">
+                {GOAL_OPTIONS.map((goal) => {
+                  const Icon = goal.icon;
+                  const active = selectedGoals.includes(goal.id);
+
+                  return (
+                    <button
+                      key={goal.id}
+                      type="button"
+                      onClick={() => toggleGoal(goal.id)}
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs sm:text-sm transition-colors",
+                        active
+                          ? "border-[hsl(var(--accent-primary))] bg-[hsl(var(--accent-primary)/0.12)] text-[hsl(var(--accent-primary))]"
+                          : "border-[hsl(var(--border-color))] text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] hover:border-[hsl(var(--accent-primary)/0.35)]"
+                      )}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                      {t(`onboarding:goal.options.${goal.id}.title`, goal.id)}
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
+
+            <Card variant="outlined" padding="lg" className="space-y-4">
+              <div>
+                <h2 className="text-base font-semibold text-[hsl(var(--text-primary))]">
+                  {t("onboarding:experience.title", "你的写作经验")}
+                </h2>
+                <p className="text-xs sm:text-sm text-[hsl(var(--text-secondary))] mt-1">
+                  {t(
+                    "onboarding:experience.subtitle",
+                    "我们会按经验自动调整引导颗粒度与功能复杂度。"
+                  )}
+                </p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {EXPERIENCE_LEVELS.map((level) => {
+                  const active = experienceLevel === level;
+                  return (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => setExperienceLevel(level)}
+                      className={cn(
+                        "rounded-xl border px-3 py-3 text-left transition-colors",
+                        active
+                          ? "border-[hsl(var(--accent-primary))] bg-[hsl(var(--accent-primary)/0.12)]"
+                          : "border-[hsl(var(--border-color))] hover:border-[hsl(var(--accent-primary)/0.35)]"
+                      )}
+                    >
+                      <p
+                        className={cn(
+                          "text-sm font-semibold",
+                          active
+                            ? "text-[hsl(var(--accent-primary))]"
+                            : "text-[hsl(var(--text-primary))]"
+                        )}
+                      >
+                        {t(`onboarding:experience.options.${level}.title`, level)}
+                      </p>
+                      <p className="mt-1 text-xs text-[hsl(var(--text-secondary))] leading-relaxed">
+                        {t(`onboarding:experience.options.${level}.desc`, "")}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  void handleSubmit(true);
+                }}
+                disabled={saving}
+              >
+                {t("onboarding:actions.skip", "暂时跳过")}
+              </Button>
+
+              <Button
+                onClick={() => {
+                  void handleSubmit(false);
+                }}
+                disabled={!canSubmit || saving}
+                isLoading={saving}
+                loadingText={t("onboarding:actions.saving", "保存中...")}
+                rightIcon={<ArrowRight className="w-4 h-4" />}
+              >
+                {t("onboarding:actions.submit", "保存并进入工作台")}
+              </Button>
+            </div>
+          </div>
+
+          <Card variant="outlined" padding="lg" className="h-fit lg:sticky lg:top-6">
+            <div className="flex items-center gap-2 text-[hsl(var(--text-primary))]">
+              <Sparkles className="w-4 h-4 text-[hsl(var(--accent-primary))]" />
+              <h3 className="text-sm font-semibold">
+                {t("onboarding:preview.title", "你的个性化预览")}
+              </h3>
+            </div>
+
+            <p className="mt-2 text-xs text-[hsl(var(--text-secondary))] leading-relaxed">
+              {t(
+                "onboarding:preview.subtitle",
+                "提交后，我们会根据你的画像调整首页信息架构、模板推荐和创作提醒。"
+              )}
+            </p>
+
+            {selectedPersonaLabels.length > 0 ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {selectedPersonaLabels.map((label) => (
+                  <Badge key={label} variant="purple">
+                    {label}
+                  </Badge>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-lg border border-dashed border-[hsl(var(--border-color))] px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
+                {t("onboarding:preview.empty", "先选择至少一个创作者画像，查看个性化效果")}
+              </div>
+            )}
+
+            <ul className="mt-4 space-y-2">
+              {personalizedTips.map((tip, index) => (
+                <li
+                  key={`${tip}-${index}`}
+                  className="rounded-lg bg-[hsl(var(--bg-tertiary)/0.55)] px-3 py-2 text-xs text-[hsl(var(--text-primary))] leading-relaxed"
+                >
+                  {tip}
+                </li>
+              ))}
+            </ul>
+
+            <p className="mt-4 text-[11px] text-[hsl(var(--text-tertiary))] leading-relaxed">
+              {t(
+                "onboarding:preview.note",
+                "注：当前为 Beta 版本，画像信息先保存在本地设备，后续会升级为跨设备同步。"
+              )}
+            </p>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}

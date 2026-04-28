@@ -1,0 +1,20 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+dist
+*.log
+
+# Development files
+.env.local
+.env.development
+.vscode
+.idea
+
+# Test files
+coverage
+*.test.ts
+*.test.tsx
+
+# Documentation markdown must be deployable for DocsPage import.meta.glob.

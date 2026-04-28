@@ -1,0 +1,17 @@
+services:
+  server:
+    build:
+      context: ./apps/server
+      dockerfile: Dockerfile.mini-local
+    volumes:
+      - zenstory_test_uploads:/app/uploads
+      - zenstory_test_chroma:/app/chroma_data
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.mini-local
+
+volumes:
+  zenstory_test_uploads:
+  zenstory_test_chroma:

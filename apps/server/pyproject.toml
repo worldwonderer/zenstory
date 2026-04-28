@@ -1,0 +1,103 @@
+[tool.ruff]
+# 同一行最大字符数
+line-length = 120
+# 目标 Python 版本
+target-version = "py312"
+
+# 启用的规则
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG", # flake8-unused-arguments
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "E712",  # comparison to False (conflicts with SQLModel/SQLAlchemy queries)
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+# 允许自动修正的规则
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+# 测试文件可以放宽一些规则
+"tests/**/*.py" = ["ARG", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # 暂时不强制类型注解
+ignore_missing_imports = true
+
+[tool.pylint.main]
+# Use multiple processes to speed up Pylint
+jobs = 1
+# Control the amount of potential anomalies returned
+max-line-length = 120
+# Python code to execute, usually for sys.path manipulation
+#init-hook = 'import sys; sys.path.append(".")'
+
+[tool.pylint.messages_control]
+# Disable specific warnings and errors that are too strict for this project
+disable = [
+    "C0111",  # missing-docstring (我们不需要每个函数都有文档字符串)
+    "C0114",  # missing-module-docstring
+    "C0115",  # missing-class-docstring
+    "C0116",  # missing-function-docstring
+    "R0903",  # too-few-public-methods (有时简单的类不需要很多方法)
+    "R0913",  # too-many-arguments (有时函数需要较多参数)
+    "R0914",  # too-many-locals
+    "W0212",  # protected-access (有时需要访问受保护成员)
+    "W0613",  # unused-argument (有时参数是接口的一部分)
+    "C0103",  # invalid-name (允许短变量名如 id, db 等)
+    "C0301",  # line-too-long (ruff 已经处理了)
+    "C0302",  # too-many-lines (大文件不可避免)
+    "R0912",  # too-many-branches (复杂业务逻辑需要)
+    "R0915",  # too-many-statements (复杂业务逻辑需要)
+    "R0917",  # too-many-positional-arguments (有时函数需要较多参数)
+    "R1702",  # too-many-nested-blocks (复杂业务逻辑需要)
+    "C0415",  # import-outside-toplevel (有时延迟导入是有意的)
+    "W0718",  # broad-exception-caught (通用异常捕获在错误处理中很常见)
+    "W0404",  # reimported (有时重新导入是为了清晰)
+    "W0621",  # redefined-outer-name (局部变量重新定义外部变量是可以的)
+    "W0603",  # global-statement (单例模式需要)
+    "E1101",  # no-member (动态属性或类型不完整时会有误报)
+    "R0801",  # duplicate-code (代码重复检查在 pre-commit 中太严格)
+    "C0121",  # singleton-comparison (风格偏好，不影响逻辑)
+    # 注意: E0401 (import-error) 和 E0611 (no-name-in-module) 保持启用
+    # 用于检测无效的导入路径，如 from models.project import Project
+]
+
+[tool.pylint.format]
+# Maximum number of characters on a single line
+max-line-length = 120
+# String used for indentation
+indent-string = "    "
+
+[tool.pylint.basic]
+# Good variable names which should always be accepted
+good-names = ["i", "j", "k", "ex", "id", "db", "_"]
+
+[tool.pylint.typecheck]
+# List of decorators that change the signature of a decorated function
+signature-mutators = []
+
+[tool.pylint.similarities]
+# Minimum lines number of a similarity
+min-similarity-lines = 4
+# Ignore comments when computing similarities
+ignore-comments = "yes"
+# Ignore docstrings when computing similarities
+ignore-docstrings = "yes"
+# Ignore imports when computing similarities
+ignore-imports = "no"

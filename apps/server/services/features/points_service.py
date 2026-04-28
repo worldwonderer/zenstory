@@ -1,0 +1,784 @@
+"""
+Points Service - Core service for points and check-in management.
+
+Provides methods for:
+- Balance management (get_balance)
+- Points earning and spending (FIFO)
+- Daily check-in with streak tracking
+- Points redemption for Pro subscription
+- Expiration handling
+- Earn opportunities display
+"""
+import os
+from contextlib import suppress
+from datetime import timedelta
+
+from sqlalchemy import and_
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, func, select
+
+from config.datetime_utils import utcnow
+from core.error_codes import ErrorCode
+from core.error_handler import APIException
+from models.entities import User
+from models.points import CheckInRecord, PointsTransaction
+from services.subscription.subscription_service import subscription_service
+from utils.logger import get_logger, log_with_context
+
+logger = get_logger(__name__)
+
+# Configuration from environment
+POINTS_CHECK_IN = int(os.getenv("POINTS_CHECK_IN", "10"))
+POINTS_CHECK_IN_STREAK = int(os.getenv("POINTS_CHECK_IN_STREAK", "50"))
+POINTS_REFERRAL = int(os.getenv("POINTS_REFERRAL", "100"))
+POINTS_SKILL_CONTRIBUTION = int(os.getenv("POINTS_SKILL_CONTRIBUTION", "50"))
+POINTS_INSPIRATION_CONTRIBUTION = int(os.getenv("POINTS_INSPIRATION_CONTRIBUTION", "30"))
+POINTS_PROFILE_COMPLETE = int(os.getenv("POINTS_PROFILE_COMPLETE", "20"))
+POINTS_PRO_7DAYS_COST = int(os.getenv("POINTS_PRO_7DAYS_COST", "100"))
+POINTS_EXPIRATION_MONTHS = int(os.getenv("POINTS_EXPIRATION_MONTHS", "12"))
+
+# Streak bonus threshold (days)
+STREAK_BONUS_THRESHOLD = int(os.getenv("STREAK_BONUS_THRESHOLD", "7"))
+
+# Supported redemption durations and their points costs
+REDEEM_DURATION_COSTS = {
+    7: POINTS_PRO_7DAYS_COST,
+    14: POINTS_PRO_7DAYS_COST * 2,
+    30: POINTS_PRO_7DAYS_COST * 4,
+}
+
+
+class PointsService:
+    """Service for managing user points and check-ins."""
+
+    POINTS_CONFIG = {
+        "check_in": POINTS_CHECK_IN,
+        "check_in_streak": POINTS_CHECK_IN_STREAK,
+        "referral": POINTS_REFERRAL,
+        "skill_contribution": POINTS_SKILL_CONTRIBUTION,
+        "inspiration_contribution": POINTS_INSPIRATION_CONTRIBUTION,
+        "profile_complete": POINTS_PROFILE_COMPLETE,
+        "pro_7days_cost": POINTS_PRO_7DAYS_COST,
+    }
+
+    def _lock_user_row(self, session: Session, user_id: str) -> None:
+        """Acquire a row-level lock for user-scoped balance mutations."""
+        session.exec(
+            select(User).where(User.id == user_id).with_for_update()
+        ).first()
+
+    def get_balance(self, session: Session, user_id: str) -> dict:
+        """
+        Get user's current points balance.
+
+        Args:
+            session: Database session
+            user_id: User ID
+
+        Returns:
+            dict with available, pending_expiration, nearest_expiration_date
+        """
+        now = utcnow()
+
+        # Replay full ledger in chronological order to keep FIFO spending accurate
+        transactions = session.exec(
+            select(PointsTransaction)
+            .where(PointsTransaction.user_id == user_id)
+            .order_by(PointsTransaction.created_at.asc())
+        ).all()
+
+        lots: list[dict] = []
+        overspent = 0
+
+        def to_naive(dt):
+            if dt is None:
+                return None
+            return dt.replace(tzinfo=None) if getattr(dt, "tzinfo", None) else dt
+
+        for tx in transactions:
+            tx_created_at = to_naive(tx.created_at)
+
+            if tx.amount > 0:
+                lots.append(
+                    {
+                        "remaining": tx.amount,
+                        "expires_at": tx.expires_at,
+                        "is_expired": tx.is_expired,
+                    }
+                )
+                continue
+
+            if tx.amount >= 0:
+                continue
+
+            amount_to_spend = abs(tx.amount)
+
+            # Primary pass: consume from lots that were valid at spend time.
+            for lot in lots:
+                if amount_to_spend <= 0:
+                    break
+                if lot["remaining"] <= 0:
+                    continue
+
+                lot_expires_at = to_naive(lot["expires_at"])
+                if lot_expires_at and tx_created_at and lot_expires_at <= tx_created_at:
+                    continue
+
+                consumed = min(lot["remaining"], amount_to_spend)
+                lot["remaining"] -= consumed
+                amount_to_spend -= consumed
+
+            # Fallback for legacy inconsistent data: consume any remaining lots.
+            if amount_to_spend > 0:
+                for lot in lots:
+                    if amount_to_spend <= 0:
+                        break
+                    if lot["remaining"] <= 0:
+                        continue
+                    consumed = min(lot["remaining"], amount_to_spend)
+                    lot["remaining"] -= consumed
+                    amount_to_spend -= consumed
+
+            if amount_to_spend > 0:
+                overspent += amount_to_spend
+
+        now_naive = to_naive(now)
+        thirty_days_later_naive = to_naive(now + timedelta(days=30))
+
+        available = 0
+        pending_expiration = 0
+        nearest_expiration = None
+
+        for lot in lots:
+            if lot["remaining"] <= 0:
+                continue
+
+            lot_expires_at = to_naive(lot["expires_at"])
+            lot_is_active = not lot["is_expired"] and (
+                lot_expires_at is None or (now_naive and lot_expires_at > now_naive)
+            )
+
+            if not lot_is_active:
+                continue
+
+            available += lot["remaining"]
+
+            if (
+                lot_expires_at
+                and now_naive
+                and thirty_days_later_naive
+                and lot_expires_at <= thirty_days_later_naive
+            ):
+                pending_expiration += lot["remaining"]
+
+            if lot_expires_at and (nearest_expiration is None or lot_expires_at < to_naive(nearest_expiration)):
+                nearest_expiration = lot["expires_at"]
+
+        available = max(0, available - overspent)
+
+        return {
+            "available": available,
+            "pending_expiration": pending_expiration,
+            "nearest_expiration_date": nearest_expiration.isoformat() if nearest_expiration else None,
+        }
+
+    def earn_points(
+        self,
+        session: Session,
+        user_id: str,
+        amount: int,
+        transaction_type: str,
+        source_id: str | None = None,
+        description: str | None = None,
+        commit: bool = True,
+    ) -> PointsTransaction:
+        """
+        Earn points for a user.
+
+        Creates a new positive transaction with expiration date.
+
+        Args:
+            session: Database session
+            user_id: User ID
+            amount: Points to earn (positive)
+            transaction_type: Type of earning (check_in, referral, etc.)
+            source_id: Optional related entity ID
+            description: Optional description
+
+        Returns:
+            Created PointsTransaction
+
+        Raises:
+            APIException: If amount is not positive
+        """
+        if amount <= 0:
+            raise APIException(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                status_code=400,
+                detail="Amount must be positive for earning",
+            )
+
+        # Calculate balance after transaction
+        current_balance = self.get_balance(session, user_id)
+        balance_after = current_balance["available"] + amount
+
+        # Calculate expiration date (12 months from now)
+        expires_at = utcnow() + timedelta(days=POINTS_EXPIRATION_MONTHS * 30)
+
+        transaction = PointsTransaction(
+            user_id=user_id,
+            amount=amount,
+            balance_after=balance_after,
+            transaction_type=transaction_type,
+            source_id=source_id,
+            description=description,
+            expires_at=expires_at,
+            is_expired=False,
+        )
+
+        session.add(transaction)
+        if commit:
+            session.commit()
+            session.refresh(transaction)
+        else:
+            session.flush()
+
+        log_with_context(
+            logger,
+            20,  # INFO
+            "Points earned",
+            user_id=user_id,
+            amount=amount,
+            transaction_type=transaction_type,
+            balance_after=balance_after,
+            expires_at=expires_at.isoformat(),
+        )
+
+        return transaction
+
+    def spend_points(
+        self,
+        session: Session,
+        user_id: str,
+        amount: int,
+        transaction_type: str,
+        source_id: str | None = None,
+        description: str | None = None,
+        commit: bool = True,
+    ) -> PointsTransaction:
+        """
+        Spend points using FIFO (First In, First Out) order.
+
+        Spends from oldest non-expired transactions first.
+
+        Args:
+            session: Database session
+            user_id: User ID
+            amount: Points to spend (positive, will be negated internally)
+            transaction_type: Type of spending
+            source_id: Optional related entity ID
+            description: Optional description
+
+        Returns:
+            Created PointsTransaction
+
+        Raises:
+            APIException: If insufficient balance
+        """
+        if amount <= 0:
+            raise APIException(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                status_code=400,
+                detail="Amount must be positive for spending",
+            )
+
+        # Serialize balance mutations per user to avoid concurrent overspend.
+        self._lock_user_row(session, user_id)
+
+        # Check balance
+        current_balance = self.get_balance(session, user_id)
+        if current_balance["available"] < amount:
+            raise APIException(
+                error_code=ErrorCode.QUOTA_EXCEEDED,
+                status_code=402,
+                detail={
+                    "message": "Insufficient points balance",
+                    "required": amount,
+                    "available": current_balance["available"],
+                },
+            )
+
+        balance_after = current_balance["available"] - amount
+
+        # Create negative transaction
+        transaction = PointsTransaction(
+            user_id=user_id,
+            amount=-amount,  # Negative for spending
+            balance_after=balance_after,
+            transaction_type=transaction_type,
+            source_id=source_id,
+            description=description,
+            expires_at=None,  # Spending transactions don't expire
+            is_expired=False,
+        )
+
+        session.add(transaction)
+        if commit:
+            session.commit()
+            session.refresh(transaction)
+        else:
+            session.flush()
+
+        log_with_context(
+            logger,
+            20,  # INFO
+            "Points spent",
+            user_id=user_id,
+            amount=amount,
+            transaction_type=transaction_type,
+            balance_after=balance_after,
+        )
+
+        return transaction
+
+    def check_in(self, session: Session, user_id: str) -> dict:
+        """
+        Perform daily check-in.
+
+        Awards base points plus streak bonus if eligible.
+        Creates a CheckInRecord and PointsTransaction.
+
+        Args:
+            session: Database session
+            user_id: User ID
+
+        Returns:
+            dict with success, points_earned, streak_days, message
+
+        Raises:
+            APIException: If already checked in today
+        """
+        today = utcnow().date()
+
+        # Check if already checked in today
+        existing = session.exec(
+            select(CheckInRecord).where(
+                and_(
+                    CheckInRecord.user_id == user_id,
+                    CheckInRecord.check_in_date == today,
+                )
+            )
+        ).first()
+
+        if existing:
+            raise APIException(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                status_code=400,
+                detail={
+                    "message": "Already checked in today",
+                    "streak_days": existing.streak_days,
+                    "points_earned": existing.points_earned,
+                },
+            )
+
+        # Calculate streak
+        yesterday = today - timedelta(days=1)
+        yesterday_record = session.exec(
+            select(CheckInRecord).where(
+                and_(
+                    CheckInRecord.user_id == user_id,
+                    CheckInRecord.check_in_date == yesterday,
+                )
+            )
+        ).first()
+
+        streak_days = 1
+        if yesterday_record:
+            streak_days = yesterday_record.streak_days + 1
+
+        # Calculate points
+        points_earned = POINTS_CHECK_IN
+        transaction_type = "check_in"
+
+        # Streak bonus
+        if streak_days >= STREAK_BONUS_THRESHOLD and streak_days % STREAK_BONUS_THRESHOLD == 0:
+            points_earned += POINTS_CHECK_IN_STREAK
+            transaction_type = "check_in_streak"
+
+        # Create check-in record
+        check_in_record = CheckInRecord(
+            user_id=user_id,
+            check_in_date=today,
+            streak_days=streak_days,
+            points_earned=points_earned,
+        )
+        session.add(check_in_record)
+
+        # Create points transaction and commit once to keep check-in atomic.
+        try:
+            self.earn_points(
+                session=session,
+                user_id=user_id,
+                amount=points_earned,
+                transaction_type=transaction_type,
+                source_id=check_in_record.id,
+                description=None,
+                commit=False,
+            )
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            existing = session.exec(
+                select(CheckInRecord).where(
+                    and_(
+                        CheckInRecord.user_id == user_id,
+                        CheckInRecord.check_in_date == today,
+                    )
+                )
+            ).first()
+            if not existing:
+                raise
+            raise APIException(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                status_code=400,
+                detail={
+                    "message": "Already checked in today",
+                    "streak_days": existing.streak_days if existing else 0,
+                    "points_earned": existing.points_earned if existing else 0,
+                },
+            ) from None
+
+        log_with_context(
+            logger,
+            20,  # INFO
+            "Check-in successful",
+            user_id=user_id,
+            streak_days=streak_days,
+            points_earned=points_earned,
+        )
+
+        return {
+            "success": True,
+            "points_earned": points_earned,
+            "streak_days": streak_days,
+            "message": f"Check-in successful! +{points_earned} points" + (
+                " (Streak bonus!)" if transaction_type == "check_in_streak" else ""
+            ),
+        }
+
+    def get_check_in_status(self, session: Session, user_id: str) -> dict:
+        """
+        Get user's check-in status for today.
+
+        Args:
+            session: Database session
+            user_id: User ID
+
+        Returns:
+            dict with checked_in, streak_days, points_earned_today
+        """
+        today = utcnow().date()
+
+        today_record = session.exec(
+            select(CheckInRecord).where(
+                and_(
+                    CheckInRecord.user_id == user_id,
+                    CheckInRecord.check_in_date == today,
+                )
+            )
+        ).first()
+
+        if today_record:
+            return {
+                "checked_in": True,
+                "streak_days": today_record.streak_days,
+                "points_earned_today": today_record.points_earned,
+            }
+
+        # Not checked in today, get last streak
+        yesterday = today - timedelta(days=1)
+        yesterday_record = session.exec(
+            select(CheckInRecord).where(
+                and_(
+                    CheckInRecord.user_id == user_id,
+                    CheckInRecord.check_in_date == yesterday,
+                )
+            )
+        ).first()
+
+        streak = 0
+        if yesterday_record:
+            streak = yesterday_record.streak_days
+
+        return {
+            "checked_in": False,
+            "streak_days": streak,
+            "points_earned_today": 0,
+        }
+
+    def redeem_for_pro(self, session: Session, user_id: str, days: int = 7) -> dict:
+        """
+        Redeem points for Pro subscription days.
+
+        Args:
+            session: Database session
+            user_id: User ID
+            days: Number of Pro days (default 7)
+
+        Returns:
+            dict with success, points_spent, pro_days, new_period_end
+
+        Raises:
+            APIException: If insufficient points
+        """
+        # Validate supported durations and calculate cost
+        cost = REDEEM_DURATION_COSTS.get(days)
+        if cost is None:
+            raise APIException(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                status_code=400,
+                detail={
+                    "message": "Unsupported redemption duration",
+                    "allowed_days": sorted(REDEEM_DURATION_COSTS.keys()),
+                },
+            )
+
+        # Serialize redemption by user and commit points+subscription atomically.
+        self._lock_user_row(session, user_id)
+        current_balance = self.get_balance(session, user_id)
+        if current_balance["available"] < cost:
+            raise APIException(
+                error_code=ErrorCode.QUOTA_EXCEEDED,
+                status_code=402,
+                detail={
+                    "message": "Insufficient points for redemption",
+                    "required": cost,
+                    "available": current_balance["available"],
+                },
+            )
+
+        try:
+            self.spend_points(
+                session=session,
+                user_id=user_id,
+                amount=cost,
+                transaction_type="redeem_pro",
+                description=None,
+                commit=False,
+            )
+
+            subscription = subscription_service.create_user_subscription(
+                session=session,
+                user_id=user_id,
+                plan_name="pro",
+                duration_days=days,
+                metadata={"source": "points_redemption", "points_cost": cost},
+                commit=False,
+            )
+            session.commit()
+            with suppress(Exception):
+                session.refresh(subscription)
+        except Exception:
+            session.rollback()
+            raise
+
+        log_with_context(
+            logger,
+            20,  # INFO
+            "Points redeemed for Pro",
+            user_id=user_id,
+            points_spent=cost,
+            pro_days=days,
+            new_period_end=subscription.current_period_end.isoformat(),
+        )
+
+        return {
+            "success": True,
+            "points_spent": cost,
+            "pro_days": days,
+            "new_period_end": subscription.current_period_end.isoformat(),
+        }
+
+    def expire_stale_points(self, session: Session) -> int:
+        """
+        Batch job to mark expired points.
+
+        Finds all non-expired transactions past their expiration date
+        and marks them as expired.
+
+        Args:
+            session: Database session
+
+        Returns:
+            Number of transactions marked as expired
+        """
+        now = utcnow()
+
+        # Find expired but not yet marked transactions
+        expired_transactions = session.exec(
+            select(PointsTransaction)
+            .where(PointsTransaction.is_expired == False)
+            .where(PointsTransaction.expires_at.is_not(None))
+            .where(PointsTransaction.expires_at <= now)
+            .where(PointsTransaction.amount > 0)
+        ).all()
+
+        count = 0
+        for tx in expired_transactions:
+            tx.is_expired = True
+            tx.expired_at = now
+            session.add(tx)
+            count += 1
+
+        if count > 0:
+            session.commit()
+
+        log_with_context(
+            logger,
+            20,  # INFO
+            "Expired stale points",
+            count=count,
+        )
+
+        return count
+
+    def get_earn_opportunities(self, session: Session, user_id: str) -> list[dict]:
+        """
+        Get available ways to earn points.
+
+        Checks which opportunities are available and which are already completed.
+
+        Args:
+            session: Database session
+            user_id: User ID
+
+        Returns:
+            List of opportunity dicts with type, points, description, is_completed, is_available
+        """
+        opportunities = []
+
+        # Check-in opportunity
+        check_in_status = self.get_check_in_status(session, user_id)
+        opportunities.append({
+            "type": "check_in",
+            "points": POINTS_CHECK_IN,
+            "description": "opportunity.check_in",
+            "is_completed": check_in_status["checked_in"],
+            "is_available": True,
+        })
+
+        # Streak bonus (if eligible today)
+        if not check_in_status["checked_in"] and check_in_status["streak_days"] >= STREAK_BONUS_THRESHOLD - 1:
+                opportunities.append({
+                    "type": "check_in_streak",
+                    "points": POINTS_CHECK_IN_STREAK,
+                    "description": "opportunity.check_in_streak",
+                    "is_completed": False,
+                    "is_available": True,
+                })
+
+        # Referral opportunity
+        # Check if user has any unused invite codes
+        from models.referral import InviteCode
+        invite_codes = session.exec(
+            select(InviteCode)
+            .where(InviteCode.owner_id == user_id)
+            .where(InviteCode.is_active == True)
+        ).all()
+
+        opportunities.append({
+            "type": "referral",
+            "points": POINTS_REFERRAL,
+            "description": "opportunity.referral",
+            "is_completed": False,
+            "is_available": len(invite_codes) > 0,
+        })
+
+        # Skill contribution (check if user has created any public skills)
+        from models.skill import UserSkill
+        public_skills = session.exec(
+            select(UserSkill)
+            .where(UserSkill.user_id == user_id)
+            .where(UserSkill.is_shared == True)
+        ).all()
+
+        opportunities.append({
+            "type": "skill_contribution",
+            "points": POINTS_SKILL_CONTRIBUTION,
+            "description": "opportunity.skill_contribution",
+            "is_completed": len(public_skills) > 0,
+            "is_available": True,
+        })
+
+        # Inspiration contribution (check if user has contributed inspirations)
+        from models.inspiration import Inspiration
+        contributed_inspirations = session.exec(
+            select(Inspiration)
+            .where(Inspiration.author_id == user_id)
+            .where(Inspiration.status == "approved")
+        ).all()
+
+        opportunities.append({
+            "type": "inspiration_contribution",
+            "points": POINTS_INSPIRATION_CONTRIBUTION,
+            "description": "opportunity.inspiration_contribution",
+            "is_completed": len(contributed_inspirations) > 0,
+            "is_available": True,
+        })
+
+        # Profile completion (check if user has completed profile)
+        from models.entities import User
+        user = session.get(User, user_id)
+        profile_complete = bool(user and user.avatar_url)
+
+        opportunities.append({
+            "type": "profile_complete",
+            "points": POINTS_PROFILE_COMPLETE,
+            "description": "opportunity.profile_complete",
+            "is_completed": profile_complete,
+            "is_available": not profile_complete,
+        })
+
+        return opportunities
+
+    def get_transaction_history(
+        self,
+        session: Session,
+        user_id: str,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[PointsTransaction], int]:
+        """
+        Get paginated transaction history for a user.
+
+        Args:
+            session: Database session
+            user_id: User ID
+            page: Page number (1-indexed)
+            page_size: Items per page
+
+        Returns:
+            Tuple of (transactions list, total count)
+        """
+        # Count total
+        total = session.exec(
+            select(func.count())
+            .select_from(PointsTransaction)
+            .where(PointsTransaction.user_id == user_id)
+        ).one() or 0
+
+        # Get paginated
+        offset = (page - 1) * page_size
+        transactions = session.exec(
+            select(PointsTransaction)
+            .where(PointsTransaction.user_id == user_id)
+            .order_by(PointsTransaction.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        ).all()
+
+        return list(transactions), total
+
+
+# Singleton instance
+points_service = PointsService()

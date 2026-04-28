@@ -1,0 +1,12 @@
+# Railway 配置 - Prefect Server
+# 部署 Prefect 调度服务器
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "docker/Dockerfile.prefect-server"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

@@ -1,0 +1,1010 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - default
+          - nightly
+          - release
+          - smoke
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Job Start Time
+      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 10.29.3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'pnpm'
+        cache-dependency-path: pnpm-lock.yaml
+
+    - name: Install dependencies
+      run: |
+        cd apps/web
+        pnpm install
+
+    - name: Check CSS design token usage
+      run: |
+        cd apps/web
+        pnpm lint:tokens
+
+    - name: Check i18n defaultValue key coverage
+      run: |
+        cd apps/web
+        pnpm lint:i18n-keys
+
+    - name: Run ESLint
+      run: |
+        cd apps/web
+        pnpm lint
+
+    - name: Job Timing Summary
+      if: always()
+      run: |
+        JOB_END=$(date +%s)
+        DURATION=$((JOB_END - JOB_START))
+        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+
+  backend-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    services: &service-configs
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: zenstory_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Job Start Time
+      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        cd apps/server
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install ruff
+
+    - name: Run ruff
+      run: |
+        cd apps/server
+        ruff check agent/ api/ services/
+
+    - name: Create test environment file
+      run: |
+        cd apps/server
+        cat > .env.test << EOF
+        DATABASE_URL=postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL=redis://localhost:6380/1
+        OPENAI_API_KEY=test-key-for-ci-testing
+        JWT_SECRET_KEY=test-secret-key-min-32-characters-for-ci-testing
+        REDEMPTION_CODE_HMAC_SECRET=test-hmac-secret-min-32-characters-for-ci
+        ZHIPU_EMBEDDINGS_API_KEY=skip-vector-tests-in-ci
+        EOF
+
+    - name: Run tests with pytest
+      run: |
+        cd apps/server
+        pytest --cov=. --cov-report=xml --cov-report=term --cov-fail-under=80 --durations=15 -v
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./apps/server/coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Archive coverage reports
+      uses: actions/upload-artifact@v4
+      if: matrix.python-version == '3.12'
+      with:
+        name: coverage-report
+        path: apps/server/htmlcov/
+        retention-days: 30
+
+    - name: Job Timing Summary
+      if: always()
+      run: |
+        JOB_END=$(date +%s)
+        DURATION=$((JOB_END - JOB_START))
+        echo "## ⏱️ Job Timing Summary (Python ${{ matrix.python-version }})" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Python Version | ${{ matrix.python-version }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+
+  server-flows-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services: *service-configs
+    steps:
+    - name: Job Start Time
+      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: "pip"
+
+    - name: Install dependencies
+      run: |
+        cd apps/server
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Create test environment file
+      run: |
+        cd apps/server
+        cat > .env.test << EOF
+        DATABASE_URL=postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL=redis://localhost:6380/1
+        OPENAI_API_KEY=test-key-for-ci-testing
+        JWT_SECRET_KEY=test-secret-key-min-32-characters-for-ci-testing
+        REDEMPTION_CODE_HMAC_SECRET=test-hmac-secret-min-32-characters-for-ci
+        ZHIPU_EMBEDDINGS_API_KEY=skip-vector-tests-in-ci
+        EOF
+
+    - name: Run flows test suite
+      run: |
+        cd apps/server
+        pytest tests/test_flows -v --maxfail=1
+
+    - name: Job Timing Summary
+      if: always()
+      run: |
+        JOB_END=$(date +%s)
+        DURATION=$((JOB_END - JOB_START))
+        echo "## ⏱️ Job Timing Summary (Server Flows)" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+
+  # Frontend Tests - React/Vite/Vitest
+  frontend-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Job Start Time
+      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 10.29.3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'pnpm'
+        cache-dependency-path: pnpm-lock.yaml
+
+    - name: Install dependencies
+      run: |
+        cd apps/web
+        pnpm install
+
+    - name: Run frontend tests with coverage
+      run: |
+        cd apps/web
+        pnpm test:coverage
+
+    - name: Upload frontend coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./apps/web/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Job Timing Summary
+      if: always()
+      run: |
+        JOB_END=$(date +%s)
+        DURATION=$((JOB_END - JOB_START))
+        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Job Start Time
+      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 10.29.3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'pnpm'
+        cache-dependency-path: pnpm-lock.yaml
+
+    - name: Install dependencies
+      run: |
+        cd apps/web
+        pnpm install
+
+    - name: Build with typecheck
+      run: |
+        cd apps/web
+        pnpm build:typecheck
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: web-dist
+        path: apps/web/dist/
+        retention-days: 7
+
+    - name: Job Timing Summary
+      if: always()
+      run: |
+        JOB_END=$(date +%s)
+        DURATION=$((JOB_END - JOB_START))
+        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+
+  # E2E Tests - Playwright
+  e2e-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        browser: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && fromJson('["chromium", "firefox", "webkit"]') || fromJson('["chromium"]') }}
+        shard: [1/4, 2/4, 3/4, 4/4]
+    services: *service-configs
+
+    steps:
+    - name: Job Start Time
+      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 10.29.3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'pnpm'
+        cache-dependency-path: pnpm-lock.yaml
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install backend dependencies
+      run: |
+        cd apps/server
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install frontend dependencies
+      run: |
+        cd apps/web
+        pnpm install
+
+    - name: Install Playwright browsers
+      run: |
+        cd apps/web
+        pnpm exec playwright install --with-deps ${{ matrix.browser }}
+
+    - name: Create test environment file
+      run: |
+        cd apps/server
+        cat > .env.test << EOF
+        DATABASE_URL=postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL=redis://localhost:6380/1
+        OPENAI_API_KEY=test-key-for-ci-testing
+        JWT_SECRET_KEY=test-secret-key-min-32-characters-for-ci-testing
+        ANTHROPIC_API_KEY=test-key-for-ci-testing
+        E2E_TEST_EMAIL=e2e-test@zenstory.local
+        E2E_TEST_PASSWORD=E2eTestPassword123!
+        E2E_TEST_USERNAME=e2e_test_user
+        E2E_TEST_ADMIN_EMAIL=test-admin@zenstory.test
+        E2E_TEST_ADMIN_PASSWORD=TestAdmin123!
+        E2E_TEST_ADMIN_USERNAME=test_admin
+        EOF
+
+    - name: Run database migrations
+      env:
+        DATABASE_URL: postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL: redis://localhost:6380/1
+      run: |
+        cd apps/server
+        cp .env.test .env
+        set -a
+        source .env.test
+        set +a
+        # Import all models and create tables
+        python -c "import models; from database import init_db; import asyncio; asyncio.run(init_db())"
+        # Mark database as migrated after schema bootstrap
+        alembic stamp head
+
+    - name: Seed test user
+      env:
+        DATABASE_URL: postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL: redis://localhost:6380/1
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+        E2E_TEST_ADMIN_EMAIL: test-admin@zenstory.test
+        E2E_TEST_ADMIN_PASSWORD: TestAdmin123!
+        E2E_TEST_ADMIN_USERNAME: test_admin
+      run: |
+        cd apps/server
+        set -a
+        source .env.test
+        set +a
+        python scripts/seed_test_user.py
+
+    - name: Start backend server
+      run: |
+        cd apps/server
+        set -a
+        source .env.test
+        set +a
+        nohup python main.py > /tmp/zenstory-backend.log 2>&1 &
+        echo $! > /tmp/zenstory-backend.pid
+        sleep 5
+      env:
+        PYTHONUNBUFFERED: 1
+        DATABASE_URL: postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL: redis://localhost:6380/1
+        OPENAI_API_KEY: test-key-for-ci-testing
+        JWT_SECRET_KEY: test-secret-key-min-32-characters-for-ci-testing
+        ANTHROPIC_API_KEY: test-key-for-ci-testing
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+        E2E_TEST_ADMIN_EMAIL: test-admin@zenstory.test
+        E2E_TEST_ADMIN_PASSWORD: TestAdmin123!
+        E2E_TEST_ADMIN_USERNAME: test_admin
+
+    - name: Wait for backend health check
+      run: |
+        cd apps/server
+        for i in {1..30}; do
+          if curl -f http://localhost:8000/health 2>/dev/null; then
+            echo "Backend is healthy!"
+            exit 0
+          fi
+          echo "Waiting for backend... ($i/30)"
+          sleep 1
+        done
+        echo "Backend failed to start"
+        cat /tmp/zenstory-backend.log || true
+        exit 1
+
+    - name: Run E2E tests
+      run: |
+        cd apps/web
+        if [ "${{ github.event_name }}" == "push" ] && { [ "${{ github.ref }}" == "refs/heads/main" ] || [ "${{ github.ref }}" == "refs/heads/develop" ]; }; then
+          pnpm exec playwright test --project=${{ matrix.browser }} --shard=${{ matrix.shard }}
+        elif [ "${{ github.event_name }}" == "schedule" ] || [ "${{ github.event.inputs.suite }}" == "nightly" ]; then
+          if [ "${{ matrix.shard }}" != "1/4" ] || [ "${{ matrix.browser }}" != "chromium" ]; then
+            echo "Nightly lane runs on chromium shard 1/4 only. Skipping browser=${{ matrix.browser }} shard=${{ matrix.shard }}."
+            exit 0
+          fi
+          E2E_ENABLE_VERSION_HISTORY_E2E=true \
+          E2E_ENABLE_SKILL_CREATE_E2E=true \
+          pnpm exec playwright test e2e/versions.spec.ts e2e/skills.spec.ts e2e/skills-flow.spec.ts --project=${{ matrix.browser }}
+        elif [ "${{ github.event.inputs.suite }}" == "full" ]; then
+          E2E_ENABLE_VERSION_HISTORY_E2E=true \
+          E2E_ENABLE_SKILL_CREATE_E2E=true \
+          E2E_ENABLE_VOICE_INPUT_E2E=true \
+          E2E_ENABLE_VISUAL_REGRESSION_E2E=true \
+          E2E_ENABLE_PERFORMANCE_E2E=true \
+          E2E_ENABLE_LARGE_DOCUMENT_E2E=true \
+          pnpm exec playwright test --project=${{ matrix.browser }} --shard=${{ matrix.shard }}
+        elif [ "${{ github.event.inputs.suite }}" == "release" ]; then
+          if [ "${{ matrix.shard }}" != "1/4" ] || [ "${{ matrix.browser }}" != "chromium" ]; then
+            echo "Release/manual lane runs on chromium shard 1/4 only. Skipping browser=${{ matrix.browser }} shard=${{ matrix.shard }}."
+            exit 0
+          fi
+          E2E_ENABLE_VISUAL_REGRESSION_E2E=true \
+          E2E_ENABLE_PERFORMANCE_E2E=true \
+          E2E_ENABLE_LARGE_DOCUMENT_E2E=true \
+          E2E_ENABLE_CONCURRENT_E2E=true \
+          pnpm exec playwright test e2e/visual.spec.ts e2e/performance.spec.ts e2e/large-document.spec.ts e2e/concurrent.spec.ts --project=${{ matrix.browser }}
+        elif [ "${{ github.event.inputs.suite }}" == "default" ]; then
+          if [ "${{ matrix.shard }}" != "1/4" ]; then
+            echo "Default lane runs on shard 1/4 only. Skipping shard ${{ matrix.shard }}."
+            exit 0
+          fi
+          pnpm exec playwright test \
+            e2e/auth.spec.ts \
+            e2e/session.spec.ts \
+            e2e/projects.spec.ts \
+            e2e/points.spec.ts \
+            e2e/onboarding-persona.spec.ts \
+            e2e/public-skills.spec.ts \
+            e2e/referral.spec.ts \
+            e2e/security.spec.ts \
+            e2e/subscription.spec.ts \
+            e2e/settings-regression.spec.ts \
+            e2e/settings.spec.ts \
+            e2e/smoke.spec.ts \
+            --project=${{ matrix.browser }}
+        elif [ "${{ github.event.inputs.suite }}" == "smoke" ]; then
+          if [ "${{ matrix.shard }}" != "1/4" ]; then
+            echo "Smoke suite runs on shard 1/4 only. Skipping shard ${{ matrix.shard }}."
+            exit 0
+          fi
+          pnpm exec playwright test e2e/smoke.spec.ts --project=${{ matrix.browser }}
+        else
+          if [ "${{ matrix.shard }}" != "1/4" ]; then
+            echo "Default PR lane runs on shard 1/4 only. Skipping shard ${{ matrix.shard }}."
+            exit 0
+          fi
+          pnpm exec playwright test \
+            e2e/auth.spec.ts \
+            e2e/session.spec.ts \
+            e2e/projects.spec.ts \
+            e2e/points.spec.ts \
+            e2e/onboarding-persona.spec.ts \
+            e2e/public-skills.spec.ts \
+            e2e/referral.spec.ts \
+            e2e/security.spec.ts \
+            e2e/subscription.spec.ts \
+            e2e/settings-regression.spec.ts \
+            e2e/settings.spec.ts \
+            e2e/smoke.spec.ts \
+            --project=${{ matrix.browser }}
+        fi
+      env:
+        CI: true
+        PLAYWRIGHT_EXTERNAL_BACKEND: "1"
+        E2E_ENABLE_CHAT_E2E: "true"
+        E2E_ENABLE_CONCURRENT_E2E: "true"
+        E2E_ENABLE_DEEP_LINK_E2E: "true"
+        E2E_ENABLE_ERROR_RECOVERY_E2E: "true"
+        E2E_ENABLE_EXPORT_E2E: "true"
+        E2E_ENABLE_FILES_E2E: "true"
+        E2E_ENABLE_FILE_SEARCH_E2E: "true"
+        E2E_ENABLE_MOCKED_CHAT: "true"
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+
+    - name: Merge Shard Reports
+      if: always()
+      run: |
+        cd apps/web
+        REPORT_DIR=""
+        if [ -d ./blob-report ] && [ -n "$(find ./blob-report -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+          REPORT_DIR="./blob-report"
+        elif [ -d ./blob-reports ] && [ -n "$(find ./blob-reports -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+          REPORT_DIR="./blob-reports"
+        fi
+
+        if [ -z "$REPORT_DIR" ]; then
+          echo "No shard reports generated for this job, skipping merge."
+          exit 0
+        fi
+        pnpm exec playwright merge-reports --reporter html "$REPORT_DIR"
+
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: playwright-report
+        path: apps/web/playwright-report/
+        retention-days: 7
+
+    - name: Job Timing Summary
+      if: always()
+      run: |
+        JOB_END=$(date +%s)
+        DURATION=$((JOB_END - JOB_START))
+        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Browser | ${{ matrix.browser }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Shard | ${{ matrix.shard }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+
+  # Smoke Tests - Fast validation on PRs
+  smoke-test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: zenstory_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Job Start Time
+      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 10.29.3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'pnpm'
+        cache-dependency-path: pnpm-lock.yaml
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install backend dependencies
+      run: |
+        cd apps/server
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install frontend dependencies
+      run: |
+        cd apps/web
+        pnpm install
+
+    - name: Install Playwright browsers
+      run: |
+        cd apps/web
+        pnpm exec playwright install --with-deps chromium
+
+    - name: Create test environment file
+      run: |
+        cd apps/server
+        cat > .env.test << EOF
+        DATABASE_URL=postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL=redis://localhost:6380/1
+        OPENAI_API_KEY=test-key-for-ci-testing
+        JWT_SECRET_KEY=test-secret-key-min-32-characters-for-ci-testing
+        ANTHROPIC_API_KEY=test-key-for-ci-testing
+        E2E_TEST_EMAIL=e2e-test@zenstory.local
+        E2E_TEST_PASSWORD=E2eTestPassword123!
+        E2E_TEST_USERNAME=e2e_test_user
+        E2E_TEST_ADMIN_EMAIL=test-admin@zenstory.test
+        E2E_TEST_ADMIN_PASSWORD=TestAdmin123!
+        E2E_TEST_ADMIN_USERNAME=test_admin
+        EOF
+
+    - name: Run database migrations
+      env:
+        DATABASE_URL: postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL: redis://localhost:6380/1
+      run: |
+        cd apps/server
+        cp .env.test .env
+        set -a
+        source .env.test
+        set +a
+        python -c "import models; from database import init_db; import asyncio; asyncio.run(init_db())"
+        alembic stamp head
+
+    - name: Seed test user
+      env:
+        DATABASE_URL: postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL: redis://localhost:6380/1
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+        E2E_TEST_ADMIN_EMAIL: test-admin@zenstory.test
+        E2E_TEST_ADMIN_PASSWORD: TestAdmin123!
+        E2E_TEST_ADMIN_USERNAME: test_admin
+      run: |
+        cd apps/server
+        set -a
+        source .env.test
+        set +a
+        python scripts/seed_test_user.py
+
+    - name: Start backend server
+      run: |
+        cd apps/server
+        set -a
+        source .env.test
+        set +a
+        nohup python main.py > /tmp/zenstory-backend-smoke.log 2>&1 &
+        echo $! > /tmp/zenstory-backend-smoke.pid
+        sleep 5
+      env:
+        PYTHONUNBUFFERED: 1
+        DATABASE_URL: postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL: redis://localhost:6380/1
+        OPENAI_API_KEY: test-key-for-ci-testing
+        JWT_SECRET_KEY: test-secret-key-min-32-characters-for-ci-testing
+        ANTHROPIC_API_KEY: test-key-for-ci-testing
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+        E2E_TEST_ADMIN_EMAIL: test-admin@zenstory.test
+        E2E_TEST_ADMIN_PASSWORD: TestAdmin123!
+        E2E_TEST_ADMIN_USERNAME: test_admin
+
+    - name: Wait for backend health check
+      run: |
+        cd apps/server
+        for i in {1..30}; do
+          if curl -f http://localhost:8000/health 2>/dev/null; then
+            echo "Backend is healthy!"
+            exit 0
+          fi
+          echo "Waiting for backend... ($i/30)"
+          sleep 1
+        done
+        echo "Backend failed to start"
+        cat /tmp/zenstory-backend-smoke.log || true
+        exit 1
+
+    - name: Run smoke tests
+      run: |
+        cd apps/web
+        pnpm exec playwright test smoke.spec.ts
+      env:
+        CI: true
+        PLAYWRIGHT_EXTERNAL_BACKEND: "1"
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+
+    - name: Job Timing Summary
+      if: always()
+      run: |
+        JOB_END=$(date +%s)
+        DURATION=$((JOB_END - JOB_START))
+        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+
+  frontend-prod-bundle-smoke:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    services: *service-configs
+    steps:
+    - name: Job Start Time
+      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 10.29.3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'pnpm'
+        cache-dependency-path: pnpm-lock.yaml
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install backend dependencies
+      run: |
+        cd apps/server
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install frontend dependencies
+      run: |
+        cd apps/web
+        pnpm install
+
+    - name: Install Playwright browser
+      run: |
+        cd apps/web
+        pnpm exec playwright install --with-deps chromium
+
+    - name: Create test environment file
+      run: |
+        cd apps/server
+        cat > .env.test << EOF
+        DATABASE_URL=postgresql://test:test@localhost:5433/zenstory_test
+        REDIS_URL=redis://localhost:6380/1
+        OPENAI_API_KEY=test-key-for-ci-testing
+        JWT_SECRET_KEY=test-secret-key-min-32-characters-for-ci-testing
+        ANTHROPIC_API_KEY=test-key-for-ci-testing
+        E2E_TEST_EMAIL=e2e-test@zenstory.local
+        E2E_TEST_PASSWORD=E2eTestPassword123!
+        E2E_TEST_USERNAME=e2e_test_user
+        EOF
+
+    - name: Run database migrations
+      run: |
+        cd apps/server
+        cp .env.test .env
+        python -c "from database import init_db; import asyncio; asyncio.run(init_db())"
+        alembic stamp head || alembic upgrade head
+
+    - name: Seed test user
+      run: |
+        cd apps/server
+        python scripts/seed_test_user.py
+
+    - name: Start backend server
+      run: |
+        cd apps/server
+        python main.py &
+        sleep 5
+      env:
+        PYTHONUNBUFFERED: 1
+
+    - name: Wait for backend health check
+      run: |
+        for i in {1..30}; do
+          if curl -f http://localhost:8000/health 2>/dev/null; then
+            echo "Backend is healthy!"
+            exit 0
+          fi
+          echo "Waiting for backend... ($i/30)"
+          sleep 1
+        done
+        echo "Backend failed to start"
+        exit 1
+
+    - name: Build production bundle
+      run: |
+        cd apps/web
+        pnpm build
+
+    - name: Start preview server
+      run: |
+        cd apps/web
+        pnpm preview --host 127.0.0.1 --port 4173 &
+        echo $! > /tmp/web-preview.pid
+
+    - name: Wait for preview server
+      run: |
+        for i in {1..30}; do
+          if curl -f http://127.0.0.1:4173 >/dev/null 2>&1; then
+            echo "Preview server is healthy!"
+            exit 0
+          fi
+          echo "Waiting for preview... ($i/30)"
+          sleep 1
+        done
+        echo "Preview server failed to start"
+        if [[ -f /tmp/web-preview.pid ]]; then
+          kill "$(cat /tmp/web-preview.pid)" || true
+        fi
+        exit 1
+
+    - name: Run production bundle smoke test
+      run: |
+        cd apps/web
+        pnpm exec playwright test --config=playwright.prod-smoke.config.ts
+      env:
+        CI: true
+        E2E_BASE_URL: http://127.0.0.1:4173
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+
+    - name: Upload production smoke report
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: playwright-prod-smoke-report
+        path: apps/web/playwright-report/
+        retention-days: 7
+
+    - name: Stop preview server
+      if: always()
+      run: |
+        if [[ -f /tmp/web-preview.pid ]]; then
+          kill "$(cat /tmp/web-preview.pid)" || true
+        fi
+
+    - name: Job Timing Summary
+      if: always()
+      run: |
+        JOB_END=$(date +%s)
+        DURATION=$((JOB_END - JOB_START))
+        echo "## ⏱️ Job Timing Summary (Frontend Production Bundle Smoke)" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+
+  # Test Summary - All tests must pass
+  test-summary:
+    runs-on: ubuntu-latest
+    needs: [frontend-lint, backend-test, server-flows-test, frontend-test, smoke-test, frontend-prod-bundle-smoke, frontend-build, e2e-test]
+    if: always()
+    steps:
+    - name: Job Start Time
+      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Check test results
+      run: |
+        echo "Frontend lint: ${{ needs['frontend-lint'].result }}"
+        echo "Backend tests: ${{ needs['backend-test'].result }}"
+        echo "Server flows tests: ${{ needs['server-flows-test'].result }}"
+        echo "Frontend tests: ${{ needs['frontend-test'].result }}"
+        echo "Smoke tests: ${{ needs['smoke-test'].result }}"
+        echo "Frontend production bundle smoke: ${{ needs['frontend-prod-bundle-smoke'].result }}"
+        echo "Frontend build: ${{ needs['frontend-build'].result }}"
+        echo "E2E tests: ${{ needs['e2e-test'].result }}"
+
+        failed=""
+        check_job() {
+          local job_name="$1"
+          local job_result="$2"
+          local allow_skipped="${3:-false}"
+          if [[ "$job_result" == "success" ]]; then
+            return
+          fi
+          if [[ "$allow_skipped" == "true" && "$job_result" == "skipped" ]]; then
+            return
+          fi
+          if [[ "$job_result" != "success" ]]; then
+            failed="$failed $job_name"
+          fi
+        }
+
+        check_job "frontend-lint" "${{ needs['frontend-lint'].result }}"
+        check_job "backend-test" "${{ needs['backend-test'].result }}"
+        check_job "server-flows-test" "${{ needs['server-flows-test'].result }}"
+        check_job "frontend-test" "${{ needs['frontend-test'].result }}"
+        smoke_allow_skipped="false"
+        if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+          smoke_allow_skipped="true"
+        fi
+        check_job "smoke-test" "${{ needs['smoke-test'].result }}" "$smoke_allow_skipped"
+        check_job "frontend-prod-bundle-smoke" "${{ needs['frontend-prod-bundle-smoke'].result }}" "$smoke_allow_skipped"
+        check_job "frontend-build" "${{ needs['frontend-build'].result }}"
+        check_job "e2e-test" "${{ needs['e2e-test'].result }}"
+
+        if [[ -n "$failed" ]]; then
+          echo "::error::The following jobs failed:$failed"
+          exit 1
+        fi
+        echo "All test suites passed!"
+
+    - name: Workflow Timing Summary
+      if: always()
+      run: |
+        echo "## ⏱️ Complete Test Suite Timing Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Job Results" >> $GITHUB_STEP_SUMMARY
+        echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Frontend Lint | ${{ needs['frontend-lint'].result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Backend Tests | ${{ needs['backend-test'].result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Server Flows Tests | ${{ needs['server-flows-test'].result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Frontend Tests | ${{ needs['frontend-test'].result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Smoke Tests | ${{ needs['smoke-test'].result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Frontend Prod Bundle Smoke | ${{ needs['frontend-prod-bundle-smoke'].result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Frontend Build | ${{ needs['frontend-build'].result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| E2E Tests | ${{ needs['e2e-test'].result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "_See individual job summaries for detailed timing information._" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Completed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

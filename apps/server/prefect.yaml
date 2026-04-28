@@ -1,0 +1,84 @@
+# Prefect 部署配置
+# 用于素材库小说拆解流程
+
+name: zenstory-materials
+prefect-version: 3.4.19
+
+# build section
+build: null
+
+# push section
+push: null
+
+# pull section
+# 注意：开发环境使用绝对路径，生产环境需要修改为实际部署路径
+pull:
+- prefect.deployments.steps.set_working_directory:
+    directory: /app
+
+# deployments
+deployments:
+- name: novel_ingestion_v3
+  version: null
+  tags: ["materials", "novel", "v3"]
+  concurrency_limit: 3
+  description: "小说导入主流程 V3：StageExecutor架构、断点续传、角色提及提取"
+  entrypoint: flows/pipelines/novel_ingestion_v3_flow.py:novel_ingestion_v3
+  parameters: {}
+  work_pool:
+    name: zenstory-pool
+    work_queue_name: null
+    job_variables: {}
+  schedules: []
+
+- name: novel_ingestion_v2
+  version: null
+  tags: ["materials", "novel", "legacy"]
+  concurrency_limit: 3
+  description: "[Legacy] 小说导入主流程 V2：文件解析、章节提取、情节分析、人物关系"
+  entrypoint: flows/pipelines/novel_ingestion_v2_flow.py:novel_ingestion_v2
+  parameters: {}
+  work_pool:
+    name: zenstory-pool
+    work_queue_name: null
+    job_variables: {}
+  schedules: []
+
+- name: chapter_extraction
+  version: null
+  tags: ["materials", "chapter"]
+  concurrency_limit: 5
+  description: "章节提取子流程：摘要生成、情节点提取、实体识别"
+  entrypoint: flows/pipelines/subflows/chapter_extraction_flow.py:chapter_extraction_flow
+  parameters: {}
+  work_pool:
+    name: zenstory-pool
+    work_queue_name: null
+    job_variables: {}
+  schedules: []
+
+- name: story_aggregation
+  version: null
+  tags: ["materials", "story"]
+  concurrency_limit: 3
+  description: "剧情聚合子流程：小说概要、剧情线生成"
+  entrypoint: flows/pipelines/subflows/story_aggregate_flow.py:story_aggregate_flow
+  parameters: {}
+  work_pool:
+    name: zenstory-pool
+    work_queue_name: null
+    job_variables: {}
+  schedules: []
+
+- name: relationship_extraction
+  version: null
+  tags: ["materials", "relationship"]
+  concurrency_limit: 3
+  description: "人物关系提取子流程"
+  entrypoint: flows/pipelines/subflows/relationship_flow.py:relationship_flow
+  parameters: {}
+  work_pool:
+    name: zenstory-pool
+    work_queue_name: null
+    job_variables: {}
+  schedules: []

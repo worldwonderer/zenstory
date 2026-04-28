@@ -1,0 +1,113 @@
+"""
+State definitions for the writing workflow.
+
+Defines the WritingState TypedDict shared across workflow nodes.
+"""
+
+from typing import Annotated, Any, TypedDict
+
+
+def merge_tool_calls(left: list, right: list) -> list:
+    """Merge tool calls by appending new ones."""
+    if not left:
+        return right
+    if not right:
+        return left
+    return left + right
+
+
+def merge_messages(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge conversation messages by appending new entries."""
+    if not left:
+        return right
+    if not right:
+        return left
+    return left + right
+
+
+class ToolCall(TypedDict, total=False):
+    """Represents a tool call in the workflow."""
+
+    id: str
+    name: str
+    input: dict[str, Any]
+    result: str | None
+
+
+class AgentOutput(TypedDict, total=False):
+    """Output from an agent node."""
+
+    content: str
+    thinking: str | None
+    tool_calls: list[ToolCall]
+
+
+class HandoffPacket(TypedDict, total=False):
+    """Structured handoff payload for inter-agent collaboration."""
+
+    target_agent: str
+    reason: str
+    context: str
+    completed: list[str]
+    todo: list[str]
+    evidence: list[str]
+    artifact_refs: list[str]
+    overflow_backfill: list[dict[str, Any]]
+
+
+class WritingState(TypedDict, total=False):
+    """
+    State for the writing workflow.
+
+    This state is passed between nodes, accumulating information as the
+    request is processed.
+
+    Uses Annotated merge helpers:
+    - messages: append conversation history
+    - tool_calls: append tool call records
+
+    Attributes:
+        user_message: The original user message/request
+        router_message: Raw user input for router intent classification (without UI decorations)
+        project_id: ID of the current project
+        user_id: ID of the current user
+        session_id: ID of the current chat session
+        system_prompt: System prompt for the LLM
+        context_data: Assembled context from files, characters, etc.
+        current_agent: Currently active agent (router/planner/writer/quality_reviewer)
+        agent_output: Output from the current agent
+        workflow_plan: Planned workflow path from router
+        tool_calls: List of tool calls made during processing
+        messages: Conversation history in Anthropic message format
+    """
+
+    # Input fields
+    user_message: str
+    router_message: str
+    project_id: str
+    user_id: str
+    session_id: str | None
+    generation_mode: str | None
+
+    # Configuration
+    system_prompt: str
+    context_data: dict[str, Any]
+
+    # Workflow state
+    current_agent: str
+    agent_output: AgentOutput | None
+
+    # Workflow planning (from router)
+    # Types: "quick" | "standard" | "full" | "hook_focus" | "review_only"
+    workflow_plan: str | None  # Planned workflow path
+    workflow_agents: list[str] | None  # Ordered list of agents to execute
+
+    # Collaboration state
+    next_agent: str | None  # Agent to hand off to (None = done)
+    handoff_reason: str | None  # Why handing off to next agent
+    handoff_packet: HandoffPacket | None  # Structured handoff payload
+    iteration_count: int  # Number of agent iterations (to prevent infinite loops)
+
+    # Accumulated state with merge strategies
+    tool_calls: Annotated[list[ToolCall], merge_tool_calls]
+    messages: Annotated[list[dict[str, Any]], merge_messages]

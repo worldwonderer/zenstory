@@ -1,0 +1,106 @@
+{
+  "hero": {
+    "step": "New User Setup · 1/1",
+    "badge": "2-minute setup",
+    "title": "Let us know you first, then we'll tailor zenstory for you",
+    "subtitle": "Pick your creator persona and goals. We'll personalize templates, workflows, and key entry points accordingly.",
+    "restore": "Your previous persona setup is loaded. You can update it anytime."
+  },
+  "persona": {
+    "title": "Which type of creator are you?",
+    "subtitle": "Choose up to 3 options so we can match your stage with the right experience.",
+    "counter": "{{selected}} / {{max}} selected",
+    "limitReached": "You can select up to 3 personas. Deselect one to continue.",
+    "options": {
+      "explorer": {
+        "tag": "Getting started",
+        "title": "Beginner Explorer",
+        "desc": "You're just starting out and need guided steps, templates, and AI support to finish your first complete work."
+      },
+      "serial": {
+        "tag": "Serial rhythm",
+        "title": "Serial Growth Writer",
+        "desc": "You care about consistent updates and want better planning, reminders, and workflow support for sustained output."
+      },
+      "professional": {
+        "tag": "Professional",
+        "title": "Professional Creator",
+        "desc": "You already have experience and care most about efficiency, quality, and monetization-oriented creation."
+      },
+      "fanfic": {
+        "tag": "Passion-driven",
+        "title": "Fanfic / Hobby Creator",
+        "desc": "You focus on character dynamics and world-building, and want to turn ideas into polished drafts quickly."
+      },
+      "studio": {
+        "tag": "Collaboration",
+        "title": "IP / Studio Team",
+        "desc": "You create with others and need clear responsibilities, transparent progress, and shared resource management."
+      }
+    }
+  },
+  "goal": {
+    "title": "What do you want most right now?",
+    "subtitle": "Multi-select is supported. We'll prioritize features based on your focus.",
+    "options": {
+      "finishBook": {
+        "title": "Finish my first full work"
+      },
+      "buildHabit": {
+        "title": "Build a stable writing habit"
+      },
+      "improveQuality": {
+        "title": "Improve plot and writing quality"
+      },
+      "growAudience": {
+        "title": "Grow readers and influence"
+      },
+      "monetize": {
+        "title": "Monetize content sooner"
+      }
+    }
+  },
+  "experience": {
+    "title": "Your writing experience",
+    "subtitle": "We'll adjust guidance depth and complexity based on your level.",
+    "options": {
+      "beginner": {
+        "title": "0-3 months",
+        "desc": "More guided steps, examples, and default templates."
+      },
+      "intermediate": {
+        "title": "3 months - 2 years",
+        "desc": "Balanced setup with flexibility plus practical advanced hints."
+      },
+      "advanced": {
+        "title": "2+ years",
+        "desc": "High-efficiency workflow with less interruption and more high-value tools."
+      }
+    }
+  },
+  "actions": {
+    "skip": "Skip for now",
+    "submit": "Save and enter workspace",
+    "saving": "Saving..."
+  },
+  "preview": {
+    "title": "Personalized preview",
+    "subtitle": "After submission, we’ll tune homepage structure, recommendations, and writing reminders for you.",
+    "empty": "Select at least one persona to preview your personalized setup.",
+    "items": {
+      "explorer": "Clear next-step prompts and starter templates",
+      "serial": "Stronger support for daily/weekly writing cadence",
+      "professional": "Tools prioritized for efficiency and commercialization",
+      "fanfic": "Better support for character consistency and world settings",
+      "studio": "Workflow recommendations for collaborative teams",
+      "monetize": "Growth and monetization capabilities surfaced earlier",
+      "quality": "More focused guidance on plot, character, and prose quality"
+    },
+    "level": {
+      "beginner": "Beginner mode reduces learning overhead and helps you start fast",
+      "intermediate": "Balanced guidance optimized for both speed and quality",
+      "advanced": "Fewer basics, more high-value decision support"
+    },
+    "note": "Note: In this Beta stage, persona data is stored locally on this device and will later support cross-device sync."
+  }
+}

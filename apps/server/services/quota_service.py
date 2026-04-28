@@ -1,0 +1,534 @@
+"""
+Quota Service - Manages usage quotas and limits.
+
+All quota operations use atomic database updates to prevent race conditions.
+"""
+from datetime import datetime, timedelta
+
+from sqlalchemy import update
+from sqlmodel import Session, func, select
+
+from config.datetime_utils import utcnow
+from models.entities import Project
+from models.subscription import SubscriptionPlan, UsageQuota, UserSubscription
+from services.subscription.defaults import (
+    DEFAULT_FREE_PLAN_DISPLAY_NAME,
+    DEFAULT_FREE_PLAN_DISPLAY_NAME_EN,
+    clone_default_free_features,
+)
+
+# Feature type to (limit_field, used_field) mapping
+FEATURE_QUOTA_MAP = {
+    "material_upload": ("material_uploads", "material_uploads_used"),
+    "material_decompose": ("material_decompositions", "material_decompositions_used"),
+    "skill_create": ("custom_skills", "skill_creates_used"),
+    "inspiration_copy": ("inspiration_copies_monthly", "inspiration_copies_used"),
+}
+
+FEATURE_RESPONSE_KEY_MAP = {
+    "material_upload": "material_uploads",
+    "material_decompose": "material_decompositions",
+    "skill_create": "skill_creates",
+    "inspiration_copy": "inspiration_copies",
+}
+
+FEATURE_ACCESS_MAP = {
+    "material_upload": "materials_library_access",
+    "material_decompose": "materials_library_access",
+}
+
+# Default free tier features (canonical fallback)
+DEFAULT_FREE_TIER_FEATURES = clone_default_free_features()
+
+
+class QuotaService:
+    """Service for checking and enforcing usage quotas."""
+
+    def get_user_quota(self, session: Session, user_id: str) -> UsageQuota | None:
+        """Get user's current usage quota."""
+        return session.exec(
+            select(UsageQuota).where(UsageQuota.user_id == user_id)
+        ).first()
+
+    def get_user_plan(self, session: Session, user_id: str) -> SubscriptionPlan:
+        """
+        Get user's current subscription plan. Defaults to free plan.
+        """
+        subscription = session.exec(
+            select(UserSubscription).where(UserSubscription.user_id == user_id)
+        ).first()
+
+        if subscription and subscription.status == "active":
+            now = utcnow()
+            period_end = subscription.current_period_end
+            if period_end.tzinfo is None and now.tzinfo is not None:
+                from datetime import UTC
+                period_end = period_end.replace(tzinfo=UTC)
+
+            # Active-but-expired subscriptions should not keep paid plan quotas.
+            if period_end <= now:
+                subscription.status = "expired"
+                subscription.updated_at = now
+                session.add(subscription)
+                session.commit()
+            else:
+                plan = session.exec(
+                    select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
+                ).first()
+                if plan:
+                    return plan
+
+        if subscription and subscription.status != "active":
+            plan = session.exec(
+                select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
+            ).first()
+            if plan and plan.name == "free":
+                return plan
+
+        # Default to free plan with hardcoded fallback
+        free_plan = session.exec(
+            select(SubscriptionPlan).where(SubscriptionPlan.name == "free")
+        ).first()
+
+        if free_plan:
+            return free_plan
+
+        # Fallback: create in-memory default free plan (not persisted)
+        return self._create_default_free_plan()
+
+    def check_project_limit(
+        self,
+        session: Session,
+        user_id: str,
+    ) -> tuple[bool, int, int]:
+        """
+        Check whether a user can create a new (active) project.
+
+        Returns: (allowed, used, limit)
+        - allowed: True if user can proceed
+        - used: current count of active (non-deleted) projects
+        - limit: plan max_projects (-1 for unlimited)
+        """
+        plan = self.get_user_plan(session, user_id)
+        features = plan.features if plan and plan.features else {}
+        fallback_limit = DEFAULT_FREE_TIER_FEATURES.get("max_projects", 3)
+        raw_limit = features.get("max_projects", fallback_limit)
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            limit = int(fallback_limit)
+
+        used = int(
+            session.exec(
+                select(func.count())
+                .select_from(Project)
+                .where(
+                    Project.owner_id == user_id,
+                    Project.is_deleted.is_(False),
+                )
+            ).one()
+        )
+
+        if limit == -1:
+            return (True, used, -1)
+
+        return (used < limit, used, limit)
+
+    def get_plan_limits(self, plan: SubscriptionPlan) -> dict:
+        """Get limits dict from plan features."""
+        return plan.features
+
+    def has_feature_access(
+        self,
+        session: Session,
+        user_id: str,
+        feature_key: str,
+        *,
+        default: bool = False,
+    ) -> bool:
+        """Return whether a user has access to a boolean-style entitlement."""
+        plan = self.get_user_plan(session, user_id)
+        features = plan.features if plan and plan.features else DEFAULT_FREE_TIER_FEATURES
+        raw_value = features.get(feature_key)
+
+        if raw_value is None and feature_key == "materials_library_access":
+            inferred_limit = features.get("material_decompositions")
+            if inferred_limit not in (None, 0):
+                return True
+            inferred_upload_limit = features.get("material_uploads")
+            if inferred_upload_limit not in (None, 0):
+                return True
+
+        if isinstance(raw_value, bool):
+            return raw_value
+        if isinstance(raw_value, (int, float)):
+            return raw_value != 0
+        if isinstance(raw_value, str):
+            normalized = raw_value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+
+        if raw_value is None:
+            return default
+
+        return default
+
+    def _create_default_free_plan(self) -> SubscriptionPlan:
+        """
+        Create an in-memory default free plan as fallback.
+
+        Used when no free plan exists in the database (e.g., fresh install,
+        migration not run). This ensures the quota system always has a valid
+        plan to work with.
+
+        Returns:
+            SubscriptionPlan: A non-persisted free plan with default features.
+        """
+        now = utcnow()
+        return SubscriptionPlan(
+            id="default-free-plan",
+            name="free",
+            display_name=DEFAULT_FREE_PLAN_DISPLAY_NAME,
+            display_name_en=DEFAULT_FREE_PLAN_DISPLAY_NAME_EN,
+            price_monthly_cents=0,
+            price_yearly_cents=0,
+            features=clone_default_free_features(),
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def check_ai_conversation_quota(
+        self, session: Session, user_id: str
+    ) -> tuple[bool, int, int]:
+        """
+        Check if user can start an AI conversation.
+
+        Returns: (allowed, used, limit)
+        - allowed: True if user can proceed
+        - used: number of conversations used today
+        - limit: daily limit (-1 for unlimited)
+        """
+        plan = self.get_user_plan(session, user_id)
+        limit = plan.features.get("ai_conversations_per_day", 20) if plan else 20
+
+        # Reset quota if needed
+        quota = self._get_or_create_quota(session, user_id)
+        self._reset_quota_if_needed(session, quota)
+
+        # Unlimited
+        if limit == -1:
+            return (True, quota.ai_conversations_used, -1)
+
+        allowed = quota.ai_conversations_used < limit
+        return (allowed, quota.ai_conversations_used, limit)
+
+    def get_quota_snapshot(
+        self,
+        session: Session,
+        user_id: str,
+        plan: SubscriptionPlan | None = None,
+    ) -> dict:
+        """
+        Get all quota metrics in one pass.
+
+        This method is intended for read APIs so we only perform reset checks once
+        per request, instead of calling multiple quota-check methods that each do
+        their own reset logic.
+        """
+        plan = plan or self.get_user_plan(session, user_id)
+        features = plan.features if plan and plan.features else {}
+
+        quota = self._get_or_create_quota(session, user_id)
+        self._reset_quota_if_needed(session, quota)
+        self._reset_monthly_quota_if_needed(session, quota)
+
+        # Refresh to ensure latest values after possible reset commits.
+        session.refresh(quota)
+
+        ai_limit = features.get(
+            "ai_conversations_per_day",
+            DEFAULT_FREE_TIER_FEATURES["ai_conversations_per_day"],
+        )
+        snapshot = {
+            "ai_conversations": {
+                "used": quota.ai_conversations_used,
+                "limit": ai_limit,
+                "reset_at": quota.period_end,
+            }
+        }
+
+        for feature_type, (limit_field, used_field) in FEATURE_QUOTA_MAP.items():
+            response_key = FEATURE_RESPONSE_KEY_MAP[feature_type]
+            fallback_limit = DEFAULT_FREE_TIER_FEATURES.get(limit_field, 0)
+            snapshot[response_key] = {
+                "used": getattr(quota, used_field, 0),
+                "limit": features.get(limit_field, fallback_limit),
+                "reset_at": quota.monthly_period_end,
+            }
+
+        return snapshot
+
+    def consume_ai_conversation(self, session: Session, user_id: str) -> bool:
+        """
+        Increment AI conversation count atomically.
+
+        Uses atomic UPDATE to prevent race conditions.
+        Returns True if successful, False if quota exceeded.
+        """
+        plan = self.get_user_plan(session, user_id)
+        limit = plan.features.get("ai_conversations_per_day", 20) if plan else 20
+
+        quota = self._get_or_create_quota(session, user_id)
+        self._reset_quota_if_needed(session, quota)
+
+        query = (
+            update(UsageQuota)
+            .where(UsageQuota.user_id == user_id)
+            .values(ai_conversations_used=UsageQuota.ai_conversations_used + 1)
+        )
+        if limit != -1:
+            query = query.where(UsageQuota.ai_conversations_used < limit)
+
+        result = session.exec(query)
+        if limit != -1 and result.rowcount == 0:
+            session.rollback()
+            return False
+
+        session.commit()
+        return True
+
+    def release_ai_conversation(self, session: Session, user_id: str) -> bool:
+        """
+        Decrement AI conversation count atomically as a compensation action.
+
+        Returns True if one unit was refunded, False when there is nothing to refund
+        or the target row does not exist.
+        """
+        quota = self._get_or_create_quota(session, user_id)
+        self._reset_quota_if_needed(session, quota)
+        session.refresh(quota)
+
+        query = (
+            update(UsageQuota)
+            .where(UsageQuota.user_id == user_id)
+            .where(UsageQuota.ai_conversations_used > 0)
+            .values(ai_conversations_used=UsageQuota.ai_conversations_used - 1)
+        )
+
+        result = session.exec(query)
+        if result.rowcount == 0:
+            session.rollback()
+            return False
+
+        session.commit()
+        return True
+
+    def create_default_quota(
+        self, session: Session, user_id: str, commit: bool = True
+    ) -> UsageQuota:
+        """Create default usage quota for a new user."""
+        now = utcnow()
+        # AI conversation quota is a rolling daily window.
+        period_end = now + timedelta(hours=24)
+
+        quota = UsageQuota(
+            user_id=user_id,
+            period_start=now,
+            period_end=period_end,
+            ai_conversations_used=0,
+            last_reset_at=now
+        )
+        session.add(quota)
+        if commit:
+            session.commit()
+            session.refresh(quota)
+        else:
+            session.flush()
+        return quota
+
+    def ensure_default_quota(
+        self, session: Session, user_id: str, commit: bool = True
+    ) -> UsageQuota:
+        """Get existing quota or create a default one if missing."""
+        existing = self.get_user_quota(session, user_id)
+        if existing:
+            return existing
+        return self.create_default_quota(session, user_id, commit=commit)
+
+    def _get_or_create_quota(self, session: Session, user_id: str) -> UsageQuota:
+        """Get existing quota or create new one."""
+        quota = self.get_user_quota(session, user_id)
+        if not quota:
+            quota = self.create_default_quota(session, user_id)
+        return quota
+
+    def _reset_quota_if_needed(self, session: Session, quota: UsageQuota) -> bool:
+        """
+        Reset daily quota if the period has ended.
+
+        Returns True if reset was performed.
+        """
+        now = utcnow()
+
+        # Handle timezone-aware vs naive datetime comparison
+        # quota.last_reset_at may be naive (from datetime.utcnow) while now is timezone-aware
+        last_reset = quota.last_reset_at
+        if last_reset:
+            # If last_reset is naive but now is aware, make last_reset aware
+            if last_reset.tzinfo is None and now.tzinfo is not None:
+                from datetime import UTC
+                last_reset = last_reset.replace(tzinfo=UTC)
+            elif last_reset.tzinfo is not None and now.tzinfo is None:
+                # If now is naive but last_reset is aware, make now aware
+                from datetime import UTC
+                now = now.replace(tzinfo=UTC)
+
+            if (now - last_reset) < timedelta(hours=24):
+                return False
+
+        # Reset daily counters
+        quota.ai_conversations_used = 0
+        quota.last_reset_at = now
+        quota.period_start = now
+        quota.period_end = now + timedelta(hours=24)
+        session.add(quota)
+        session.commit()
+        return True
+
+    def check_feature_quota(
+        self, session: Session, user_id: str, feature_type: str
+    ) -> tuple[bool, int, int]:
+        """
+        Check if user can use a feature within quota limits.
+
+        Args:
+            feature_type: One of "material_upload", "material_decompose",
+                         "skill_create", "inspiration_copy"
+
+        Returns: (allowed, used, limit)
+            - allowed: True if user can proceed
+            - used: current usage count
+            - limit: quota limit (-1 for unlimited)
+        """
+        if feature_type not in FEATURE_QUOTA_MAP:
+            raise ValueError(f"Unknown feature type: {feature_type}")
+
+        limit_field, used_field = FEATURE_QUOTA_MAP[feature_type]
+
+        # Get plan and limit
+        plan = self.get_user_plan(session, user_id)
+        fallback_limit = DEFAULT_FREE_TIER_FEATURES.get(limit_field, 0)
+        limit = plan.features.get(limit_field, fallback_limit) if plan else fallback_limit
+
+        # Get or create quota, with monthly reset check
+        quota = self._get_or_create_quota(session, user_id)
+        self._reset_monthly_quota_if_needed(session, quota)
+
+        # Get current usage
+        used = getattr(quota, used_field, 0)
+
+        # Unlimited
+        if limit == -1:
+            return (True, used, -1)
+
+        allowed = used < limit
+        return (allowed, used, limit)
+
+    def consume_feature_quota(
+        self, session: Session, user_id: str, feature_type: str
+    ) -> bool:
+        """
+        Atomically consume one unit of feature quota.
+
+        Uses SQLAlchemy update() for atomicity.
+        Returns True if successful, False if quota exceeded.
+        """
+        if feature_type not in FEATURE_QUOTA_MAP:
+            raise ValueError(f"Unknown feature type: {feature_type}")
+
+        limit_field, used_field = FEATURE_QUOTA_MAP[feature_type]
+        used_column = getattr(UsageQuota, used_field)
+
+        plan = self.get_user_plan(session, user_id)
+        fallback_limit = DEFAULT_FREE_TIER_FEATURES.get(limit_field, 0)
+        limit = plan.features.get(limit_field, fallback_limit) if plan else fallback_limit
+
+        quota = self._get_or_create_quota(session, user_id)
+        self._reset_monthly_quota_if_needed(session, quota)
+
+        query = (
+            update(UsageQuota)
+            .where(UsageQuota.user_id == user_id)
+            .values(**{used_field: used_column + 1})
+        )
+        if limit != -1:
+            query = query.where(used_column < limit)
+
+        result = session.exec(query)
+        if limit != -1 and result.rowcount == 0:
+            session.rollback()
+            return False
+
+        session.commit()
+        return True
+
+    def _reset_monthly_quota_if_needed(
+        self, session: Session, quota: UsageQuota
+    ) -> bool:
+        """
+        Reset monthly quota if the period has ended.
+
+        Triggers on the 1st of each month at UTC 00:00:00.
+        Returns True if reset was performed.
+        """
+        now = utcnow()
+
+        # Initialize monthly period if not set
+        if quota.monthly_period_start is None or quota.monthly_period_end is None:
+            quota.monthly_period_start = self._get_month_start(now)
+            quota.monthly_period_end = self._get_next_month_start(now)
+            quota.material_uploads_used = 0
+            quota.material_decompositions_used = 0
+            quota.skill_creates_used = 0
+            quota.inspiration_copies_used = 0
+            session.add(quota)
+            session.commit()
+            return True
+
+        # Handle timezone-aware vs naive datetime comparison
+        period_end = quota.monthly_period_end
+        if period_end.tzinfo is None and now.tzinfo is not None:
+            from datetime import UTC
+            period_end = period_end.replace(tzinfo=UTC)
+
+        # Check if current time is past the monthly period end
+        if now < period_end:
+            return False
+
+        # Reset monthly counters
+        quota.monthly_period_start = quota.monthly_period_end
+        quota.monthly_period_end = self._get_next_month_start(quota.monthly_period_end)
+        quota.material_uploads_used = 0
+        quota.material_decompositions_used = 0
+        quota.skill_creates_used = 0
+        quota.inspiration_copies_used = 0
+        session.add(quota)
+        session.commit()
+        return True
+
+    def _get_month_start(self, date: datetime) -> datetime:
+        """Get the 1st of the month for the given date at UTC 00:00:00."""
+        return datetime(date.year, date.month, 1, 0, 0, 0)
+
+    def _get_next_month_start(self, date: datetime) -> datetime:
+        """Calculate the 1st of next month at UTC 00:00:00."""
+        if date.month == 12:
+            return datetime(date.year + 1, 1, 1, 0, 0, 0)
+        return datetime(date.year, date.month + 1, 1, 0, 0, 0)
+
+
+# Singleton instance
+quota_service = QuotaService()

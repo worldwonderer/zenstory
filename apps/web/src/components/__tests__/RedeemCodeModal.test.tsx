@@ -1,0 +1,107 @@
+import React from 'react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { RedeemCodeModal } from '../subscription/RedeemCodeModal'
+import { subscriptionApi } from '../../lib/subscriptionApi'
+import { handleApiError } from '../../lib/errorHandler'
+
+vi.mock('../../lib/subscriptionApi', () => ({
+  subscriptionApi: {
+    redeemCode: vi.fn(),
+  },
+}))
+
+vi.mock('../../lib/errorHandler', () => ({
+  handleApiError: vi.fn((err: unknown) =>
+    err instanceof Error ? err.message : '兑换失败，请检查兑换码'
+  ),
+}))
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (_key: string, defaultValue: string) => defaultValue,
+  }),
+}))
+
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  })
+
+  return function Wrapper({ children }: { children: React.ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  }
+}
+
+describe('RedeemCodeModal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('shows normalized error message from unified error handler', async () => {
+    const mockRedeemCode = vi.mocked(subscriptionApi.redeemCode)
+    const mockHandleApiError = vi.mocked(handleApiError)
+
+    const sourceError = new Error('ERR_QUOTA_AI_CONVERSATIONS_EXCEEDED')
+    mockRedeemCode.mockRejectedValue(sourceError)
+    mockHandleApiError.mockReturnValue(
+      '今日 AI 对话次数已用尽，请明天再试或升级套餐'
+    )
+
+    render(<RedeemCodeModal isOpen={true} onClose={vi.fn()} />, {
+      wrapper: createWrapper(),
+    })
+
+    fireEvent.change(screen.getByPlaceholderText('ERG-XXXX-XXXX-XXXXXXXX'), {
+      target: { value: 'ERG-ABCD-1234-ABCDEFGH' },
+    })
+    const form = document.querySelector('form')
+    expect(form).toBeTruthy()
+    fireEvent.submit(form!)
+
+    await waitFor(() => {
+      expect(mockHandleApiError).toHaveBeenCalled()
+    })
+    expect(
+      screen.getByText('今日 AI 对话次数已用尽，请明天再试或升级套餐')
+    ).toBeInTheDocument()
+  })
+
+  it('passes optional attribution source when redeeming', async () => {
+    const mockRedeemCode = vi.mocked(subscriptionApi.redeemCode)
+    mockRedeemCode.mockResolvedValue({
+      success: true,
+      message: '兑换成功！',
+    })
+
+    render(
+      <RedeemCodeModal
+        isOpen={true}
+        onClose={vi.fn()}
+        source="chat_quota_blocked"
+      />,
+      {
+        wrapper: createWrapper(),
+      }
+    )
+
+    fireEvent.change(screen.getByPlaceholderText('ERG-XXXX-XXXX-XXXXXXXX'), {
+      target: { value: 'ERG-ABCD-1234-ABCDEFGH' },
+    })
+    const form = document.querySelector('form')
+    expect(form).toBeTruthy()
+    fireEvent.submit(form!)
+
+    await waitFor(() => {
+      expect(mockRedeemCode).toHaveBeenCalledWith(
+        'ERG-ABCD-1234-ABCDEFGH',
+        'chat_quota_blocked'
+      )
+    })
+  })
+})

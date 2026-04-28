@@ -1,0 +1,220 @@
+{
+  "nav": {
+    "features": "功能",
+    "pricing": "订阅权益",
+    "login": "登录",
+    "getStarted": "免费创建项目",
+    "goDashboard": "进入工作台"
+  },
+  "hero": {
+    "badge": "面向小说与剧本的 AI 创作平台",
+    "titlePart1": "从灵感到连载，",
+    "titlePart2": "一套工具写完整部作品",
+    "description": "zenstory 把项目文件管理、素材沉淀、角色设定、章节写作和版本回滚整合到同一工作台。先搭结构，再写正文，随时改稿也不丢思路。",
+    "cta": "免费创建项目",
+    "secondaryCta": "查看演示",
+    "ctaSubtext": "注册即用 · 3 分钟上手"
+  },
+  "features": {
+    "cloudSave": "自动保存，不怕误删",
+    "multiDevice": "手机电脑实时同步",
+    "versionHistory": "版本可回退，改错可撤销"
+  },
+  "stats": {
+    "creators": "创作者在用",
+    "wordsGenerated": "AI 协作字数",
+    "rating": "创作者评分",
+    "contentTypes": "核心创作模式"
+  },
+  "demo": {
+    "projectName": "《天阙余烬》项目",
+    "autoSave": "自动保存",
+    "versionHistory": "版本历史",
+    "popular": "推荐",
+    "pauseAutoplay": "暂停轮播",
+    "resumeAutoplay": "继续轮播",
+    "scenes": {
+      "create": "角色建档",
+      "suggest": "按上下文续写",
+      "edit": "章节级改写"
+    }
+  },
+  "whyChoose": {
+    "title": "真正服务长期创作的 AI",
+    "subtitle": "不是只给一句回复，而是帮你把项目持续推进",
+    "conversational": {
+      "title": "对话式创作",
+      "description": "像和朋友聊天一样自然地创作，AI 理解你的意图，帮你完善想法"
+    },
+    "context": {
+      "title": "深度理解上下文",
+      "description": "AI 记住你的角色卡、世界观和剧情，保持故事的一致性"
+    },
+    "multiType": {
+      "title": "多类型支持",
+      "description": "无论是长篇小说、短篇小说还是短剧剧本，都能轻松驾驭"
+    },
+    "privacy": {
+      "title": "隐私安全",
+      "description": "你的创作内容默认私密，不会用于模型训练，除非你明确授权"
+    },
+    "voiceInput": {
+      "title": "语音速记",
+      "description": "灵感来了直接说，自动转写并挂到当前章节，避免想法流失。"
+    },
+    "materialUpload": {
+      "title": "素材双轨管理",
+      "description": "项目内素材文件夹与独立素材库并行，上传、拆解、复用一站完成。"
+    },
+    "contextAware": {
+      "title": "上下文持续记忆",
+      "description": "角色、世界观、剧情线持续生效，减少设定冲突和跑偏。"
+    },
+    "versionHistory": {
+      "title": "版本回滚与对比",
+      "description": "每次修改自动留痕，支持回滚和差异对比，改稿更安心。"
+    },
+    "cloudSync": {
+      "title": "项目级云端同步",
+      "description": "跨设备无缝衔接，创作进度实时保存，随时继续写。"
+    },
+    "export": {
+      "title": "导出与发布准备",
+      "description": "导出前自动整理章节与结构，降低排版和交付成本。"
+    }
+  },
+  "projectTypes": {
+    "title": "三类创作项目，开箱即用",
+    "subtitle": "内置文件树、章节排序、素材引用与 AI 写作策略",
+    "novel": {
+      "name": "长篇连载小说",
+      "description": "面向 5 万字以上项目，支持长期世界观维护与章节推进",
+      "features": [
+        "目录树与拖拽排序",
+        "角色关系持续记忆",
+        "双轨素材引用",
+        "版本对比与回滚"
+      ]
+    },
+    "short": {
+      "name": "中短篇小说",
+      "description": "面向 5000-20000 字，一次完成构思、冲突与收束",
+      "features": [
+        "冲突驱动大纲",
+        "关键场景快速成稿",
+        "篇幅节奏校准"
+      ]
+    },
+    "screenplay": {
+      "name": "短剧与网剧脚本",
+      "description": "支持分集结构、角色弧线与镜头化表达的脚本生产",
+      "features": [
+        "分集剧情板",
+        "角色弧线追踪",
+        "结构化脚本输出"
+      ]
+    }
+  },
+  "pricingTeaser": {
+    "title": "先免费开始，按需升级",
+    "subtitle": "免费版即可完整体验创作流程，升级后解锁更高额度与效率。",
+    "viewPricing": "查看套餐权益",
+    "primaryCta": "免费创建项目",
+    "free": {
+      "badge": "免费",
+      "title": "快速开始创作",
+      "desc": "适合个人起步，覆盖项目创建、基础对话与核心写作流程。"
+    },
+    "pro": {
+      "badge": "专业版",
+      "title": "提高写作速度与容量",
+      "desc": "面向高频创作，提供更高上下文容量与更充足的 AI 使用额度。"
+    },
+    "team": {
+      "badge": "团队协作",
+      "title": "多人分工与统一资产",
+      "desc": "适合工作室协作，统一素材、版本与项目管理，减少沟通成本。"
+    }
+  },
+  "cta": {
+    "title": "现在就开始你的下一部作品",
+    "subtitle": "3 分钟建立项目，把碎片灵感沉淀成可持续迭代的创作资产",
+    "button": "免费创建项目"
+  },
+  "footer": {
+    "copyright": "© 2026 zenstory. All rights reserved.",
+    "tagline": "把 AI 放进你的创作生产线"
+  },
+  "preview": {
+    "projectFiles": "项目文件",
+    "worldBuilding": "世界观",
+    "characters": "角色卡",
+    "outline": "大纲",
+    "draft": "正文",
+    "sceneCreate": {
+      "character": {
+        "name": "苏婉 · 神秘女配",
+        "gender": "性别",
+        "genderValue": "女",
+        "age": "年龄",
+        "ageValue": "19岁",
+        "identity": "身份",
+        "identityValue": "内门弟子",
+        "personality": "性格",
+        "personalityDesc": "外表冷若冰霜，实则内心细腻，对林逸有着复杂的情感...",
+        "secret": "秘密",
+        "secretDesc": "真实身份是上古神族后裔"
+      },
+      "ai": {
+        "title": "AI 助手",
+        "input": "帮我的玄幻小说创建一个神秘的女配角",
+        "response": "好的！我来创建一个神秘女配角。",
+        "created": "已创建角色",
+        "desc": "青云宗内门弟子，身份神秘...",
+        "placeholder": "输入想法..."
+      }
+    },
+    "sceneSuggest": {
+      "chapter": "第一章 · 废柴觉醒",
+      "content1": "青云山巅，云雾缭绕。",
+      "content2": "林逸站在悬崖边，看着脚下万丈深渊，苦笑一声。三年前觉醒废柴体质的那刻，就注定了今天。",
+      "content3": "忽然，一道银色身影从云雾中走出，竟是那个从不与人交谈的苏婉师姐",
+      "ai": {
+        "title": "AI 助手",
+        "input": "帮我写第一章的开头",
+        "response": "好的！我来写一个悬念十足的开篇。",
+        "writing": "正在写入...",
+        "action": "描写苏婉出场",
+        "placeholder": "输入想法..."
+      }
+    },
+    "sceneEdit": {
+      "chapter": "第三章 · 青云大比",
+      "scene1": "场景一",
+      "scene1Desc": "青云大比开幕，各方势力齐聚",
+      "scene2": "场景二 · 新增",
+      "scene2Desc": "林逸首战对阵师兄张耀，展现惊人实力",
+      "scene3": "场景三 · 新增",
+      "scene3Desc": "苏婉在观众席注视林逸，眼中闪过复杂神色",
+      "ai": {
+        "title": "AI 助手",
+        "input": "扩展第三章大纲，加入战斗和苏婉的暗线",
+        "response": "好的！我来增加战斗和苏婉暗线。",
+        "updated": "已更新文件",
+        "updatedFile": "第三章大纲",
+        "newScenes": "新增 2 个场景",
+        "undo": "可一键撤销",
+        "placeholder": "输入想法..."
+      }
+    }
+  },
+  "agentApi": {
+    "sectionLabel": "Agent API 接入",
+    "badge": "新功能",
+    "title": "让 AI 助手直接操作你的创作工作台",
+    "subtitle": "生成 API Key，粘贴到 Claude Code 或 OpenClaw，你的 AI 助手就能直接读写小说项目。",
+    "supportedAgents": "支持接入",
+    "cta": "免费开始",
+    "ctaAriaLabel": "免费开始使用 Agent API"
+  }
+}

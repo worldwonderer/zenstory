@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import pytest
+from jinja2 import TemplateNotFound
+
+from prompts.prompt_loader import (
+    PromptLoader,
+    _get_cached_loader,
+    create_character_mention_prompt,
+    get_prompt,
+)
+
+
+def test_prompt_loader_rejects_unknown_novel_type():
+    with pytest.raises(ValueError) as excinfo:
+        PromptLoader("invalid")
+
+    assert "不支持的小说类型" in str(excinfo.value)
+
+
+def test_prompt_loader_lists_available_prompts_for_web_long():
+    loader = PromptLoader("web_long")
+
+    available = loader.list_available_prompts()
+
+    assert "character_mention" in available
+    assert "text_edit" in available
+
+
+def test_prompt_loader_missing_template_reports_available_choices():
+    loader = PromptLoader("web_long")
+
+    with pytest.raises(TemplateNotFound) as excinfo:
+        loader.load("missing_template")
+
+    message = str(excinfo.value)
+    assert "missing_template" in message
+    assert "character_mention" in message
+
+
+def test_cached_loader_is_reused_and_get_prompt_renders_template():
+    _get_cached_loader.cache_clear()
+
+    first = _get_cached_loader("web_long")
+    second = _get_cached_loader("web_long")
+    rendered = get_prompt("text_edit", original_text="原文", instruction="润色一下")
+
+    assert first is second
+    assert "润色一下" in rendered
+    assert "原文" in rendered
+
+
+def test_compatibility_function_matches_get_prompt_output():
+    compat_prompt = create_character_mention_prompt(novel_type="web_short")
+    direct_prompt = get_prompt("character_mention", novel_type="web_short")
+
+    assert compat_prompt == direct_prompt
+    assert "chapter_importance" in compat_prompt

@@ -1,0 +1,48 @@
+# zenstory - Quick Start
+# ======================
+# 1. Copy .env.example to .env and set your LLM API key
+# 2. docker compose up -d --build
+# 3. Visit http://localhost:5173
+#
+# For production with PostgreSQL + Redis, use docker-compose.full.yml
+
+services:
+  server:
+    build:
+      context: ./apps/server
+      dockerfile: Dockerfile
+    container_name: zenstory-server
+    restart: unless-stopped
+    environment:
+      # Only required config — your LLM API key
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Database defaults to SQLite inside container
+      DATABASE_URL: sqlite:///./zenstory.db
+      # CORS for local dev
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "${SERVER_PORT:-8000}:8080"
+    volumes:
+      - zenstory_db:/app/db
+      - zenstory_uploads:/app/uploads
+      - zenstory_chroma:/app/chroma_data
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: zenstory-web
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:${SERVER_PORT:-8000}
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+
+volumes:
+  zenstory_db:
+  zenstory_uploads:
+  zenstory_chroma:

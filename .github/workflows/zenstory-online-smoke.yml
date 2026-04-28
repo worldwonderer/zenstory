@@ -1,0 +1,78 @@
+name: zenstory Online Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: "Override zenstory backend URL (optional)"
+        required: false
+        type: string
+      frontend_url:
+        description: "Override zenstory frontend URL (optional)"
+        required: false
+        type: string
+  schedule:
+    - cron: "30 */6 * * *"
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
+
+concurrency:
+  group: zenstory-online-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: zenstory deployed smoke
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (
+        github.event.workflow_run.head_branch == 'main'
+      )
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Resolve smoke target URLs
+      id: resolve
+      env:
+        ZENSTORY_BACKEND_URL_DEFAULT: ${{ vars.ZENSTORY_BACKEND_URL || secrets.ZENSTORY_BACKEND_URL }}
+        ZENSTORY_FRONTEND_URL_DEFAULT: ${{ vars.ZENSTORY_FRONTEND_URL || secrets.ZENSTORY_FRONTEND_URL }}
+        ZENSTORY_BACKEND_URL_FROM_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.backend_url || '' }}
+        ZENSTORY_FRONTEND_URL_FROM_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.frontend_url || '' }}
+      run: |
+        backend_url="${ZENSTORY_BACKEND_URL_FROM_INPUT:-$ZENSTORY_BACKEND_URL_DEFAULT}"
+        frontend_url="${ZENSTORY_FRONTEND_URL_FROM_INPUT:-$ZENSTORY_FRONTEND_URL_DEFAULT}"
+
+        if [[ -z "$backend_url" || -z "$frontend_url" ]]; then
+          echo "::error::Missing zenstory smoke URLs. Set ZENSTORY_BACKEND_URL and ZENSTORY_FRONTEND_URL (repo vars/secrets), or pass workflow_dispatch inputs."
+          exit 1
+        fi
+
+        echo "backend_url=$backend_url" >> "$GITHUB_OUTPUT"
+        echo "frontend_url=$frontend_url" >> "$GITHUB_OUTPUT"
+
+        echo "## zenstory Smoke Targets" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Backend: $backend_url" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Frontend: $frontend_url" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Run online smoke checks
+      env:
+        ZENSTORY_BACKEND_URL: ${{ steps.resolve.outputs.backend_url }}
+        ZENSTORY_FRONTEND_URL: ${{ steps.resolve.outputs.frontend_url }}
+        ZENSTORY_SMOKE_USERNAME: ${{ secrets.ZENSTORY_SMOKE_USERNAME }}
+        ZENSTORY_SMOKE_PASSWORD: ${{ secrets.ZENSTORY_SMOKE_PASSWORD }}
+        ZENSTORY_SMOKE_TIMEOUT_SECONDS: ${{ vars.ZENSTORY_SMOKE_TIMEOUT_SECONDS || '480' }}
+      run: |
+        set -o pipefail
+        mkdir -p artifacts
+        bash scripts/ci/zenstory-online-smoke.sh 2>&1 | tee artifacts/zenstory-online-smoke.log
+
+    - name: Upload smoke logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: zenstory-online-smoke-logs
+        path: artifacts/zenstory-online-smoke.log
+        retention-days: 7

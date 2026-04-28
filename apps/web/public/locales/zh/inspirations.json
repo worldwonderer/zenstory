@@ -1,0 +1,66 @@
+{
+  "title": "灵感库",
+  "subtitle": "发现并使用社区创建的项目模板",
+  "searchPlaceholder": "搜索灵感...",
+  "search": "搜索",
+  "view": "查看",
+  "use": "使用",
+  "copying": "复制中...",
+  "copied": "已复制!",
+  "useThis": "使用此模板",
+  "copyCount_one": "{{count}} 次使用",
+  "copyCount_other": "{{count}} 次使用",
+  "community": "社区",
+  "featured": "精选",
+  "back": "返回",
+  "copySuccess": "灵感已复制到您的工作空间！",
+  "copyError": "复制灵感失败，请重试。",
+  "copyAuthRequired": "请先登录后再复制灵感。",
+  "copyQuotaExceeded": "本月灵感复制次数已用完，请升级套餐或下月再试。",
+  "copyQuotaExceededTitle": "灵感复制额度已用尽",
+  "copyQuotaExceededModalDesc": "你已用完本月灵感复制额度。可先去订阅页提升额度，或到套餐页快速对比后再决定。",
+  "projectQuotaExceededTitle": "项目数量已达上限",
+  "projectQuotaExceededModalDesc": "当前套餐可创建的项目数量已达上限。可先去订阅页升级，或到套餐页快速对比后再决定。",
+  "copyQuotaUpgradePrimary": "查看升级方案",
+  "copyQuotaUpgradeSecondary": "查看套餐对比",
+  "projectTypes": {
+    "novel": "长篇小说",
+    "short": "短篇小说",
+    "screenplay": "剧本"
+  },
+  "heroHints": {
+    "novel": "长篇叙事模板",
+    "short": "短篇灵感模板",
+    "screenplay": "剧本结构模板"
+  },
+  "description": "描述",
+  "tags": "标签",
+  "fileStructure": "文件结构",
+  "noFiles": "此模板中没有文件",
+  "projectName": "项目名称（可选）",
+  "projectNameHint": "留空则使用模板名称",
+  "cancel": "取消",
+  "noResults": "没有找到匹配的灵感。",
+  "resultsCount_one": "找到 {{count}} 个灵感",
+  "resultsCount_other": "找到 {{count}} 个灵感",
+  "loadError": "加载灵感失败，请重试。",
+  "retry": "重试",
+  "page": "第 {{current}} 页，共 {{total}} 页",
+  "pagination": {
+    "previous": "上一页",
+    "next": "下一页"
+  },
+  "mySubmissions": {
+    "title": "我的投稿",
+    "count": "{{count}} 条",
+    "loading": "加载投稿状态中...",
+    "empty": "你还没有投稿记录。可在项目页点击“投稿到灵感库”提交。",
+    "submittedAt": "提交于 {{date}}",
+    "rejectionReason": "驳回原因：{{reason}}",
+    "status": {
+      "pending": "待审核",
+      "approved": "已通过",
+      "rejected": "已拒绝"
+    }
+  }
+}

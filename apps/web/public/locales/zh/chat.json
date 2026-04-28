@@ -1,0 +1,255 @@
+{
+  "panel": {
+    "title": "AI 创作助手",
+    "processing": "处理中",
+    "loadingHistory": "加载历史...",
+    "aiMemory": "AI 记忆",
+    "newSession": "新建会话",
+    "clearChat": "清空对话",
+    "selectProject": "请先选择一个项目",
+    "loadingMessages": "加载历史消息...",
+    "welcome": "我是你的创作伙伴，有什么可以帮你的？",
+    "suggestions": "尝试输入：写一章大纲 / 创建角色卡 / 帮我续写",
+    "editing": "正在编辑:",
+    "thinking": "思考中",
+    "jumpToLatest": "跳到最新内容",
+    "source": "参考来源：",
+    "sources": "参考来源：",
+    "operation": "操作:",
+    "resizeHandle": "拖动调整输入区域高度（双击重置）",
+    "skillMatched": "已启用技能: {{name}}",
+    "skillMatchedMulti": "技能{{index}}: {{name}}",
+    "streamErrorTitle": "这次生成中断了",
+    "quotaExceededTitle": "今日 AI 配额已用尽",
+    "quotaExceededHint": "这是账号配额限制，不是本次流程步数限制。"
+  },
+  "input": {
+    "placeholder": "描述你想创作的角色、场景或剧情...",
+    "placeholderWhileProcessing": "AI 正在生成，你可以先输入，结束后再发送…",
+    "mode": {
+      "label": "生成模式",
+      "fast": "快速",
+      "quality": "高质量",
+      "fastHint": "更快出结果（可能更简略）",
+      "qualityHint": "更稳更全面（可能更慢）",
+      "switchedFast": "已切换到快速模式：更快出结果（可能更简略）",
+      "switchedQuality": "已切换到高质量模式：更稳更全面（可能更慢）"
+    },
+    "attachedMaterials": "引用素材:",
+    "quotedText": "引用文本:",
+    "addToContext": "添加到上下文",
+    "quoteAdded": "已添加引用",
+    "remove": "移除",
+    "refresh": "换一批",
+    "staticSuggestions": [
+      "帮我构思一个穿越故事的核心冲突",
+      "创建一个腹黑女主的角色卡",
+      "设计一个亦正亦邪的反派角色",
+      "构建修仙世界观的力量体系",
+      "帮我设定故事的时代背景",
+      "扩展这一场景的细节描写",
+      "润色这段对话，让人物更生动",
+      "为这个角色设计人物小传",
+      "开始创作第一章"
+    ]
+  },
+  "suggestions": {
+    "outline": "写一章大纲",
+    "character": "创建角色卡",
+    "continue": "帮我续写",
+    "setting": "补充世界观",
+    "expand": "扩写剧情",
+    "polish": "润色文笔"
+  },
+  "actions": {
+    "confirm": "确认",
+    "reject": "拒绝",
+    "undo": "撤销",
+    "apply": "应用更改"
+  },
+  "status": {
+    "thinking": "正在思考...",
+    "writing": "正在创作中...",
+    "assembling": "正在组装上下文...",
+    "completed": "已完成 {{count}} 个操作",
+    "currentFile": "当前文件 ID: {{id}}",
+    "fileType": "文件类型: {{type}}",
+    "selectedText": "选中的文本:",
+    "context": "上下文:"
+  },
+  "projectType": {
+    "novel": {
+      "name": "长篇小说",
+      "description": "适合 5 万字以上的连载小说"
+    },
+    "short": {
+      "name": "短篇小说",
+      "description": "适合 5000-20000 字的独立短篇"
+    },
+    "screenplay": {
+      "name": "短剧剧本",
+      "description": "适合短视频剧本、微短剧创作"
+    }
+  },
+  "message": {
+    "aiEdit": "AI 修改: {{files}}{{extra}}",
+    "aiDone": "AI 对话完成",
+    "createProject": "我想创作一部{{typeLabel}},我的灵感是：\n\n{{content}}\n\n请帮我构思故事框架，包括主要人物、故事背景、核心冲突和大致情节走向。",
+    "aiDoneFilesModified": "AI 对话完成 - 文件已修改",
+    "aiConversationAt": "AI 助手对话 - {{time}}"
+  },
+  "context": {
+    "priority": {
+      "critical": "关键",
+      "constraint": "约束",
+      "relevant": "相关",
+      "inspiration": "灵感",
+      "default": "来源"
+    },
+    "label": "来源",
+    "relevanceScore": "相关 {{score}}%",
+    "citations": "引用来源"
+  },
+  "workflow": {
+    "iteration": "轮次",
+    "remaining": "剩余",
+    "agentCollaboration": "AI 分工协作",
+    "toolCall": "AI 自动操作",
+    "iterationExhausted": "{{layer}}轮数已耗尽",
+    "lowTurnWarning": "本次流程还剩 {{remaining}} 步，建议先明确最优先目标。",
+    "collaborationExhaustedSummary": "本次 AI 分工协作已到上限（{{max}} 轮），先停在这里避免跑偏。",
+    "toolCallExhaustedSummary": "本次 AI 自动操作已到上限（{{max}} 步），先停在这里避免卡住。",
+    "nextStepHint": "你可以直接继续，也可以拆成更小步骤。",
+    "viewTechnicalDetails": "查看技术详情",
+    "actionContinue": "继续完成（推荐）",
+    "actionSplit": "拆成小步骤",
+    "actionManual": "我先手动改",
+    "actionPrompt": {
+      "continue": "请基于上一步结果继续完成剩余任务，优先最关键目标。",
+      "split": "请把剩余任务拆成 2-3 个小步骤，并先完成第 1 步。",
+      "manual": "我会先手动修改一部分，请告诉我最小可行修改建议。"
+    },
+    "workflowLabel": "工作流",
+    "waitingForReply": "等待您的回复",
+    "needsConfirmation": "AI 需要您的确认后才能继续",
+    "taskCompleted": "任务已完成"
+  },
+  "tool": {
+    "create_file": "创建文件",
+    "update_file": "更新文件",
+    "edit_file": "编辑文件",
+    "delete_file": "删除文件",
+    "query_files": "查询文件",
+    "update_project": "更新项目状态",
+    "processing": "处理中",
+    "processing_ellipsis": "处理中...",
+    "created": "已创建{{type}}",
+    "updated": "已更新",
+    "deleted": "已删除文件",
+    "no_files_found": "未找到相关文件",
+    "files_found": "找到 {{count}} 个文件",
+    "status_updated": "已更新项目状态",
+    "undo_edit": "撤销此次编辑",
+    "completed": "{{label}}完成",
+    "query_description": "查找{{label}}",
+    "query_files_default": "查找文件",
+    "update_status_description": "记录项目信息",
+    "edit_success": "编辑成功",
+    "edits_summary": "{{editsApplied}} 处变更 · {{size}}",
+    "complete_suffix": "完成",
+    "view_edit_details": "查看变更详情（{{count}}）",
+    "failed": "{{label}}失败"
+  },
+  "fileType": {
+    "outline": "大纲",
+    "draft": "手稿",
+    "character": "角色卡",
+    "lore": "世界观",
+    "snippet": "参考素材",
+    "default": "文件"
+  },
+  "action": {
+    "insert": "插入到光标后",
+    "replace": "替换选中文本",
+    "new_snippet": "创建为参考素材",
+    "reference_only": "仅参考",
+    "apply": "应用"
+  },
+  "size": {
+    "characters": "{{length}} 字符",
+    "kCharacters": "{{length}}k 字符"
+  },
+  "edit": {
+    "replace": "替换",
+    "append": "追加",
+    "prepend": "前置",
+    "insert_after": "插入后",
+    "insert_before": "插入前",
+    "delete": "删除",
+    "label_delete": "删除",
+    "label_add": "新增",
+    "append_content": "追加内容",
+    "prepend_content": "前置内容",
+    "insert_after_label": "在此之后插入",
+    "insert_before_label": "在此之前插入",
+    "insert_content": "插入内容",
+    "delete_content": "删除内容"
+  },
+  "conflict": {
+    "suggestions_label": "建议:",
+    "location": "位置: {{location}}",
+    "fix_suggestions": "建议修复:"
+  },
+  "response": {
+    "generated_result": "生成结果",
+    "used_snippets": "引用的素材",
+    "reasoning_label": "AI 思考过程:",
+    "conflicts_detected": "检测到 {{count}} 个潜在问题"
+  },
+  "voice": {
+    "recognition_success": "识别成功",
+    "cancelled": "已取消录音",
+    "unavailable": "语音输入不可用",
+    "recognizing": "正在识别...",
+    "mobile_stop": "松开停止录音",
+    "desktop_stop": "点击停止录音，右键取消",
+    "mobile_hold": "长按说话",
+    "input": "语音输入"
+  },
+  "stream": {
+    "processing": "正在处理..."
+  },
+  "thinking": {
+    "title": "AI 思考过程",
+    "expand": "展开思考过程",
+    "collapse": "收起思考过程",
+    "toggleLabel": "显示思考过程",
+    "toggleHide": "隐藏思考过程"
+  },
+  "skill": {
+    "loading": "加载技能中...",
+    "noResults": "未找到匹配的技能",
+    "builtin": "内置",
+    "user": "自定义",
+    "hint": "↑↓ 选择 · Enter 确认 · Esc 取消",
+    "triggerLabel": "已选技能"
+  },
+  "feedback": {
+    "like": "点赞",
+    "dislike": "点踩",
+    "pendingSave": "消息保存中，稍后可反馈",
+    "submitFailed": "反馈提交失败，请稍后重试",
+    "unsupported": "当前消息暂不支持反馈"
+  },
+  "fileDefault": "文件",
+  "defaultTitle": "新对话",
+  "exportFilename": "导出",
+  "project": {
+    "field": {
+      "summary": "摘要",
+      "current_phase": "当前阶段",
+      "writing_style": "写作风格",
+      "notes": "备注"
+    }
+  }
+}

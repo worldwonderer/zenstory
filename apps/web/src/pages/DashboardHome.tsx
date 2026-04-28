@@ -1,0 +1,1201 @@
+import { useState, useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
+import { logger } from "../lib/logger";
+import {
+  Book, FileText, Clapperboard, Clock, Trash2,
+  Sparkles, Compass, Zap, CheckSquare, Square, ChevronRight
+} from "../components/icons";
+import { Modal } from "../components/ui/Modal";
+import { DashboardPageHeader } from "../components/dashboard/DashboardPageHeader";
+import { DashboardSearchBar } from "../components/dashboard/DashboardSearchBar";
+import { DashboardEmptyState } from "../components/dashboard/DashboardEmptyState";
+import { useFeaturedInspirations } from "../hooks/useInspirations";
+import { projectApi } from "../lib/api";
+import type { ProjectTemplate } from "../lib/api";
+import { ApiError } from "../lib/apiClient";
+import { handleApiError } from "../lib/errorHandler";
+import { toast } from "../lib/toast";
+import { useAuth } from "../contexts/AuthContext";
+import { useProject } from "../contexts/ProjectContext";
+import type { ProjectType } from "../types";
+import { useIsMobile, useIsTablet } from "../hooks/useMediaQuery";
+import { useDashboardInspirations } from "../hooks/useDashboardInspirations";
+import { formatRelativeTime, parseUTCDate } from "../lib/dateUtils";
+import { UpgradePromptModal } from "../components/subscription/UpgradePromptModal";
+import { buildUpgradeUrl, getUpgradePromptDefinition } from "../config/upgradeExperience";
+import { writingStatsApi } from "../lib/writingStatsApi";
+import { onboardingPersonaApi, type PersonaRecommendation } from "../lib/onboardingPersonaApi";
+import { buildTodayActionPlan, type TodayActionPlanItem } from "../lib/dashboardActionPlan";
+import type { ActivationGuideResponse } from "../types/writingStats";
+import { dashboardOnboardingFlags } from "../config/dashboardOnboarding";
+import { AgentConnectionCard } from "../components/dashboard/AgentConnectionCard";
+
+const SUPPORTED_PROJECT_TYPES: ProjectType[] = ["novel", "short", "screenplay"];
+
+function isProjectType(value: string): value is ProjectType {
+  return SUPPORTED_PROJECT_TYPES.includes(value as ProjectType);
+}
+
+export default function DashboardHome() {
+  const { t, i18n } = useTranslation(['dashboard', 'home']);
+  const projectQuotaUpgradePrompt = getUpgradePromptDefinition("project_quota_blocked");
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const {
+    projects,
+    loading: projectsLoading,
+    createProject: contextCreateProject,
+    deleteProject: contextDeleteProject,
+  } = useProject();
+
+  // Mobile and tablet detection
+  const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
+  const showDeleteAction = isMobile || isTablet;
+  const normalizedLanguage = (i18n.resolvedLanguage || i18n.language || "zh").toLowerCase();
+  const isEnglish = normalizedLanguage.startsWith("en");
+  const userId = user?.id ?? null;
+  const showTodayActionPlanEntry = dashboardOnboardingFlags.todayActionPlanEnabled;
+  const showFirstDayActivationGuide = dashboardOnboardingFlags.firstDayActivationGuideEnabled;
+
+  // Featured inspirations
+  const {
+    featured: featuredInspirations,
+    isLoading: isInspirationsLoading,
+    isFetching: isInspirationsFetching,
+  } = useFeaturedInspirations(3);
+  const shouldShowFeaturedLoading =
+    isInspirationsLoading || (isInspirationsFetching && featuredInspirations.length === 0);
+
+  const [templates, setTemplates] = useState<Record<string, ProjectTemplate> | null>(null);
+  const [creating, setCreating] = useState<ProjectType | null>(null);
+  const [isQuickCreating, setIsQuickCreating] = useState(false);
+  const [inspiration, setInspiration] = useState("");
+  const [newProjectName, setNewProjectName] = useState("");
+  const [activeTab, setActiveTab] = useState<ProjectType>("novel");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showProjectQuotaUpgradeModal, setShowProjectQuotaUpgradeModal] = useState(false);
+  const [activationGuide, setActivationGuide] = useState<ActivationGuideResponse | null>(null);
+  const [activationGuideLoaded, setActivationGuideLoaded] = useState(false);
+  const [personaRecommendations, setPersonaRecommendations] = useState<PersonaRecommendation[]>([]);
+  const [executingTodayActionId, setExecutingTodayActionId] = useState<string | null>(null);
+  const [todayActionPlanExpanded, setTodayActionPlanExpanded] = useState(false);
+  const [inspirationRefreshSeed, setInspirationRefreshSeed] = useState(0);
+
+  // Dynamic project type config based on language
+  const PROJECT_TYPE_CONFIG: Record<
+    ProjectType,
+    {
+      icon: React.ComponentType<{ className?: string }>;
+      labelKey: string;
+      colorClass: string;
+      bgClass: string;
+      gradientFrom: string;
+      gradientTo: string;
+      placeholderKey: string;
+      descriptionKey: string;
+    }
+  > = useMemo(() => ({
+    novel: {
+      icon: Book,
+      labelKey: 'projectType.novel.name',
+      colorClass: 'text-[hsl(var(--text-secondary))]',
+      bgClass: 'bg-white/5',
+      gradientFrom: 'from-white/5',
+      gradientTo: 'to-white/0',
+      placeholderKey: 'inspiration.novelPlaceholder',
+      descriptionKey: 'inspiration.novelDesc',
+    },
+    short: {
+      icon: FileText,
+      labelKey: 'projectType.short.name',
+      colorClass: 'text-emerald-500',
+      bgClass: 'bg-emerald-500/10',
+      gradientFrom: 'from-emerald-500/20',
+      gradientTo: 'to-teal-500/20',
+      placeholderKey: 'inspiration.shortPlaceholder',
+      descriptionKey: 'inspiration.shortDesc',
+    },
+    screenplay: {
+      icon: Clapperboard,
+      labelKey: 'projectType.screenplay.name',
+      colorClass: 'text-amber-500',
+      bgClass: 'bg-amber-500/10',
+      gradientFrom: 'from-amber-500/20',
+      gradientTo: 'to-orange-500/20',
+      placeholderKey: 'inspiration.screenplayPlaceholder',
+      descriptionKey: 'inspiration.screenplayDesc',
+    },
+  }), []);
+
+  // Helper to get translated config
+  const getTranslatedConfig = (type: string | undefined) => {
+    const rawType = type ?? "";
+    const safeType = isProjectType(rawType) ? rawType : "novel";
+    const config = PROJECT_TYPE_CONFIG[safeType];
+    return {
+      ...config,
+      label: t(config.labelKey),
+      placeholder: t(config.placeholderKey),
+      description: t(config.descriptionKey),
+    };
+  };
+
+  const availableProjectTypes = useMemo(() => {
+    if (!templates) {
+      return SUPPORTED_PROJECT_TYPES;
+    }
+    const available = Object.keys(templates).filter(isProjectType);
+    return available.length > 0 ? available : SUPPORTED_PROJECT_TYPES;
+  }, [templates]);
+
+  // Filter and sort projects for recent display
+  const recentProjects = useMemo(() => {
+    return projects
+      .filter((p) =>
+        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.description?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+      .sort((a, b) => {
+        const tb = parseUTCDate(b.updated_at ?? '').getTime() || 0;
+        const ta = parseUTCDate(a.updated_at ?? '').getTime() || 0;
+        return tb - ta;
+      });
+  }, [projects, searchQuery]);
+
+  const latestProjectId = useMemo(() => {
+    if (projects.length === 0) {
+      return null;
+    }
+    return [...projects]
+      .sort((a, b) => {
+        const tb = parseUTCDate(b.updated_at ?? '').getTime() || 0;
+        const ta = parseUTCDate(a.updated_at ?? '').getTime() || 0;
+        return tb - ta;
+      })[0]?.id ?? null;
+  }, [projects]);
+
+  const todayActionPlan = useMemo(
+    () =>
+      buildTodayActionPlan({
+        activationGuide,
+        personaRecommendations,
+        projectsCount: projects.length,
+        latestProjectId,
+        activeProjectType: activeTab,
+        t,
+      }),
+    [activationGuide, personaRecommendations, projects.length, latestProjectId, activeTab, t],
+  );
+
+  const isLikelyFirstDayUser = useMemo(() => {
+    if (!user?.created_at) return false;
+    const createdAtMs = parseUTCDate(user.created_at).getTime();
+    if (!Number.isFinite(createdAtMs)) return false;
+    const ageMs = Date.now() - createdAtMs;
+    return ageMs >= 0 && ageMs <= 24 * 60 * 60 * 1000;
+  }, [user?.created_at]);
+
+  const isNewUserWithinFirstWeek = useMemo(() => {
+    if (!user?.created_at) return false;
+    const createdAtMs = parseUTCDate(user.created_at).getTime();
+    if (!Number.isFinite(createdAtMs)) return false;
+    const ageMs = Date.now() - createdAtMs;
+    return ageMs >= 0 && ageMs <= 7 * 24 * 60 * 60 * 1000;
+  }, [user?.created_at]);
+
+  const shouldShowActivationGuideCard = Boolean(
+    showFirstDayActivationGuide
+      && activationGuide
+      && activationGuide.within_first_day
+      && !activationGuide.is_activated,
+  );
+
+  // Preference A: only show one onboarding module on first day.
+  // If activation guide is visible, hide today-action-plan to avoid duplication.
+  // Additionally: avoid "flash" (show action-plan briefly, then replace with activation-guide)
+  // for brand-new users while activation guide is still loading.
+  const shouldHoldTodayActionPlanUntilGuideLoaded = Boolean(
+    showFirstDayActivationGuide && isLikelyFirstDayUser && !activationGuideLoaded,
+  );
+  const shouldShowTodayActionPlanCard = Boolean(
+    showTodayActionPlanEntry
+      && !projectsLoading
+      && !shouldShowActivationGuideCard
+      && !shouldHoldTodayActionPlanUntilGuideLoaded
+      && (projects.length === 0 || isNewUserWithinFirstWeek)
+      && todayActionPlan.length > 0,
+  );
+
+  const handleActivationGuideNextAction = () => {
+    if (!activationGuide) {
+      return;
+    }
+
+    const nextEvent = activationGuide.next_event_name;
+
+    if (nextEvent === "project_created") {
+      setCreating(activeTab);
+      return;
+    }
+
+    if ((nextEvent === "first_file_saved" || nextEvent === "first_ai_action_accepted") && latestProjectId) {
+      navigate(`/project/${latestProjectId}`);
+      return;
+    }
+
+    if (activationGuide.next_action) {
+      navigate(activationGuide.next_action);
+      return;
+    }
+
+    navigate("/dashboard");
+  };
+
+  const handleExecuteTodayAction = async (actionItem: TodayActionPlanItem) => {
+    if (actionItem.action.type === "navigate") {
+      navigate(actionItem.action.path);
+      return;
+    }
+
+    const targetProjectType = actionItem.action.projectType ?? activeTab;
+    const defaultName = templates?.[targetProjectType]?.default_project_name || t('defaults.untitled');
+
+    setExecutingTodayActionId(actionItem.id);
+    try {
+      const project = await contextCreateProject(defaultName, undefined, targetProjectType);
+      const projectId = project.id;
+
+      if (!projectId) {
+        console.error("Create project succeeded but missing project id:", project);
+        return;
+      }
+
+      navigate(`/project/${projectId}`);
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 401)) {
+        toast.error(handleApiError(error));
+        if (
+          error instanceof ApiError &&
+          error.errorCode === "ERR_QUOTA_PROJECTS_EXCEEDED" &&
+          projectQuotaUpgradePrompt.surface === "modal"
+        ) {
+          setShowProjectQuotaUpgradeModal(true);
+        }
+      }
+    } finally {
+      setExecutingTodayActionId((current) => (current === actionItem.id ? null : current));
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    if (!projectId) {
+      return;
+    }
+
+    if (!window.confirm(t('projects.deleteConfirm'))) {
+      return;
+    }
+
+    try {
+      await contextDeleteProject(projectId);
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 401)) {
+        toast.error(handleApiError(error));
+        if (
+          error instanceof ApiError &&
+          error.errorCode === "ERR_QUOTA_PROJECTS_EXCEEDED" &&
+          projectQuotaUpgradePrompt.surface === "modal"
+        ) {
+          setShowProjectQuotaUpgradeModal(true);
+        }
+      }
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // 先用本地 fallback 模板渲染（避免进入 Dashboard 还要再挡一层全屏 loading）
+    const buildFallbackTemplates = (): Record<string, ProjectTemplate> => {
+      const novelFolders = [
+        { id: "lore-folder", title: t('folders.worldBuilding'), file_type: "folder", order: 0 },
+        { id: "character-folder", title: t('folders.characters'), file_type: "folder", order: 1 },
+        { id: "material-folder", title: t('folders.materials'), file_type: "folder", order: 2 },
+        { id: "outline-folder", title: t('folders.outlines'), file_type: "folder", order: 3 },
+        { id: "draft-folder", title: t('folders.drafts'), file_type: "folder", order: 4 },
+      ];
+
+      const shortFolders = [
+        { id: "character-folder", title: t('folders.people'), file_type: "folder", order: 0 },
+        { id: "outline-folder", title: t('folders.concept'), file_type: "folder", order: 1 },
+        { id: "material-folder", title: t('folders.materials'), file_type: "folder", order: 2 },
+        { id: "draft-folder", title: t('folders.drafts'), file_type: "folder", order: 3 },
+      ];
+
+      const screenplayFolders = [
+        { id: "character-folder", title: t('folders.characters'), file_type: "folder", order: 0 },
+        { id: "lore-folder", title: t('folders.worldBuilding'), file_type: "folder", order: 1 },
+        { id: "material-folder", title: t('folders.materials'), file_type: "folder", order: 2 },
+        { id: "outline-folder", title: t('folders.episodeOutlines'), file_type: "folder", order: 3 },
+        { id: "script-folder", title: t('folders.scripts'), file_type: "folder", order: 4 },
+      ];
+
+      return {
+        novel: {
+          name: t("projectType.novel.name"),
+          description: t("inspiration.novelDesc"),
+          icon: "book",
+          folders: novelFolders,
+          file_type_mapping: {
+            [t('folders.worldBuilding')]: "lore",
+            [t('folders.characters')]: "character",
+            [t('folders.materials')]: "snippet",
+            [t('folders.outlines')]: "outline",
+            [t('folders.drafts')]: "draft",
+          },
+          default_project_name: t('defaults.novel'),
+        },
+        short: {
+          name: t("projectType.short.name"),
+          description: t("inspiration.shortDesc"),
+          icon: "file-text",
+          folders: shortFolders,
+          file_type_mapping: {
+            [t('folders.people')]: "character",
+            [t('folders.concept')]: "outline",
+            [t('folders.materials')]: "snippet",
+            [t('folders.drafts')]: "draft",
+          },
+          default_project_name: t('defaults.short'),
+        },
+        screenplay: {
+          name: t("projectType.screenplay.name"),
+          description: t("inspiration.screenplayDesc"),
+          icon: "clapperboard",
+          folders: screenplayFolders,
+          file_type_mapping: {
+            [t('folders.characters')]: "character",
+            [t('folders.worldBuilding')]: "lore",
+            [t('folders.materials')]: "snippet",
+            [t('folders.episodeOutlines')]: "outline",
+            [t('folders.scripts')]: "script",
+          },
+          default_project_name: t('defaults.screenplay'),
+        },
+      };
+    };
+
+    setTemplates(buildFallbackTemplates());
+
+    const loadTemplates = async () => {
+      try {
+        // Projects are now managed by ProjectContext, just load templates
+        const templatesData = await projectApi.getTemplates().catch(() => null);
+        if (!cancelled && templatesData) {
+          setTemplates(templatesData);
+        }
+      } catch (error) {
+        logger.error("Failed to load templates:", error);
+      }
+    };
+
+    void loadTemplates();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [i18n.language, t]);
+
+  useEffect(() => {
+    if (!userId || (!showFirstDayActivationGuide && !showTodayActionPlanEntry)) return;
+    let cancelled = false;
+    setActivationGuideLoaded(false);
+
+    void writingStatsApi
+      .getActivationGuide()
+      .then((guide) => {
+        if (!cancelled) {
+          setActivationGuide(guide);
+          setActivationGuideLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setActivationGuide(null);
+          setActivationGuideLoaded(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showFirstDayActivationGuide, showTodayActionPlanEntry, userId]);
+
+  useEffect(() => {
+    if (!userId || !showTodayActionPlanEntry) return;
+    let cancelled = false;
+
+    void onboardingPersonaApi
+      .getRecommendations()
+      .then((items) => {
+        if (!cancelled) {
+          setPersonaRecommendations(items);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPersonaRecommendations([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showTodayActionPlanEntry, userId]);
+
+  useEffect(() => {
+    if (!availableProjectTypes.includes(activeTab)) {
+      setActiveTab(availableProjectTypes[0] ?? "novel");
+    }
+  }, [activeTab, availableProjectTypes]);
+
+  const handleCreateProject = async (useInspiration = false) => {
+    if (!creating) return;
+
+    const fallbackTemplates = templates;
+    const defaultName = fallbackTemplates?.[creating]?.default_project_name || t('defaults.untitled');
+    const projectName = newProjectName.trim() || defaultName;
+
+    try {
+      // Use ProjectContext's createProject for unified state management
+      const project = await contextCreateProject(projectName, undefined, creating);
+      const projectId = project.id;
+
+      if (!projectId) {
+        logger.error("Create project succeeded but missing project id:", project);
+        return;
+      }
+
+      // Store inspiration to localStorage if provided
+      if (useInspiration && inspiration.trim()) {
+        localStorage.setItem(
+          `zenstory_inspiration_${projectId}`,
+          JSON.stringify({
+            content: inspiration.trim(),
+            projectType: creating,
+            timestamp: Date.now(),
+          })
+        );
+      }
+
+      // Clean up form state
+      setCreating(null);
+      setInspiration("");
+      setNewProjectName("");
+
+      navigate(`/project/${projectId}`);
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 401)) {
+        toast.error(handleApiError(error));
+        if (
+          error instanceof ApiError &&
+          error.errorCode === "ERR_QUOTA_PROJECTS_EXCEEDED" &&
+          projectQuotaUpgradePrompt.surface === "modal"
+        ) {
+          setShowProjectQuotaUpgradeModal(true);
+        }
+      }
+    }
+  };
+
+  const handleQuickCreate = async () => {
+    if (isQuickCreating) return;
+
+    setIsQuickCreating(true);
+    const insp = inspiration.trim();
+    const fallbackTemplates = templates;
+    const defaultName = fallbackTemplates?.[activeTab]?.default_project_name || t('defaults.untitled');
+
+    try {
+      // Use ProjectContext's createProject for unified state management
+      const project = await contextCreateProject(defaultName, undefined, activeTab);
+      const projectId = project.id;
+
+      if (!projectId) {
+        logger.error("Create project succeeded but missing project id:", project);
+        return;
+      }
+
+      // Store inspiration to localStorage for ChatPanel auto-send (if provided)
+      if (insp) {
+        localStorage.setItem(
+          `zenstory_inspiration_${projectId}`,
+          JSON.stringify({
+            content: insp,
+            projectType: activeTab,
+            timestamp: Date.now(),
+          })
+        );
+      }
+
+      // Clean up form state
+      setInspiration("");
+      setNewProjectName("");
+      setCreating(null);
+
+      navigate(`/project/${projectId}`);
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 401)) {
+        toast.error(handleApiError(error));
+        if (
+          error instanceof ApiError &&
+          error.errorCode === "ERR_QUOTA_PROJECTS_EXCEEDED" &&
+          projectQuotaUpgradePrompt.surface === "modal"
+        ) {
+          setShowProjectQuotaUpgradeModal(true);
+        }
+      }
+    } finally {
+      setIsQuickCreating(false);
+    }
+  };
+
+  const dashboardInspirations = useDashboardInspirations(activeTab, 2, inspirationRefreshSeed);
+  const hasDraftIdea = inspiration.trim().length > 0;
+  const resolvedInspirationPlaceholder = isEnglish
+    ? "Describe a strong conflict, or tap a real-story inspiration below"
+    : "输入一句核心冲突，或点下方真实小说灵感开始";
+  const featuredSkeletonCount = isMobile ? 1 : isTablet ? 2 : 3;
+  const featuredEmptyTitle = t('inspirations.emptyTitle', {
+    defaultValue: isEnglish ? 'No featured inspirations yet' : '暂无精选灵感',
+  });
+  const featuredEmptyHint = t('inspirations.emptyHint', {
+    defaultValue: isEnglish
+      ? 'No picks right now. Explore the inspiration library for ideas.'
+      : '当前暂无精选灵感，去灵感库发现更多创作灵感。',
+  });
+  const featuredEmptyCta = t('inspirations.emptyCta', {
+    defaultValue: isEnglish ? 'Browse Inspiration Library' : '查看灵感库',
+  });
+
+  return (
+    <>
+      {/* Header Section */}
+      <DashboardPageHeader
+        title={t('hero.greeting', { name: user?.nickname || user?.username || '创作者' })}
+        subtitle={t('hero.question')}
+      />
+
+      {shouldShowActivationGuideCard && activationGuide && (
+        <div
+          className="mb-5 rounded-2xl border border-[hsl(var(--border-color))] bg-[hsl(var(--bg-secondary))] p-4 shadow-sm"
+          data-testid="activation-guide-card"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-start gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[hsl(var(--accent-primary)/0.12)] text-[hsl(var(--accent-primary))]">
+                <Zap className="h-4 w-4" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
+                  {t("activationGuide.title", { defaultValue: "首日激活向导" })}
+                </h2>
+                <p className="mt-1 text-xs text-[hsl(var(--text-secondary))]">
+                  {t("activationGuide.progress", {
+                    defaultValue: "已完成 {{done}} / {{total}}",
+                    done: activationGuide.completed_steps,
+                    total: activationGuide.total_steps,
+                  })}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="btn-secondary h-8 px-3 text-xs"
+              onClick={handleActivationGuideNextAction}
+            >
+              {t("activationGuide.nextAction", { defaultValue: "继续下一步" })}
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-[hsl(var(--bg-tertiary))]">
+            <div
+              className="h-full rounded-full bg-[hsl(var(--accent-primary))] transition-[width] duration-300"
+              style={{
+                width: `${Math.min(
+                  100,
+                  Math.max(0, Math.round((activationGuide.completion_rate ?? 0) * 100)),
+                )}%`,
+              }}
+            />
+          </div>
+
+          <div className="mt-3 grid gap-1">
+            {activationGuide.steps.map((step) => (
+              <div
+                key={step.event_name}
+                className="flex items-center gap-2 text-xs"
+              >
+                {step.completed ? (
+                  <CheckSquare className="h-4 w-4 text-[hsl(var(--success))]" />
+                ) : (
+                  <Square className="h-4 w-4 text-[hsl(var(--text-tertiary))]" />
+                )}
+                <span
+                  className={
+                    step.completed
+                      ? "text-[hsl(var(--text-secondary))]"
+                      : step.event_name === activationGuide.next_event_name
+                        ? "font-medium text-[hsl(var(--text-primary))]"
+                        : "text-[hsl(var(--text-secondary))]"
+                  }
+                >
+                  {t(`activationGuide.steps.${step.event_name}`, { defaultValue: step.label })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Project Type Tabs */}
+      <div className={`flex justify-center mb-5 ${isMobile ? "gap-2" : "gap-2.5"}`}>
+        <div
+          className={`inline-flex items-center ${isMobile ? "gap-2" : "gap-2.5"}`}
+          data-tour-id="dashboard-project-type-tabs"
+        >
+          {availableProjectTypes.map((type) => {
+            const config = getTranslatedConfig(type);
+            const isActive = activeTab === type;
+            return (
+              <button
+                key={type}
+                onClick={() => setActiveTab(type)}
+                className={`
+                  flex items-center gap-2 rounded-full font-medium transition-all border touch-target
+                  ${isMobile
+                    ? "px-3 py-2.5 text-xs"
+                    : isTablet
+                      ? "px-3.5 py-2 text-sm"
+                      : "px-4 py-2 text-sm"
+                  }
+                  ${isActive
+                    ? "bg-[hsl(var(--bg-secondary))] text-[hsl(var(--text-primary))] shadow-lg border-[hsl(var(--border-color))]"
+                    : "text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-secondary)/0.5)] border-transparent"
+                  }
+                `}
+              >
+                <config.icon className={`${isMobile ? "w-3.5 h-3.5" : "w-4 h-4"} ${isActive ? config.colorClass : ""}`} />
+                {config.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Create Project Card */}
+      <div className="mb-8 rounded-[30px] border border-[hsl(var(--border-color)/0.22)] bg-[linear-gradient(180deg,hsl(var(--bg-secondary)/0.88),hsl(var(--bg-secondary)/0.82))] p-6 shadow-[0_16px_32px_hsl(0_0%_0%_/_0.18)] backdrop-blur-sm">
+        <div className={`${isMobile ? "flex flex-col gap-3" : "relative"}`}>
+          <textarea
+            placeholder={resolvedInspirationPlaceholder}
+            data-testid="dashboard-inspiration-input"
+            data-tour-id="dashboard-inspiration-input"
+            disabled={isQuickCreating}
+            className={`w-full resize-none rounded-[24px] border border-[hsl(var(--border-color)/0.12)] bg-[linear-gradient(180deg,hsl(var(--bg-tertiary)/0.96),hsl(var(--bg-secondary)/0.99))] px-6 py-5 text-[15px] leading-7 text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-secondary)/0.7)] shadow-[inset_0_1px_0_hsl(0_0%_100%_/_0.015)] transition-all focus:border-[hsl(var(--accent-primary)/0.18)] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent-primary)/0.05)] disabled:cursor-not-allowed disabled:opacity-60 ${isMobile ? "min-h-[136px]" : "min-h-[136px] pr-[180px]"}`}
+            value={inspiration}
+            onChange={(e) => setInspiration(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleQuickCreate();
+              }
+            }}
+          />
+          <button
+            onClick={handleQuickCreate}
+            disabled={isQuickCreating}
+            className={`flex items-center justify-center gap-2 rounded-[16px] px-5 text-[13px] font-medium shadow-[inset_0_1px_0_hsl(0_0%_100%_/_0.1)] transition-all duration-150 hover:-translate-y-[1px] disabled:opacity-50 ${
+              hasDraftIdea
+                ? "bg-[hsl(var(--accent-primary)/0.62)] text-white hover:bg-[hsl(var(--accent-primary)/0.72)]"
+                : "bg-[hsl(var(--bg-primary)/0.28)] text-[hsl(var(--text-secondary)/0.86)] hover:bg-[hsl(var(--bg-primary)/0.36)]"
+            } ${isMobile ? "h-11 w-full" : "absolute bottom-4 right-4 h-10 min-w-[128px]"}`}
+            data-testid="create-project-button"
+            data-tour-id="dashboard-create-project"
+          >
+            <Sparkles className="h-4 w-4" />
+            {t('common.createButton')}
+          </button>
+        </div>
+
+        {dashboardInspirations.length > 0 && (
+          <div className="mt-5 flex flex-col gap-3" data-testid="dashboard-real-inspirations">
+            <div className="text-[12px] tracking-[0.02em] text-[hsl(var(--text-secondary)/0.62)]">
+              {t("dashboard.realInspirationsTitle", { defaultValue: "如果你还没想好，可以从这里开始：" })}
+            </div>
+            <div className="flex flex-col gap-3">
+              {dashboardInspirations.map((item, index) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  title={`${item.title}｜${item.hook}`}
+                  aria-label={item.title}
+                  onClick={() => setInspiration(`《${item.title}》：${item.hook}`)}
+                  className="grid grid-cols-[18px_minmax(0,1fr)] items-start gap-3 text-left transition-colors duration-150 hover:text-[hsl(var(--text-primary))]"
+                >
+                  <span className="pt-0.5 text-[13px] leading-7 text-[hsl(var(--text-secondary)/0.36)]">
+                    {index + 1}
+                  </span>
+                  <span className="max-w-[760px] text-[14px] leading-7 text-[hsl(var(--text-secondary)/0.84)]">
+                    {item.hook}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setInspirationRefreshSeed((prev) => prev + 1)}
+              className="w-fit text-[12px] text-[hsl(var(--text-secondary)/0.58)] transition-colors hover:text-[hsl(var(--text-primary))]"
+            >
+              {t("dashboard.realInspirationsRefresh", { defaultValue: "换一批" })}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Agent Connection Card */}
+      <div className="mb-7">
+        <AgentConnectionCard />
+      </div>
+
+      {/* Recent Projects Section */}
+      <div className="mb-7">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold text-[hsl(var(--text-primary))]">
+              {t('projects.recent')}
+            </h2>
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[hsl(var(--accent-primary)/0.1)] text-[hsl(var(--accent-primary))]">
+              {projects.length}
+            </span>
+          </div>
+        </div>
+
+        {projectsLoading ? (
+          <div className={`grid ${isMobile ? "grid-cols-1" : isTablet ? "grid-cols-2" : "lg:grid-cols-3"} gap-3.5`}>
+            {Array.from({ length: isMobile ? 2 : 3 }).map((_, index) => (
+              <div
+                key={`project-skeleton-${index}`}
+                className="rounded-lg border border-[hsl(var(--border-color))] bg-[hsl(var(--bg-secondary))] p-4"
+              >
+                <div className="h-4 w-2/3 rounded bg-[hsl(var(--bg-tertiary))] animate-pulse mb-3" />
+                <div className="h-3 w-full rounded bg-[hsl(var(--bg-tertiary))] animate-pulse mb-2" />
+                <div className="h-3 w-4/5 rounded bg-[hsl(var(--bg-tertiary))] animate-pulse" />
+              </div>
+            ))}
+          </div>
+        ) : projects.length === 0 ? (
+          <DashboardEmptyState
+            icon={Book}
+            title={t('projects.empty')}
+            description={t('projects.emptyHint')}
+          />
+        ) : (
+          <>
+            {/* Search Bar (only show if more than 6 projects) */}
+            {projects.length > 6 && (
+              <DashboardSearchBar
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder={t('projects.searchPlaceholder')}
+                className="mb-5"
+              />
+            )}
+
+            {/* Project Cards Grid */}
+            <div className={`grid ${isMobile ? "grid-cols-1" : isTablet ? "grid-cols-2" : "lg:grid-cols-3"} gap-3.5`}>
+              {recentProjects.map((project) => {
+                const config = getTranslatedConfig(project.project_type);
+
+                return (
+                  /* data-testid: project-card - Project card component for project selection tests */
+                  <div
+                    key={project.id}
+                    onClick={() => navigate(`/project/${project.id}`)}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`Open project ${project.name}`}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        navigate(`/project/${project.id}`);
+                      }
+                    }}
+                    className={`group relative bg-[hsl(var(--bg-secondary))] rounded-lg border border-[hsl(var(--border-color))] cursor-pointer hover:border-[hsl(var(--accent-primary)/0.3)] hover:shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent-primary)/0.5)] ${isMobile ? "p-4" : "p-4"}`}
+                    data-testid="project-card"
+                  >
+                    {/* Gradient Overlay */}
+                    <div
+                      className={`absolute inset-0 rounded-lg bg-gradient-to-br ${config.gradientFrom} ${config.gradientTo} opacity-0 group-hover:opacity-100 transition-opacity`}
+                    />
+
+                    <div className="relative">
+                      {/* Header */}
+                      <div className="flex items-start justify-between mb-2">
+                        <div
+                          className={`w-9 h-9 rounded-lg ${config.bgClass} flex items-center justify-center group-hover:scale-110 transition-transform`}
+                        >
+                          <config.icon className={`w-4.5 h-4.5 ${config.colorClass}`} />
+                        </div>
+                        <div className="flex-1 min-w-0 ml-3">
+                          <h3 className={`font-semibold text-[hsl(var(--text-primary))] truncate leading-snug ${isMobile ? "text-base" : "text-sm"}`}>
+                            {project.name}
+                          </h3>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (project.id) {
+                              void handleDeleteProject(project.id);
+                            }
+                          }}
+                          className={`p-1.5 rounded-lg hover:bg-[hsl(var(--error)/0.1)] text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--error))] transition-all shrink-0 ${
+                            showDeleteAction
+                              ? "opacity-100"
+                              : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                          }`}
+                          title={t('projects.deleteProject')}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Content */}
+                      {project.description && (
+                        <p className={`${isMobile ? "text-sm" : "text-xs"} text-[hsl(var(--text-secondary))] line-clamp-2 mb-3`}>
+                          {project.description}
+                        </p>
+                      )}
+
+                      {/* Footer */}
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-md ${config.bgClass} ${config.colorClass} font-medium`}
+                        >
+                          {config.label}
+                        </span>
+                        <div className="flex items-center gap-1 text-xs text-[hsl(var(--text-secondary))]">
+                          <Clock className="w-3 h-3" />
+                          {project.updated_at ? formatRelativeTime(project.updated_at) : '-'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+
+      {shouldShowTodayActionPlanCard && (
+        <div
+          className="mb-7 rounded-2xl border border-[hsl(var(--border-color))] bg-[hsl(var(--bg-secondary))] p-4 shadow-sm"
+          data-testid="today-action-plan-card"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[hsl(var(--accent-primary)/0.12)] text-[hsl(var(--accent-primary))]">
+                <Sparkles className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
+                  {t("todayActionPlan.title", { defaultValue: "今日 3 步建议" })}
+                </h2>
+                {todayActionPlanExpanded && (
+                  <p className="mt-1 text-xs text-[hsl(var(--text-secondary))]">
+                    {t("todayActionPlan.subtitle", {
+                      defaultValue: "基于你的当前进度生成，每一步都可一键执行。",
+                    })}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="btn-ghost h-8 px-2 text-xs"
+              onClick={() => {
+                setTodayActionPlanExpanded((current) => !current);
+              }}
+              data-testid="today-action-plan-toggle"
+            >
+              {todayActionPlanExpanded
+                ? t("todayActionPlan.collapse", { defaultValue: "收起" })
+                : t("todayActionPlan.expand", { defaultValue: "查看全部" })}
+            </button>
+          </div>
+
+          <div className="mt-3 grid gap-2">
+            {todayActionPlan
+              .slice(0, todayActionPlanExpanded ? 3 : 1)
+              .map((item, index) => (
+                <div
+                  key={item.id}
+                  className="rounded-lg border border-[hsl(var(--border-color))] bg-[hsl(var(--bg-tertiary))] px-3 py-2"
+                  data-testid={`today-action-item-${index + 1}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[hsl(var(--accent-primary)/0.18)] text-[10px] font-semibold text-[hsl(var(--accent-primary))]">
+                      {index + 1}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-[hsl(var(--text-primary))]">{item.title}</p>
+                      <p className="mt-1 text-xs text-[hsl(var(--text-secondary))]">{item.description}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-[hsl(var(--accent-primary)/0.35)] px-2.5 py-1 text-xs font-medium text-[hsl(var(--accent-primary))] hover:bg-[hsl(var(--accent-primary)/0.10)] disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.45)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-primary))]"
+                      onClick={() => {
+                        void handleExecuteTodayAction(item);
+                      }}
+                      disabled={executingTodayActionId === item.id}
+                      data-testid={`today-action-execute-${index + 1}`}
+                    >
+                      {executingTodayActionId === item.id
+                        ? t("todayActionPlan.executing", { defaultValue: "执行中..." })
+                        : item.ctaLabel}
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Featured Inspirations Section (always visible) */}
+      <div
+        className="mb-7"
+        data-testid="featured-inspirations-section"
+        data-tour-id="dashboard-inspirations-section"
+      >
+        <div
+          className="flex items-center justify-between mb-4"
+          data-tour-id="dashboard-inspirations-entry"
+        >
+          <div className="flex items-center gap-2" data-tour-id="dashboard-inspirations-heading">
+            <Compass className="w-4 h-4 text-[hsl(var(--accent-primary))]" />
+            <h2 className="text-base font-semibold text-[hsl(var(--text-primary))]">
+              {t('inspirations.featured', { ns: 'dashboard' })}
+            </h2>
+          </div>
+          <button
+            onClick={() => navigate('/dashboard/inspirations')}
+            className="text-xs text-[hsl(var(--accent-primary))] hover:underline"
+            data-tour-id="dashboard-inspirations-link"
+          >
+            {t('inspirations.viewAll', { ns: 'dashboard' })}
+          </button>
+        </div>
+
+        {shouldShowFeaturedLoading ? (
+          <div
+            className={`grid ${isMobile ? "grid-cols-1" : isTablet ? "grid-cols-2" : "lg:grid-cols-3"} gap-3.5`}
+            data-testid="featured-inspirations-loading"
+          >
+            {Array.from({ length: featuredSkeletonCount }).map((_, index) => (
+              <div
+                key={`featured-skeleton-${index}`}
+                className="rounded-lg border border-[hsl(var(--border-color))] bg-[hsl(var(--bg-secondary))] p-4"
+              >
+                <div className="h-4 w-2/3 rounded bg-[hsl(var(--bg-tertiary))] animate-pulse mb-3" />
+                <div className="h-3 w-full rounded bg-[hsl(var(--bg-tertiary))] animate-pulse mb-2" />
+                <div className="h-3 w-4/5 rounded bg-[hsl(var(--bg-tertiary))] animate-pulse" />
+              </div>
+            ))}
+          </div>
+        ) : featuredInspirations.length > 0 ? (
+          <div className={`grid ${isMobile ? "grid-cols-1" : isTablet ? "grid-cols-2" : "lg:grid-cols-3"} gap-3.5`}>
+            {featuredInspirations.map((insp) => (
+              <button
+                type="button"
+                key={insp.id}
+                onClick={() => navigate(`/dashboard/inspirations/${insp.id}`)}
+                className="group w-full text-left bg-[hsl(var(--bg-secondary))] rounded-lg border border-[hsl(var(--border-color))] cursor-pointer hover:border-[hsl(var(--accent-primary)/0.3)] hover:shadow-lg transition-all p-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.6)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-primary))]"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Compass className="w-4 h-4 text-blue-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-[hsl(var(--text-primary))] truncate text-sm">
+                      {insp.name}
+                    </h3>
+                    {insp.description && (
+                      <p className="text-xs text-[hsl(var(--text-secondary))] line-clamp-2 mt-1">
+                        {insp.description}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 mt-2 text-xs text-[hsl(var(--text-secondary))]">
+                      <span className="px-2 py-0.5 rounded bg-[hsl(var(--bg-tertiary))]">
+                        {t(`projectType.${insp.project_type}.name`)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <DashboardEmptyState
+            icon={Compass}
+            title={featuredEmptyTitle}
+            description={featuredEmptyHint}
+            className="py-9 px-4"
+            action={(
+              <button
+                onClick={() => navigate('/dashboard/inspirations')}
+                className="text-sm font-medium text-[hsl(var(--accent-primary))] hover:underline"
+              >
+                {featuredEmptyCta}
+              </button>
+            )}
+          />
+        )}
+      </div>
+
+      {/* Create Modal */}
+      <Modal
+        open={!!creating && !!templates}
+        onClose={() => {
+          setCreating(null);
+          setInspiration("");
+          setNewProjectName("");
+        }}
+        size="md"
+        showCloseButton={isMobile ? false : true}
+      >
+        {creating && templates && (() => {
+          const config = getTranslatedConfig(creating);
+          return (
+            <>
+              {/* Mobile Header */}
+              {isMobile && (
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-[hsl(var(--border-color))]">
+                  <h2 className="text-lg font-semibold text-[hsl(var(--text-primary))]">
+                    {t('projects.createNew')}
+                  </h2>
+                  <button
+                    onClick={() => {
+                      setCreating(null);
+                      setInspiration("");
+                      setNewProjectName("");
+                    }}
+                    className="p-2 rounded-lg text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--bg-tertiary))] active:bg-[hsl(var(--bg-hover))] transition-all"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
+              <div className={`flex items-center gap-4 ${isMobile ? "mb-4" : "mb-6"}`}>
+                <div
+                  className={`${isMobile ? "w-12 h-12" : "w-14 h-14"} rounded-2xl ${config.bgClass} flex items-center justify-center shadow-lg`}
+                >
+                  <config.icon className={`${isMobile ? "w-5 h-5" : "w-6 h-6"} ${config.colorClass}`} />
+                </div>
+                <div>
+                  <h3 className={`${isMobile ? "text-lg" : "text-xl"} font-semibold text-[hsl(var(--text-primary))]`}>
+                    {templates[creating].name}
+                  </h3>
+                  <p className={`text-[hsl(var(--text-secondary))] ${isMobile ? "text-xs" : "text-sm"}`}>
+                    {templates[creating].description}
+                  </p>
+                </div>
+              </div>
+
+              {/* Inspiration Preview */}
+              {inspiration.trim() && (
+                <div className={`p-3 bg-[hsl(var(--bg-tertiary))] rounded-lg ${isMobile ? "mb-3" : "mb-4"}`}>
+                  <div className="text-xs text-[hsl(var(--text-secondary))] mb-1">{t('projects.inspiration.title')}</div>
+                  <div className="text-sm text-[hsl(var(--text-primary))] line-clamp-2">
+                    {inspiration}
+                  </div>
+                </div>
+              )}
+
+              <div className={`${isMobile ? "mb-4" : "mb-6"}`}>
+                <label className={`block font-medium text-[hsl(var(--text-secondary))] ${isMobile ? "text-xs mb-1.5" : "text-sm mb-2"}`}>
+                  {t('projects.namePlaceholder')}
+                </label>
+                <input
+                  type="text"
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder={t('projects.namePlaceholder')}
+                  className="input"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleCreateProject(true);
+                    if (e.key === "Escape") {
+                      setCreating(null);
+                      setInspiration("");
+                      setNewProjectName("");
+                    }
+                  }}
+                />
+              </div>
+
+              <div className={`flex gap-3 ${isMobile ? "fixed bottom-0 left-0 right-0 p-4 bg-[hsl(var(--bg-secondary))] border-t border-[hsl(var(--border-color))] mobile-safe-bottom" : ""}`}>
+                <button onClick={() => {
+                  setCreating(null);
+                  setInspiration("");
+                  setNewProjectName("");
+                }} className={`btn-ghost ${isMobile ? "flex-1 h-12" : "flex-1 h-11"}`}>
+                  {t('projects.cancel')}
+                </button>
+                <button
+                  onClick={() => handleCreateProject(true)}
+                  className={`btn-primary flex items-center justify-center gap-2 ${isMobile ? "flex-1 h-12" : "flex-1 h-11"}`}
+                >
+                  <Sparkles className="w-4 h-4" />
+                  {t('common.createButton')}
+                </button>
+              </div>
+            </>
+          );
+        })()}
+      </Modal>
+
+      <UpgradePromptModal
+        open={showProjectQuotaUpgradeModal}
+        onClose={() => setShowProjectQuotaUpgradeModal(false)}
+        source={projectQuotaUpgradePrompt.source}
+        primaryDestination="billing"
+        secondaryDestination="pricing"
+        title={t('projects.quotaExceededTitle', {
+          defaultValue: '项目数量已达上限',
+        })}
+        description={t('projects.quotaExceededDesc', {
+          defaultValue: '当前套餐可创建的项目数量已达上限。可先升级套餐，或查看套餐对比后再决定。',
+        })}
+        primaryLabel={t('dashboard:billing.ctaUpgradePro', '升级专业版')}
+        onPrimary={() => {
+          window.location.assign(
+            buildUpgradeUrl(projectQuotaUpgradePrompt.billingPath, projectQuotaUpgradePrompt.source)
+          );
+        }}
+        secondaryLabel={t('home:pricingTeaser.viewPricing', '查看套餐权益')}
+        onSecondary={() => {
+          window.location.assign(
+            buildUpgradeUrl(projectQuotaUpgradePrompt.pricingPath, projectQuotaUpgradePrompt.source)
+          );
+        }}
+      />
+    </>
+  );
+}

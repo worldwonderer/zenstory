@@ -1,0 +1,33 @@
+{
+  "name": "zenstory-monorepo",
+  "private": true,
+  "scripts": {
+    "gate": "bash ./scripts/ci/local-gha.sh",
+    "gate:e2e": "bash ./scripts/ci/local-gha.sh --with-e2e",
+    "gate:lite": "bash ./scripts/ci/local-gha.sh --skip-db-tests",
+    "e2e:zenstory:local": "E2E_SUITE=smoke bash ./scripts/ci/ci.sh e2e --lite",
+    "e2e:zenstory:local:default": "E2E_SUITE=default bash ./scripts/ci/ci.sh e2e --lite",
+    "e2e:zenstory:local:nightly": "E2E_SUITE=nightly bash ./scripts/ci/ci.sh e2e --lite",
+    "e2e:zenstory:local:release": "E2E_SUITE=release bash ./scripts/ci/ci.sh e2e --lite",
+    "e2e:zenstory:local:full": "E2E_SUITE=full bash ./scripts/ci/ci.sh e2e --lite",
+    "dev:web": "cd apps/web && npm run dev",
+    "dev:server": "cd apps/server && python3 main.py"
+  },
+  "pnpm": {
+    "overrides": {
+      "react-window": "^2.2.5"
+    }
+  },
+  "dependencies": {
+    "@tiptap/extension-image": "^3.15.3",
+    "@tiptap/extension-link": "^3.15.3",
+    "@tiptap/extension-placeholder": "^3.15.3",
+    "@tiptap/extension-task-item": "^3.15.3",
+    "@tiptap/extension-task-list": "^3.15.3",
+    "@tiptap/extension-text-align": "^3.15.3",
+    "@tiptap/extension-underline": "^3.15.3",
+    "@tiptap/suggestion": "^3.15.3",
+    "react-router-dom": "^7.12.0",
+    "tippy.js": "^6.3.7"
+  }
+}

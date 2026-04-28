@@ -1,0 +1,51 @@
+# Docker Compose configuration for testing environment
+# This file provides isolated test database and Redis instances
+# Usage: docker-compose -f docker-compose.test.yml up -d
+
+services:
+  # PostgreSQL test database
+  postgres_test:
+    image: postgres:16-alpine
+    container_name: zenstory_postgres_test
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: zenstory_test
+    ports:
+      - "5433:5432"  # Map to 5433 on host to avoid conflict with dev database
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d zenstory_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test_network
+
+  # Redis for testing (caching and verification codes)
+  redis_test:
+    image: redis:7-alpine
+    container_name: zenstory_redis_test
+    ports:
+      - "6380:6379"  # Map to 6380 on host to avoid conflict with dev Redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_test_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - test_network
+
+volumes:
+  postgres_test_data:
+    driver: local
+  redis_test_data:
+    driver: local
+
+networks:
+  test_network:
+    driver: bridge

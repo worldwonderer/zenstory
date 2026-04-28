@@ -1,0 +1,227 @@
+{
+  "title": "Privacy Policy",
+  "lastUpdated": "Last Updated: February 20, 2026",
+  "sections": {
+    "introduction": {
+      "title": "1. Introduction",
+      "content": "Welcome to zenstory (\"we,\" \"us,\" or \"our\"). We respect your privacy and are committed to protecting your personal data. This privacy policy will inform you about how we look after your personal data when you visit our website and tell you about your privacy rights and how the law protects you."
+    },
+    "dataCollection": {
+      "title": "2. Information We Collect",
+      "content": "We collect several types of information to provide and improve our AI-powered novel writing assistance services:",
+      "subsections": {
+        "personalInfo": {
+          "title": "2.1 Personal Information",
+          "items": [
+            "Email address and username (for account registration)",
+            "Profile information (optional)",
+            "Authentication information from third-party login providers (if applicable)"
+          ]
+        },
+        "content": {
+          "title": "2.2 Content Data",
+          "items": [
+            "Novel outlines, drafts, chapters, and stories you create",
+            "Character profiles and settings",
+            "World-building lore and settings",
+            "Chat conversations with AI assistant"
+          ]
+        },
+        "usage": {
+          "title": "2.3 Usage Data",
+          "items": [
+            "Pages visited and features used",
+            "Time spent on pages",
+            "Editor interactions and writing statistics",
+            "Device and browser information"
+          ]
+        },
+        "technical": {
+          "title": "2.4 Technical Data",
+          "items": [
+            "IP address",
+            "Browser type and version",
+            "Operating system",
+            "Referring websites"
+          ]
+        }
+      }
+    },
+    "dataUsage": {
+      "title": "3. How We Use Your Information",
+      "content": "We use your information for the following purposes:",
+      "items": [
+        "To provide and maintain our AI writing assistance services",
+        "To process your requests and deliver novel writing features",
+        "To improve AI models and writing suggestions",
+        "To communicate with you about your account and services",
+        "To authenticate users and prevent unauthorized access",
+        "To analyze usage patterns and improve user experience",
+        "To comply with legal obligations and protect our rights"
+      ]
+    },
+    "dataSharing": {
+      "title": "4. Information Sharing",
+      "content": "We do not sell your personal data. We may share your information only in the following circumstances:",
+      "subsections": {
+        "serviceProviders": {
+          "title": "4.1 Service Providers",
+          "content": "We work with third-party service providers to help us operate our platform, including authentication services and AI service providers. These providers process data only as instructed by us and for the purposes described in this policy."
+        },
+        "aiTraining": {
+          "title": "4.2 AI Model Training",
+          "content": "Your content is not used for general model training by default. We only use data for model and writing-quality improvements if you explicitly opt in, with data minimization and de-identification safeguards. You may withdraw consent at any time, and no new training use will occur after withdrawal."
+        },
+        "legal": {
+          "title": "4.3 Legal Requirements",
+          "content": "We may disclose your information if required by law or in response to valid legal requests."
+        },
+        "businessTransfer": {
+          "title": "4.4 Business Transfer",
+          "content": "In the event of a merger, acquisition, or sale of assets, your information may be transferred."
+        },
+        "userConsent": {
+          "title": "4.5 With Your Consent",
+          "content": "We may share your information with your consent for any other purpose."
+        }
+      }
+    },
+    "dataSecurity": {
+      "title": "5. Data Security",
+      "content": "We implement appropriate security measures to protect your personal information:",
+      "measures": [
+        "Encryption of data in transit and at rest",
+        "Secure authentication mechanisms",
+        "Regular security audits and updates",
+        "Access controls and authorization systems",
+        "Secure hosting on industry-standard cloud platforms"
+      ]
+    },
+    "dataRetention": {
+      "title": "6. Data Retention",
+      "content": "We retain your personal information only as long as necessary for the purposes outlined in this policy, or as required by law. You can request deletion of your account and associated data at any time. We will respond to such requests within one month."
+    },
+    "userRights": {
+      "title": "7. Your Privacy Rights",
+      "content": "Depending on your location, you may have the following rights:",
+      "rights": [
+        "Right to be informed about data processing",
+        "Right to access your personal information",
+        "Right to rectify inaccurate information",
+        "Right to erase your personal information",
+        "Right to restrict processing of your information",
+        "Right to data portability",
+        "Right to object to processing",
+        "Right to withdraw consent"
+      ],
+      "note": "To exercise these rights, please contact us at the address provided below. We will respond to your request within one month of receipt.",
+      "dataExport": {
+        "title": "7.1 Data Export",
+        "content": "You have the right to export your data from our platform at any time. This includes your novel outlines, drafts, characters, lore entries, and chat conversations. We provide a straightforward export feature that allows you to download your data in a structured format for backup or use elsewhere. The exported data remains your property."
+      }
+    },
+    "internationalTransfers": {
+      "title": "8. International Data Transfers",
+      "content": "Your information may be transferred to and processed in countries other than your own. We ensure appropriate safeguards are in place to protect your data in accordance with applicable laws, including standard contractual clauses approved by the European Commission."
+    },
+    "children": {
+      "title": "9. Children's Privacy",
+      "content": "Our service is not intended for children under 13. We do not knowingly collect personal information from children under 13. If we discover that we have collected such information without parental consent, we will delete it immediately."
+    },
+    "policyChanges": {
+      "title": "10. Changes to This Policy",
+      "content": "We may update this privacy policy from time to time. We will notify you of any changes by posting the new policy on this page and updating the \"Last Updated\" date."
+    },
+    "contact": {
+      "title": "11. Contact Us",
+      "content": "If you have any questions about this privacy policy or our data practices, please contact us:",
+      "email": "Email: support@zenstory.ai",
+      "controller": "Data Controller: zenstory"
+    }
+  },
+  "terms": {
+    "title": "Terms of Service",
+    "lastUpdated": "Last Updated: February 20, 2026",
+    "sections": {
+      "acceptance": {
+        "title": "1. Acceptance of Terms",
+        "content": "By accessing or using zenstory, you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use our service."
+      },
+      "description": {
+        "title": "2. Service Description",
+        "content": "zenstory is an AI-powered novel writing assistant that helps users create, organize, and develop their stories through AI-driven conversations and writing tools."
+      },
+      "userResponsibilities": {
+        "title": "3. User Responsibilities",
+        "items": [
+          "You must be at least 13 years old to use our service",
+          "You are responsible for maintaining the confidentiality of your account",
+          "You agree to use our service only for lawful purposes",
+          "You will not post or transmit harmful, offensive, or illegal content",
+          "You will not attempt to circumvent security measures or access others' accounts",
+          "You retain all rights to content you create using our service"
+        ]
+      },
+      "intellectualProperty": {
+        "title": "4. Intellectual Property",
+        "content": "All content created by you remains your property. zenstory does not claim ownership of your novels, characters, stories, or any other original content. You grant us a non-exclusive, worldwide license to store, process, and display your content solely for providing our services. This license is revocable at any time. AI-generated content created through our service is also your property once you accept and incorporate it into your work."
+      },
+      "aiGeneratedContent": {
+        "title": "5. AI-Generated Content",
+        "content": "AI suggestions and responses are provided as assistance only. You should review and verify all AI-generated content before using it. We do not guarantee the accuracy, quality, or originality of AI-generated content."
+      },
+      "subscriptionBilling": {
+        "title": "6. Subscription and Billing",
+        "content": "Paid features are governed by the plan details, billing cycle, and pricing displayed at checkout. Unless stated otherwise, listed prices do not include applicable taxes. You authorize us to charge your selected payment method for subscription fees."
+      },
+      "autoRenewalCancellation": {
+        "title": "7. Auto-Renewal and Cancellation",
+        "content": "Subscriptions renew automatically by default. To avoid renewal, cancel before the end of the current billing period. Cancellation takes effect at period end, and you may continue using paid features until then."
+      },
+      "refundPolicy": {
+        "title": "8. Refund Policy",
+        "content": "Except where required by law or explicitly promised by us, payments are generally non-refundable. If core service functionality is materially unavailable due to platform faults, we may provide remedies such as credits, extensions, or refunds."
+      },
+      "trialAndUpgrade": {
+        "title": "9. Free Trial and Upgrade",
+        "content": "Free trial access is provided for service evaluation and may include feature or quota limits. After upgrading to a paid plan, the corresponding paid plan rules and quotas apply."
+      },
+      "pricingChangesTaxes": {
+        "title": "10. Pricing Changes and Taxes",
+        "content": "We may update plan pricing or package content from time to time. For active subscriptions, pricing changes will apply from the next billing cycle with prior notice through in-product messaging or email."
+      },
+      "termination": {
+        "title": "11. Service Termination",
+        "content": "We reserve the right to suspend or terminate your account at any time, including but not limited to violations of these terms, fraudulent activity, or misuse of our services. Upon termination, your right to use the service will immediately cease."
+      },
+      "disclaimer": {
+        "title": "12. Disclaimer of Warranties",
+        "content": "The service is provided \"as is\" without warranties of any kind, either express or implied. We do not guarantee uninterrupted or error-free service."
+      },
+      "limitation": {
+        "title": "13. Limitation of Liability",
+        "content": "In no event shall zenstory be liable for any indirect, incidental, special, consequential, or punitive damages arising from your use of our service."
+      },
+      "indemnification": {
+        "title": "14. Indemnification",
+        "content": "You agree to indemnify and hold harmless zenstory, its officers, directors, employees, and agents from any claims arising from your use of the service or violation of these terms, including reasonable attorneys' fees."
+      },
+      "governingLaw": {
+        "title": "15. Governing Law and Dispute Resolution",
+        "content": "These terms shall be governed by and construed in accordance with applicable laws. Any disputes shall be resolved through negotiation first. If negotiation fails, disputes may be submitted to the competent courts in the jurisdiction where zenstory is registered."
+      },
+      "changes": {
+        "title": "16. Changes to Terms",
+        "content": "We may modify these terms at any time. Continued use of the service after changes constitutes acceptance of the new terms. If any provision of these terms is found to be unenforceable, the remaining provisions shall remain in full force and effect."
+      },
+      "contact": {
+        "title": "17. Contact",
+        "content": "For questions about these terms, please contact us at: support@zenstory.ai"
+      }
+    }
+  },
+  "footer": {
+    "privacy": "Privacy Policy",
+    "terms": "Terms of Service"
+  }
+}

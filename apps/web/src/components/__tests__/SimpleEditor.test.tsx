@@ -1,0 +1,471 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { SimpleEditor } from '../SimpleEditor';
+import { toast } from '../../lib/toast';
+
+vi.mock('../../lib/naturalPolishApi', () => ({
+  naturalPolishApi: {
+    naturalPolish: vi.fn(),
+  },
+}));
+
+vi.mock('../../lib/writingStatsApi', () => ({
+  writingStatsApi: {
+    recordStats: vi.fn(),
+  },
+}));
+
+vi.mock('../../contexts/TextQuoteContext', () => ({
+  useTextQuote: () => ({
+    addQuote: vi.fn(),
+  }),
+}));
+
+vi.mock('../../hooks/useGestures', () => ({
+  usePinchZoom: () => ({
+    zoom: 1,
+    bind: () => ({}),
+    resetZoom: vi.fn(),
+  }),
+}));
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, fallback?: string) => fallback ?? key,
+  }),
+}));
+
+vi.mock('../FileVersionHistory', () => ({
+  FileVersionHistory: () => null,
+}));
+
+vi.mock('../InlineDiffEditor', () => ({
+  InlineDiffEditor: () => null,
+}));
+
+vi.mock('../DiffToolbar', () => ({
+  DiffToolbar: () => null,
+}));
+
+vi.mock('../SelectionToolbar', () => ({
+  SelectionToolbar: () => null,
+}));
+
+describe('SimpleEditor', () => {
+  const mockRaf = () =>
+    vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((cb: FrameRequestCallback) => {
+        cb(0);
+        return 0;
+      });
+
+  const selectText = (textarea: HTMLTextAreaElement) => {
+    textarea.focus();
+    textarea.setSelectionRange(0, 5);
+    fireEvent.select(textarea);
+    fireEvent.mouseUp(textarea);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('shows natural polish action without admin gating', () => {
+    render(
+      <SimpleEditor
+        projectId="project-1"
+        fileId="file-1"
+        fileType="draft"
+        title="File 1"
+        content="Hello world"
+        onTitleChange={vi.fn()}
+        onContentChange={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'editor:naturalPolish' })).toBeInTheDocument();
+  });
+
+  it('natural polish triggers diff review with rewritten text', async () => {
+    const { naturalPolishApi } = await import('../../lib/naturalPolishApi');
+    const naturalPolishMock = naturalPolishApi.naturalPolish as unknown as ReturnType<typeof vi.fn>;
+    naturalPolishMock.mockResolvedValueOnce('  Rewritten  ');
+
+    const onEnterDiffReview = vi.fn();
+    render(
+      <SimpleEditor
+        projectId="project-1"
+        fileId="file-1"
+        fileType="draft"
+        title="File 1"
+        content="Hello world"
+        onTitleChange={vi.fn()}
+        onContentChange={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        onEnterDiffReview={onEnterDiffReview}
+      />
+    );
+
+    const textarea = screen.getByPlaceholderText('editor:placeholder.contentPlaceholder') as HTMLTextAreaElement;
+    selectText(textarea);
+    fireEvent.keyDown(textarea, { key: 'R', code: 'KeyR', ctrlKey: true, shiftKey: true });
+
+    await waitFor(() => {
+      expect(onEnterDiffReview).toHaveBeenCalledTimes(1);
+    });
+
+    expect(onEnterDiffReview).toHaveBeenCalledWith(
+      'file-1',
+      'Hello world',
+      'Rewritten world'
+    );
+  });
+
+  it('natural polish ignores stale result after file switch', async () => {
+    const { naturalPolishApi } = await import('../../lib/naturalPolishApi');
+    const naturalPolishMock = naturalPolishApi.naturalPolish as unknown as ReturnType<typeof vi.fn>;
+
+    let resolvePolish: (value: string) => void = () => {};
+    const deferred = new Promise<string>((resolve) => {
+      resolvePolish = resolve;
+    });
+    naturalPolishMock.mockReturnValueOnce(deferred);
+
+    const onEnterDiffReview = vi.fn();
+    const { rerender } = render(
+      <SimpleEditor
+        projectId="project-1"
+        fileId="file-1"
+        fileType="draft"
+        title="File 1"
+        content="Hello world"
+        onTitleChange={vi.fn()}
+        onContentChange={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        onEnterDiffReview={onEnterDiffReview}
+      />
+    );
+
+    const textarea = screen.getByPlaceholderText('editor:placeholder.contentPlaceholder') as HTMLTextAreaElement;
+    selectText(textarea);
+    fireEvent.keyDown(textarea, { key: 'R', code: 'KeyR', ctrlKey: true, shiftKey: true });
+
+    // Switch file before the request resolves.
+    rerender(
+      <SimpleEditor
+        projectId="project-1"
+        fileId="file-2"
+        fileType="draft"
+        title="File 2"
+        content="Another content"
+        onTitleChange={vi.fn()}
+        onContentChange={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        onEnterDiffReview={onEnterDiffReview}
+      />
+    );
+
+    resolvePolish('Rewritten');
+    await waitFor(() => {
+      // flush promise microtasks
+      expect(true).toBe(true);
+    });
+
+    expect(onEnterDiffReview).not.toHaveBeenCalled();
+  });
+
+  it('natural polish surfaces backend error message', async () => {
+    const { naturalPolishApi } = await import('../../lib/naturalPolishApi');
+    const naturalPolishMock = naturalPolishApi.naturalPolish as unknown as ReturnType<typeof vi.fn>;
+    naturalPolishMock.mockRejectedValueOnce(new Error('ERR_QUOTA_AI_CONVERSATIONS_EXCEEDED'));
+
+    const toastErrorSpy = vi.spyOn(toast, 'error').mockImplementation(() => {});
+
+    render(
+      <SimpleEditor
+        projectId="project-1"
+        fileId="file-1"
+        fileType="draft"
+        title="File 1"
+        content="Hello world"
+        onTitleChange={vi.fn()}
+        onContentChange={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const textarea = screen.getByPlaceholderText('editor:placeholder.contentPlaceholder') as HTMLTextAreaElement;
+    selectText(textarea);
+    fireEvent.keyDown(textarea, { key: 'R', code: 'KeyR', ctrlKey: true, shiftKey: true });
+
+    await waitFor(() => {
+      expect(toastErrorSpy).toHaveBeenCalledWith('ERR_QUOTA_AI_CONVERSATIONS_EXCEEDED');
+    });
+  });
+
+  it('resets dirty state when switching files', () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onTitleChange = vi.fn();
+    const onContentChange = vi.fn();
+
+    const { rerender } = render(
+      <SimpleEditor
+        fileId="file-1"
+        title="File 1"
+        content="Original content from file one"
+        onTitleChange={onTitleChange}
+        onContentChange={onContentChange}
+        onSave={onSave}
+      />
+    );
+
+    const contentTextarea = screen.getByPlaceholderText('editor:placeholder.contentPlaceholder');
+    fireEvent.change(contentTextarea, {
+      target: { value: 'Original content from file one with edits' },
+    });
+
+    expect(screen.getByText('editor:unsaved')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'editor:save' })).toBeEnabled();
+
+    rerender(
+      <SimpleEditor
+        fileId="file-2"
+        title="File 2"
+        content="Another file content"
+        onTitleChange={onTitleChange}
+        onContentChange={onContentChange}
+        onSave={onSave}
+      />
+    );
+
+    expect(screen.queryByText('editor:unsaved')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'editor:save' })).toBeDisabled();
+  });
+
+  it('does not create content version when only title changes after async file switch', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onTitleChange = vi.fn();
+    const onContentChange = vi.fn();
+
+    const { rerender } = render(
+      <SimpleEditor
+        fileId="file-1"
+        title="File 1"
+        content="11111111111111111111"
+        onTitleChange={onTitleChange}
+        onContentChange={onContentChange}
+        onSave={onSave}
+      />
+    );
+
+    // Simulate file switch before async content finishes loading.
+    rerender(
+      <SimpleEditor
+        fileId="file-2"
+        title="File 2"
+        content="11111111111111111111"
+        onTitleChange={onTitleChange}
+        onContentChange={onContentChange}
+        onSave={onSave}
+      />
+    );
+
+    // Async content update for the newly selected file.
+    rerender(
+      <SimpleEditor
+        fileId="file-2"
+        title="File 2"
+        content="BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        onTitleChange={onTitleChange}
+        onContentChange={onContentChange}
+        onSave={onSave}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('editor:placeholder.titlePlaceholder'), {
+      target: { value: 'File 2 - Renamed' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'editor:save' }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+    expect(onSave).toHaveBeenCalledWith(undefined);
+  });
+
+  it('uses outer container scrolling and hides textarea inner scrollbar', () => {
+    render(
+      <SimpleEditor
+        fileId="file-1"
+        title="File 1"
+        content={'line\n'.repeat(200)}
+        onTitleChange={vi.fn()}
+        onContentChange={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const contentTextarea = screen.getByPlaceholderText(
+      'editor:placeholder.contentPlaceholder'
+    );
+
+    expect(contentTextarea.className).toContain('overflow-y-hidden');
+  });
+
+  it('keeps the active textarea height stable while typing and only shrinks after blur', () => {
+    render(
+      <SimpleEditor
+        fileId="file-height"
+        title="File 1"
+        content={'line\n'.repeat(40)}
+        onTitleChange={vi.fn()}
+        onContentChange={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const contentTextarea = screen.getByPlaceholderText(
+      'editor:placeholder.contentPlaceholder'
+    ) as HTMLTextAreaElement;
+
+    contentTextarea.style.height = '600px';
+
+    const measuredHeight = 320;
+    Object.defineProperty(contentTextarea, 'scrollHeight', {
+      configurable: true,
+      get: () => {
+        if (contentTextarea.style.height === '0px') {
+          return measuredHeight;
+        }
+        const currentHeight = Number.parseFloat(contentTextarea.style.height || '0');
+        return Math.max(currentHeight, measuredHeight);
+      },
+    });
+
+    contentTextarea.focus();
+    fireEvent.change(contentTextarea, {
+      target: { value: 'Shorter content after deleting a lot of text.' },
+    });
+
+    expect(contentTextarea.style.height).toBe('600px');
+
+    fireEvent.blur(contentTextarea);
+
+    expect(contentTextarea.style.height).toBe(`${measuredHeight}px`);
+  });
+
+  it('does not force auto-scroll to bottom when user scrolled away during streaming', async () => {
+    const rafSpy = mockRaf();
+
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onTitleChange = vi.fn();
+    const onContentChange = vi.fn();
+
+    const { container, rerender } = render(
+      <SimpleEditor
+        fileId="file-1"
+        title="File 1"
+        content={'line\n'.repeat(100)}
+        onTitleChange={onTitleChange}
+        onContentChange={onContentChange}
+        onSave={onSave}
+        isStreaming
+      />
+    );
+
+    const scrollContainer = container.querySelector('div.flex-1.overflow-auto') as HTMLDivElement;
+    expect(scrollContainer).toBeTruthy();
+
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      value: 2000,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      value: 500,
+      writable: true,
+      configurable: true,
+    });
+    scrollContainer.scrollTop = 1000; // far from bottom (not "near bottom")
+    fireEvent.scroll(scrollContainer);
+
+    rerender(
+      <SimpleEditor
+        fileId="file-1"
+        title="File 1"
+        content={'line\n'.repeat(120)}
+        onTitleChange={onTitleChange}
+        onContentChange={onContentChange}
+        onSave={onSave}
+        isStreaming
+      />
+    );
+
+    await waitFor(() => {
+      expect(scrollContainer.scrollTop).toBe(1000);
+    });
+
+    rafSpy.mockRestore();
+  });
+
+  it('auto-scrolls to bottom during streaming when already near bottom', async () => {
+    const rafSpy = mockRaf();
+
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onTitleChange = vi.fn();
+    const onContentChange = vi.fn();
+
+    const { container, rerender } = render(
+      <SimpleEditor
+        fileId="file-1"
+        title="File 1"
+        content={'line\n'.repeat(100)}
+        onTitleChange={onTitleChange}
+        onContentChange={onContentChange}
+        onSave={onSave}
+        isStreaming
+      />
+    );
+
+    const scrollContainer = container.querySelector('div.flex-1.overflow-auto') as HTMLDivElement;
+    expect(scrollContainer).toBeTruthy();
+
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      value: 2000,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      value: 500,
+      writable: true,
+      configurable: true,
+    });
+    scrollContainer.scrollTop = 1480; // near bottom: 2000 - 1480 - 500 = 20
+    fireEvent.scroll(scrollContainer);
+
+    rerender(
+      <SimpleEditor
+        fileId="file-1"
+        title="File 1"
+        content={'line\n'.repeat(120)}
+        onTitleChange={onTitleChange}
+        onContentChange={onContentChange}
+        onSave={onSave}
+        isStreaming
+      />
+    );
+
+    await waitFor(() => {
+      expect(scrollContainer.scrollTop).toBe(2000);
+    });
+
+    rafSpy.mockRestore();
+  });
+});

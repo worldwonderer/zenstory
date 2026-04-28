@@ -1,0 +1,233 @@
+{
+  "title": "Settings",
+  "nav": {
+    "profile": "Profile",
+    "general": "General",
+    "subscription": "Subscription",
+    "points": "Points",
+    "referral": "Referral",
+    "agent": "Agent"
+  },
+  "profile": {
+    "anonymous": "Anonymous",
+    "edit": "Edit Profile"
+  },
+  "editor": {
+    "title": "Editor Preferences",
+    "fontSize": "Manuscript Font Size",
+    "lineHeight": "Manuscript Line Height",
+    "autoSaveInterval": "Auto-Save Draft Interval"
+  },
+  "theme": {
+    "title": "Appearance",
+    "mode": "Theme Mode",
+    "dark": "Dark Theme",
+    "light": "Light Theme",
+    "color": "Theme Color"
+  },
+  "language": {
+    "title": "Language Preferences",
+    "label": "Interface Language",
+    "zh": "中文",
+    "en": "English"
+  },
+  "actions": {
+    "resetDefault": "Reset to Default",
+    "cancel": "Cancel",
+    "saving": "Saving...",
+    "save": "Save Preferences",
+    "saved": "Preferences saved",
+    "confirmReset": "Are you sure you want to reset preferences? This will not affect your creative content."
+  },
+  "apiKeys": {
+    "title": "API Keys",
+    "create": "Create Key",
+    "createTitle": "Create New API Key",
+    "delete": "Delete",
+    "deleteTitle": "Delete API Key",
+    "deleteConfirm": "Are you sure you want to delete this key? This action cannot be undone.",
+    "regenerate": "Regenerate",
+    "regenerateTitle": "Regenerate API Key",
+    "regenerateConfirm": "The old key will stop working immediately.",
+    "regenerating": "Regenerating...",
+    "createdTitle": "API Key Created",
+    "copyWarning": "Copy this key now. It will not be shown again.",
+    "done": "Done",
+    "loading": "Loading...",
+    "noKeys": "No API keys yet. Create one to get started.",
+    "created": "Created",
+    "lastUsed": "Last used",
+    "expires": "Expires",
+    "disable": "Disable",
+    "enable": "Enable",
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled"
+    },
+    "permissions": {
+      "read": "Read",
+      "write": "Write"
+    },
+    "form": {
+      "name": "Name",
+      "namePlaceholder": "e.g., My API Key",
+      "description": "Description",
+      "descriptionPlaceholder": "Optional description",
+      "permissions": "Permissions",
+      "projectIds": "Project IDs (comma-separated)",
+      "projectIdsPlaceholder": "Leave empty for all projects",
+      "expiresAt": "Expiration Date"
+    },
+    "errors": {
+      "fetchFailed": "Failed to fetch API keys",
+      "createFailed": "Failed to create API key",
+      "deleteFailed": "Failed to delete API key",
+      "regenerateFailed": "Failed to regenerate API key",
+      "toggleFailed": "Failed to toggle key status",
+      "nameRequired": "Name is required"
+    },
+    "emptyState": "Create an API key, then share the link and key with your AI agent (Claude Code, OpenClaw, etc.) — it will auto-discover and connect to your workspace.",
+    "agentPromptZh": "请先阅读 {{skillUrl}} 了解我的小说写作平台 API，然后用以下 API Key 接入：\nAPI Key: {{apiKey}}\n请求头: X-Agent-API-Key: {{apiKey}}\n\n接入后请先调用 GET {{skillUrl}} 验证连接。",
+    "agentPromptEn": "Read {{skillUrl}} to learn about my novel writing platform API, then connect with this API key:\nAPI Key: {{apiKey}}\nHeader: X-Agent-API-Key: {{apiKey}}\n\nAfter connecting, verify by calling GET {{skillUrl}}.",
+    "copyPrompt": "Copy prompt for AI",
+    "copiedPrompt": "Copied!",
+    "testConnection": "Test Connection",
+    "testing": "Testing...",
+    "testSuccess": "API Key is valid and active.",
+    "testFailed": "Connection failed: {{error}}",
+    "hintBar": "Share the SKILL.md link and your API key with your AI agent — it will auto-connect."
+  },
+  "subscription": {
+    "usage": "Usage",
+    "active": "Active",
+    "expired": "Expired",
+    "cancelled": "Cancelled",
+    "none": "Not subscribed",
+    "daysRemaining": "{{days}} days remaining",
+    "upgradePrimary": "Upgrade to Pro",
+    "redeemCode": "Redeem Code",
+    "redeemTitle": "Redeem Membership",
+    "redeem": "Redeem",
+    "codeLabel": "Redeem Code",
+    "wechatGuide": "Need a redeem code? Add on WeChat: AIchuangzuo999",
+    "codeRequired": "Please enter a redeem code",
+    "invalidFormat": "Invalid redeem code format",
+    "redeemFailed": "Redemption failed. Please check the redeem code",
+    "redeemSuccess": "Redeemed successfully!",
+    "featuresTitle": "Plan Benefits",
+    "unlimited": "Unlimited",
+    "yes": "Yes",
+    "no": "No",
+    "features": {
+      "ai_conversations_per_day": "AI Conversations Per Day",
+      "max_ai_conversations_per_day": "AI Conversations Per Day",
+      "context_window_tokens": "Context Window Tokens",
+      "file_versions_per_file": "File Versions Per File",
+      "max_projects": "Max Projects",
+      "export_formats": "Export Formats",
+      "custom_prompts": "Custom Prompts",
+      "priority_support": "Priority Support",
+      "material_uploads": "Material Uploads",
+      "material_decompositions": "Material Decompositions",
+      "custom_skills": "Custom Skills",
+      "inspiration_copies_monthly": "Inspiration Copies"
+    }
+  },
+  "points": {
+    "comingSoon": "Points feature coming soon",
+    "balance": "Points Balance",
+    "pendingExpiration": "{{count}} points expiring soon",
+    "history": "Points History",
+    "historyError": "Failed to load history",
+    "noHistory": "No points history yet",
+    "totalTransactions": "{{count}} transactions total",
+    "expired": "Expired",
+    "dailyCheckIn": "Daily Check-in",
+    "streakDays": "{{days}} day streak",
+    "alreadyCheckedIn": "Already checked in today",
+    "checkIn": "Check in for Points",
+    "checkInFailed": "Check-in failed, please try again",
+    "earnMore": "Earn More Points",
+    "completed": "Completed",
+    "redeemPro": "Redeem Pro Membership",
+    "currentBalance": "Current Points",
+    "selectDuration": "Select duration",
+    "days": "days",
+    "points": "points",
+    "proBenefits": "Pro Membership Benefits",
+    "redeem": "Redeem",
+    "insufficient": "Insufficient Points",
+    "redeemFailed": "Redemption failed, please try again",
+    "benefit": {
+      "unlimitedAI": "Unlimited AI conversations",
+      "unlimitedProjects": "Unlimited projects",
+      "allFormats": "All export formats",
+      "priority": "Priority feature access"
+    },
+    "transaction": {
+      "check_in": "Check-in",
+      "check_in_streak": "Streak bonus",
+      "referral": "Referral bonus",
+      "skill_contribution": "Skill contribution",
+      "inspiration_contribution": "Inspiration contribution",
+      "profile_complete": "Profile completed",
+      "redeem_pro": "Redeemed Pro",
+      "admin_grant": "System grant",
+      "expiration": "Points expired"
+    },
+    "time": {
+      "minutesAgo": "{{count}} minutes ago",
+      "hoursAgo": "{{count}} hours ago",
+      "yesterday": "Yesterday",
+      "daysAgo": "{{count}} days ago"
+    }
+  },
+  "referral": {
+    "statsError": "Failed to load stats, please try again",
+    "totalInvites": "Total Invites",
+    "successfulInvites": "Successful Invites",
+    "totalPoints": "Total Points Earned",
+    "availablePoints": "Available Points",
+    "rewardsHistory": "Rewards History",
+    "noRewards": "No rewards yet",
+    "used": "Used",
+    "rewardType": {
+      "points": "Points",
+      "pro_trial": "Pro Trial",
+      "credits": "Credits"
+    },
+    "myCodes": "My Invite Codes",
+    "maxCodesHint": "You can create up to {{count}} invite codes",
+    "generateCode": "Generate Code",
+    "noCodes": "No invite codes yet",
+    "createFirstHint": "Create an invite code to invite friends and earn rewards",
+    "createFirstCode": "Create Your First Code",
+    "loadError": "Failed to load invite codes, please try again",
+    "createError": "Failed to create invite code, please try again",
+    "codeLabel": "Invite Code",
+    "copyCode": "Copy invite code",
+    "shareCode": "Share invite code",
+    "usageLabel": "Used",
+    "status": {
+      "expired": "Expired",
+      "disabled": "Disabled",
+      "exhausted": "Exhausted",
+      "available": "Available"
+    },
+    "expiry": {
+      "tomorrow": "Expires tomorrow",
+      "daysLeft": "Expires in {{count}} days"
+    },
+    "share": {
+      "title": "zenstory Writing - Invite Code",
+      "codeLabel": "Invite Code"
+    }
+  },
+  "common": {
+    "previous": "Previous",
+    "next": "Next",
+    "loading": "Loading...",
+    "cancel": "Cancel",
+    "processing": "Processing..."
+  }
+}

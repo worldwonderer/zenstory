@@ -1,0 +1,42 @@
+import React, { Suspense } from "react";
+import { useSidebarStore } from "../../stores/sidebarStore";
+import { SidebarTabs } from "./SidebarTabs";
+import { FileTreePane } from "./FileTreePane";
+import { SkillsPane } from "./SkillsPane";
+import { MaterialsPane } from "./MaterialsPane";
+import { Loader2 } from "lucide-react";
+
+/**
+ * Sidebar - Main sidebar container with tabbed navigation
+ *
+ * Displays:
+ * - Files tab: Project file tree
+ * - Skills tab: Available skills
+ * - Materials tab: Reference library
+ */
+export const Sidebar: React.FC = () => {
+  const { activeTab } = useSidebarStore();
+  const effectiveTab = activeTab === 'dashboard' ? 'files' : activeTab;
+
+  return (
+    <div className="h-full flex flex-col bg-[hsl(var(--bg-primary))]">
+      {/* Tab navigation */}
+      <SidebarTabs />
+
+      {/* Tab content with loading fallback */}
+      <div className="flex-1 overflow-hidden">
+        <Suspense
+          fallback={
+            <div className="h-full flex items-center justify-center text-[hsl(var(--text-secondary))]">
+              <Loader2 size={24} className="animate-spin" />
+            </div>
+          }
+        >
+          {effectiveTab === 'files' && <FileTreePane />}
+          {effectiveTab === 'skills' && <SkillsPane />}
+          {effectiveTab === 'materials' && <MaterialsPane />}
+        </Suspense>
+      </div>
+    </div>
+  );
+};

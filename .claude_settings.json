@@ -1,0 +1,39 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read(./**)",
+      "Write(./**)",
+      "Edit(./**)",
+      "Glob(./**)",
+      "Grep(./**)",
+      "Read(/Users/pite/Downloads/zenstory/.auto-claude/worktrees/tasks/038-add-tests-and-fix-bugs-for-zenstory-features/**)",
+      "Write(/Users/pite/Downloads/zenstory/.auto-claude/worktrees/tasks/038-add-tests-and-fix-bugs-for-zenstory-features/**)",
+      "Edit(/Users/pite/Downloads/zenstory/.auto-claude/worktrees/tasks/038-add-tests-and-fix-bugs-for-zenstory-features/**)",
+      "Glob(/Users/pite/Downloads/zenstory/.auto-claude/worktrees/tasks/038-add-tests-and-fix-bugs-for-zenstory-features/**)",
+      "Grep(/Users/pite/Downloads/zenstory/.auto-claude/worktrees/tasks/038-add-tests-and-fix-bugs-for-zenstory-features/**)",
+      "Read(/Users/pite/Downloads/zenstory/.auto-claude/worktrees/tasks/038-add-tests-and-fix-bugs-for-zenstory-features/.auto-claude/specs/038-add-tests-and-fix-bugs-for-zenstory-features/**)",
+      "Write(/Users/pite/Downloads/zenstory/.auto-claude/worktrees/tasks/038-add-tests-and-fix-bugs-for-zenstory-features/.auto-claude/specs/038-add-tests-and-fix-bugs-for-zenstory-features/**)",
+      "Edit(/Users/pite/Downloads/zenstory/.auto-claude/worktrees/tasks/038-add-tests-and-fix-bugs-for-zenstory-features/.auto-claude/specs/038-add-tests-and-fix-bugs-for-zenstory-features/**)",
+      "Read(/Users/pite/Downloads/zenstory/.auto-claude/**)",
+      "Write(/Users/pite/Downloads/zenstory/.auto-claude/**)",
+      "Edit(/Users/pite/Downloads/zenstory/.auto-claude/**)",
+      "Glob(/Users/pite/Downloads/zenstory/.auto-claude/**)",
+      "Grep(/Users/pite/Downloads/zenstory/.auto-claude/**)",
+      "Bash(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "mcp__context7__resolve-library-id(*)",
+      "mcp__context7__query-docs(*)",
+      "mcp__graphiti-memory__search_nodes(*)",
+      "mcp__graphiti-memory__search_facts(*)",
+      "mcp__graphiti-memory__add_episode(*)",
+      "mcp__graphiti-memory__get_episodes(*)",
+      "mcp__graphiti-memory__get_entity_edge(*)"
+    ]
+  }
+}

@@ -1,0 +1,513 @@
+{
+  "nav": {
+    "home": "Home",
+    "projects": "My Projects",
+    "materials": "Materials",
+    "skills": "Skills",
+    "billing": "Plans & Benefits",
+    "logout": "Logout",
+    "lab": "Lab",
+    "inspirations": "Inspirations"
+  },
+  "userPanel": {
+    "quickSettings": "Quick Settings",
+    "openPanel": "Open User Panel",
+    "adminPanel": "Admin Panel",
+    "replayTour": "Replay guide"
+  },
+  "dashboard": {
+    "title": "Project Dashboard",
+    "subtitle": "Track your writing progress",
+    "tabs": {
+      "overview": "Overview"
+    },
+    "sections": {
+      "nextSteps": "What's Next",
+      "statistics": "Statistics"
+    },
+    "error": {
+      "title": "Failed to Load Dashboard",
+      "message": "An error occurred while loading the dashboard."
+    }
+  },
+  "bottomNav": {
+    "projects": "Projects",
+    "create": "Create",
+    "settings": "Settings"
+  },
+  "billing": {
+    "title": "Subscription & Benefits",
+    "subtitle": "Review your plan, quota usage, and upgrade quickly",
+    "currentPlan": "Current Plan",
+    "unknownPlan": "Not subscribed",
+    "unlockPro": "Unlock Pro",
+    "unlockHint": "Use \"Unlock Pro\" in the top right, or redeem a code to activate directly.",
+    "usageTitle": "Current Quota Usage",
+    "compareTitle": "Plan Comparison",
+    "catalogSubtitle": "Choose by outcomes you want to achieve, not technical specs",
+    "pricingHeroTitle": "Choose a plan by what you need to accomplish",
+    "pricingHeroSubtitle": "Start with your goal, then pick the right plan—from free trial to pro workflows.",
+    "taskLedBadge": "Choose by writing outcomes",
+    "billingCycleLabel": "Choose billing cycle",
+    "free": "Free",
+    "perMonth": "/month",
+    "perYear": "/year",
+    "current": "Current",
+    "recommended": "Recommended",
+    "forUsers": "Best for: {{target}}",
+    "monthly": "Monthly",
+    "yearly": "Yearly",
+    "yearlySaveUpTo": "Save up to {{percent}}% with annual billing",
+    "yearlyMaxSaveHint": "Save up to {{percent}} with annual billing",
+    "yearlyMaxSaveHintFallback": "Switch monthly/annual to fit your budget",
+    "yearlySaveBadge": "Save {{amount}} · {{percent}}% yearly",
+    "yearlyEquivalent": "Equivalent to {{price}}/month",
+    "yearlySaveAmount": "Save {{amount}} vs monthly",
+    "alternateYearlyPrice": "Annual {{price}}",
+    "alternateMonthlyPrice": "Monthly {{price}}",
+    "monthlyToggle": "Monthly",
+    "yearlyToggle": "Yearly",
+    "showOnlyDiff": "Show differences only",
+    "showAllFeatures": "Show all features",
+    "noDifferences": "No key feature differences across plans right now",
+    "noDiffMetric": "No visible differences in this comparison mode",
+    "ctaFreeStart": "Start Free",
+    "ctaUpgradePro": "Upgrade to Pro",
+    "trustTitle": "Upgrade with confidence",
+    "trustFlexible": "Upgrade or downgrade anytime; changes apply next billing cycle",
+    "trustBilling": "Transparent billing with clear prices and cycles",
+    "trustSecurity": "Your data is protected in transit and at rest",
+    "summaryStarter": "Validate ideas quickly and move from concept to first draft with less friction.",
+    "summaryCreator": "Built for consistent publishing so your workflow stays uninterrupted.",
+    "targetExplorer": "New and light-usage creators",
+    "targetDailyWriter": "Daily writers and long-form creators",
+    "metricWriting": "Writing output",
+    "metricWritingOutcome": "Sustain drafting from outline to polished chapters",
+    "metricAgentRuns": "Deep Agent tasks",
+    "metricAgentRunsOutcome": "Handle outlining, rewrites, polishing, and revisions",
+    "metricProjects": "Active projects",
+    "metricProjectsOutcome": "Run multiple books without frequent archiving",
+    "metricContext": "Context window",
+    "metricContextOutcome": "Keeps long-form plot and character context intact",
+    "metricExport": "Export formats",
+    "metricExportOutcome": "Deliver directly to editors, teams, or clients",
+    "metricWritingFriendly": "Monthly writing capacity",
+    "metricAgentRunsFriendly": "Complex task handling",
+    "metricProjectsFriendly": "Parallel project capacity",
+    "metricContextFriendly": "Single-run context depth",
+    "metricExportFriendly": "Delivery export options",
+    "metricWritingHelper": "Estimated sustainable output based on your publishing pace",
+    "metricAgentRunsHelper": "For outlining, rewrites, structural edits, and other deep tasks",
+    "metricProjectsHelper": "Run multiple genres or client projects in parallel",
+    "metricContextHelper": "Larger context is better for long-form continuity edits",
+    "metricExportHelper": "Export directly for editors, platforms, or clients",
+    "monthlyOutputEstimate": "Approx. {{count}} × 10k chars/month",
+    "timesPerMonth": "/month",
+    "projectsUnit": "projects",
+    "noExportFormats": "N/A",
+    "metricMaterialUploads": "Material uploads",
+    "metricMaterialUploadsOutcome": "Keep feeding source material without breaking writing flow",
+    "metricMaterialDecompositions": "Material decomposition credits",
+    "metricMaterialDecompositionsOutcome": "Decompose reference materials each month and extract structured notes fast",
+    "metricCustomSkills": "Custom skills",
+    "metricCustomSkillsOutcome": "Capture team workflows and reuse them in daily writing",
+    "metricInspirationCopies": "Inspiration copies",
+    "metricInspirationCopiesOutcome": "Clone proven templates into projects for faster starts",
+    "metricPriorityQueue": "Queue priority",
+    "metricPriorityQueueOutcome": "Start tasks faster during peak usage windows",
+    "priorityQueueStandard": "Standard queue",
+    "priorityQueuePriority": "Priority queue"
+  },
+  "todayActionPlan": {
+    "title": "Today's 3-step plan",
+    "subtitle": "Generated from your current progress, each step is one-click executable.",
+    "cta": "Run now",
+    "executing": "Running...",
+    "expand": "Show all",
+    "collapse": "Collapse",
+    "expandHint": "Expand to see more suggestions.",
+    "activationDescription": "Complete this milestone to unlock a smoother writing flow.",
+    "personaDescription": "Recommended next action based on your preferences.",
+    "personaRecommendations": {
+      "persona_explorer_template": {
+        "title": "Template picks for explorers",
+        "description": "Jump into inspiration templates and start drafts faster."
+      },
+      "persona_serial_streak": {
+        "title": "Serial writing rhythm",
+        "description": "Set daily writing goals and track your writing streak."
+      },
+      "persona_professional_efficiency": {
+        "title": "Efficiency workflow",
+        "description": "Highlight the outline → chapter → revision one-click flow."
+      },
+      "persona_fanfic_consistency": {
+        "title": "Consistency checks",
+        "description": "Prioritize character relationships and setting consistency tools."
+      },
+      "persona_studio_collab": {
+        "title": "Collaboration entry",
+        "description": "Project organization suggestions for team collaboration."
+      },
+      "goal_monetize_upgrade": {
+        "title": "Monetization path",
+        "description": "Review upgrade benefits to unlock growth and commercialization features."
+      },
+      "goal_quality_review": {
+        "title": "Quality improvement path",
+        "description": "Use AI review and rewrite suggestions to improve text quality."
+      },
+      "goal_habit_activation": {
+        "title": "Build a writing habit",
+        "description": "Hit a small daily goal to form a stable writing rhythm."
+      },
+      "level_beginner_path": {
+        "title": "Beginner guided path",
+        "description": "Start with templates, then gradually build characters and chapters."
+      },
+      "level_advanced_shortcut": {
+        "title": "Advanced shortcuts",
+        "description": "Prioritize batch revisions and advanced editing tools."
+      }
+    },
+    "defaults": {
+      "createProject": {
+        "title": "Create your first project",
+        "description": "Turn your idea into a project first, then writing and export become easier.",
+        "cta": "Create in one click"
+      },
+      "openProject": {
+        "title": "Resume latest project",
+        "description": "Continue with full context for the highest writing efficiency."
+      },
+      "exportProject": {
+        "title": "Validate export path",
+        "description": "Open your project and hit export to quickly verify delivery readiness.",
+        "cta": "Go to export"
+      },
+      "upgrade": {
+        "title": "Review upgrade benefits",
+        "description": "Confirm quota and export capabilities early to avoid interruptions.",
+        "cta": "Go to billing"
+      },
+      "inspirations": {
+        "title": "Refill inspirations",
+        "description": "Browse featured inspirations to quickly add creative input."
+      }
+    }
+  },
+  "activationGuide": {
+    "title": "First-day activation",
+    "progress": "{{done}} / {{total}} completed",
+    "nextAction": "Continue",
+    "steps": {
+      "signup_success": "Sign up",
+      "project_created": "Create a project",
+      "first_file_saved": "Save your first file",
+      "first_ai_action_accepted": "Accept your first AI change"
+    }
+  },
+  "hero": {
+    "greeting": "Hello {{name}}",
+    "question": "What do you want to create today?",
+    "slogan": "Let AI be your creative partner",
+    "startWriting": "Start Writing"
+  },
+  "projects": {
+    "recent": "Recent Projects",
+    "all": "All Projects",
+    "subtitle": "Manage and browse all your projects",
+    "new": "New Project",
+    "filterAll": "All",
+    "count_one": "{{count}} project",
+    "count_other": "{{count}} projects",
+    "noMatch": "No matching projects",
+    "tryDifferent": "Try adjusting your search or filter",
+    "createFirst": "Create Your First Project",
+    "viewAll": "View All",
+    "empty": "No projects yet",
+    "emptyHint": "Click \"Start Writing\" to create your first project — ideas optional",
+    "searchPlaceholder": "Search projects...",
+    "createNew": "Create New Project",
+    "namePlaceholder": "Name your work",
+    "confirmDeleteTitle": "Delete this project?",
+    "confirmDeleteMessage": "This action cannot be undone. All content will be permanently deleted.",
+    "confirmDeleteButton": "Delete",
+    "cancel": "Cancel",
+    "cannotDeleteLast": "Cannot delete last project",
+    "editName": "Edit project name",
+    "deleteProject": "Delete project"
+  },
+  "inspiration": {
+    "title": "Creative Inspiration",
+    "novelPlaceholder": "Enter your creative idea, e.g., A programmer travels to ancient times and discovers his coding ability becomes cultivation...",
+    "shortPlaceholder": "Describe your story idea, e.g., Late night at a convenience store, an old man comes every night to buy the same discontinued candy...",
+    "screenplayPlaceholder": "Tell me what you want to shoot, e.g., A CEO gets rejected at a matchmaking corner for low income, decides to hide identity to pursue true love...",
+    "novelDesc": "AI will help you conceptualize story framework, build world and characters based on your inspiration",
+    "shortDesc": "AI will help you refine story structure, making the short story more compelling",
+    "screenplayDesc": "AI will help you design episode plots, dialogue and twists, making the script more engaging"
+  },
+  "inspirations": {
+    "featured": "Featured Inspirations",
+    "viewAll": "View All",
+    "emptyTitle": "No featured inspirations yet",
+    "emptyHint": "No picks right now. Explore the inspiration library for ideas.",
+    "emptyCta": "Browse Inspiration Library"
+  },
+  "time": {
+    "justNow": "just now",
+    "minutesAgo_one": "{{count}} minute ago",
+    "minutesAgo_other": "{{count}} minutes ago",
+    "hoursAgo_one": "{{count}} hour ago",
+    "hoursAgo_other": "{{count}} hours ago",
+    "daysAgo_one": "{{count}} day ago",
+    "daysAgo_other": "{{count}} days ago",
+    "yesterday": "yesterday",
+    "weeksAgo_one": "{{count}} week ago",
+    "weeksAgo_other": "{{count}} weeks ago",
+    "monthsAgo_one": "{{count}} month ago",
+    "monthsAgo_other": "{{count}} months ago"
+  },
+  "projectType": {
+    "novel": {
+      "name": "Long-form Novel",
+      "description": "Build expansive world-building systems and develop compelling character arcs. Perfect for serialized novels over 50,000 words."
+    },
+    "short": {
+      "name": "Short Story",
+      "description": "Craft complete narratives with precision and emotional resonance. Ideal for standalone stories of 5,000-20,000 words."
+    },
+    "screenplay": {
+      "name": "Screenplay",
+      "description": "Design episode plots and scene dialogue for fast-paced mini-dramas. Perfect for short video scripts and micro-dramas."
+    }
+  },
+  "common": {
+    "loading": "Loading...",
+    "appName": "zenstory",
+    "slogan": "Let AI be your creative partner",
+    "createButton": "Start Writing",
+    "confirmButton": "Confirm",
+    "cancelButton": "Cancel",
+    "done": "Done",
+    "back": "Back",
+    "retry": "Retry",
+    "refresh": "Refresh"
+  },
+  "folders": {
+    "worldBuilding": "World Building",
+    "characters": "Characters",
+    "materials": "Materials",
+    "outlines": "Outlines",
+    "drafts": "Drafts",
+    "people": "Characters",
+    "concept": "Concept",
+    "scenes": "Scenes",
+    "episodeOutlines": "Episode Outlines",
+    "scripts": "Scripts"
+  },
+  "defaults": {
+    "novel": "My Novel",
+    "short": "My Short Story",
+    "screenplay": "My Drama",
+    "untitled": "Untitled"
+  },
+  "statistics": {
+    "title": "Project Statistics",
+    "projectHealth": {
+      "title": "Project Health",
+      "overallStatus": "Overall project status",
+      "status": {
+        "good": "Healthy",
+        "warning": "Needs Attention",
+        "critical": "Action Required",
+        "neutral": "Not Started"
+      },
+      "indicators": {
+        "chapters": "Chapter Progress",
+        "chaptersDesc": "{{percent}}% complete",
+        "noChapters": "No chapters yet",
+        "activity": "Writing Activity",
+        "inactive": "Inactive",
+        "activityGood": "{{count}} words written today",
+        "activityWarning": "No writing today this week",
+        "activityInactive": "Start writing to track progress",
+        "streak": "Writing Streak",
+        "streakActive": "Keep up the momentum",
+        "streakInactive": "Build a writing habit",
+        "aiUsage": "AI Collaboration",
+        "aiActive": "Actively using AI assistance",
+        "aiInactive": "Try AI for writing help"
+      }
+    },
+    "continueWriting": {
+      "title": "Continue Writing",
+      "inProgress": "In Progress",
+      "notStarted": "Ready to Start",
+      "completed": "Recently Finished",
+      "noFiles": "No files yet",
+      "createFirst": "Create your first chapter to get started",
+      "action": "Continue Writing",
+      "hintInProgress": "Pick up where you left off",
+      "hintNotStarted": "Start writing this chapter",
+      "hintCompleted": "Review or continue to next chapter"
+    },
+    "outstandingTasks": {
+      "title": "Outstanding Tasks",
+      "total": "{{count}} tasks",
+      "allClear": "All Caught Up!",
+      "allClearHint": "No pending tasks at the moment",
+      "notStartedCount": "not started",
+      "draftWithoutOutlineCount": "no outline",
+      "outlineWithoutDraftCount": "no draft",
+      "notStartedDesc": "Chapter hasn't been started yet",
+      "draftWithoutOutlineDesc": "Content exists but no outline plan",
+      "outlineWithoutDraftDesc": "Planned but not yet written",
+      "moreTasks": "+{{count}} more tasks",
+      "types": {
+        "draftWithoutOutline": "No Outline",
+        "outlineWithoutDraft": "No Draft",
+        "notStarted": "Not Started"
+      }
+    },
+    "wordCount": {
+      "title": "Word Count",
+      "today": "Today",
+      "thisWeek": "This Week",
+      "thisMonth": "This Month",
+      "total": "Total",
+      "words_one": "{{count}} word",
+      "words_other": "{{count}} words",
+      "trend": {
+        "title": "Word Count Trend",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "monthly": "Monthly"
+      },
+      "trendDescription": "Track your daily, weekly, and monthly writing progress. Click on the time range buttons to switch views."
+    },
+    "chapterCompletion": {
+      "title": "Chapter Completion",
+      "completed": "Completed",
+      "total_one": "{{count}} chapter",
+      "total_other": "{{count}} chapters",
+      "percentage": "{{percent}}% complete",
+      "noChapters": "No chapters yet",
+      "planned": "Planned",
+      "inProgress": "In Progress",
+      "finished": "Finished"
+    },
+    "streak": {
+      "title": "Writing Streak",
+      "currentStreak": "Current Streak",
+      "longestStreak": "Longest Streak",
+      "days_one": "{{count}} day",
+      "days_other": "{{count}} days",
+      "day_one": "{{count}} day",
+      "day_other": "{{count}} days",
+      "status": {
+        "active": "Active",
+        "atRisk": "At Risk",
+        "broken": "Broken",
+        "none": "Not Started"
+      },
+      "frozen": "Frozen",
+      "freezeAvailable": "Freeze Available",
+      "freezeUsed": "Freeze Used",
+      "recoveryAvailable": "Recovery Available",
+      "keepWriting": "Keep it up!",
+      "startWriting": "Start writing today",
+      "daysUntilBreak": "{{count}} days until break",
+      "tips": {
+        "title": "Streak Tips",
+        "daily": "Write at least 10 words daily to maintain your streak.",
+        "consistency": "Consistency is more important than volume. Even small progress counts.",
+        "recovery": "Missed a day? Use a streak recovery to keep your streak alive."
+      }
+    },
+    "lastWritingDate": "Last writing",
+    "aiUsage": {
+      "title": "AI Collaboration",
+      "sessions_one": "{{count}} session",
+      "sessions_other": "{{count}} sessions",
+      "session_one": "{{count}} session",
+      "session_other": "{{count}} sessions",
+      "messages_one": "{{count}} message",
+      "messages_other": "{{count}} messages",
+      "message_one": "{{count}} message",
+      "message_other": "{{count}} messages",
+      "tokens_one": "{{count}} token",
+      "tokens_other": "{{count}} tokens",
+      "estimatedTokens": "Estimated tokens",
+      "today": "Today",
+      "thisWeek": "This Week",
+      "thisMonth": "This Month",
+      "total": "Total",
+      "noUsage": "No usage yet",
+      "continueSession": "Continue your AI conversation",
+      "recentActivity": "Recent activity",
+      "tryAgain": "Start a new conversation to get AI help",
+      "continueConversation": "Continue Conversation",
+      "lastInteraction": "Last message {{time}}",
+      "sessionInProgress": "Session in progress",
+      "resume": "Resume",
+      "getStartTitle": "Start AI Collaboration",
+      "getStartDesc": "Get AI help for plot ideas, character development, and more",
+      "startChat": "Start Chat",
+      "askForHelp": "Ask AI for Help",
+      "askForHelpDesc": "Get suggestions for your writing project",
+      "startNew": "Start New",
+      "tips": {
+        "title": "AI Usage Tips",
+        "efficiency": "Use AI for brainstorming, outlining, and editing to maximize efficiency.",
+        "iterative": "Iterative refinement yields better results than single-shot generation.",
+        "context": "Provide context from your story for more relevant AI suggestions."
+      }
+    },
+    "loading": "Loading statistics...",
+    "error": "Failed to load",
+    "retry": "Retry",
+    "noData": "No data available",
+    "lastUpdated": "Last updated: {{time}}"
+  },
+  "dashboardTour": {
+    "common": {
+      "next": "Next",
+      "finish": "Start using",
+      "skip": "Skip guide",
+      "progress": "{{current}} / {{total}}"
+    },
+    "steps": {
+      "projectType": {
+        "title": "Choose what you want to write",
+        "description": "Novel, short story, and screenplay each follow a different creation path. Start with the closest fit.",
+        "cta": "Got it"
+      },
+      "inspirationInput": {
+        "title": "Start with one core conflict",
+        "description": "Type your idea directly, or tap a suggested prompt below to create your first project faster."
+      },
+      "createProject": {
+        "title": "Create a project in one click",
+        "description": "This creates a new project immediately so you can keep writing or let AI help you expand it.",
+        "cta": "Try it"
+      },
+      "inspirationsLink": {
+        "title": "Come here when you are stuck",
+        "description": "The inspiration library helps you refill premises, setup, and opening scenes whenever you hit a wall."
+      }
+    }
+  },
+  "agentConnection": {
+    "title": "Connect your AI agent",
+    "activeTitle": "AI agent connected",
+    "description": "Let Claude Code or OpenClaw directly operate your novel projects",
+    "createKey": "Create Key",
+    "manageKeys": "Manage",
+    "manageKeysAria": "Manage API keys",
+    "createKeyAria": "Create an Agent API key",
+    "keyCount": "{{count}} active key(s)",
+    "errorTitle": "Failed to load",
+    "retry": "Retry"
+  }
+}

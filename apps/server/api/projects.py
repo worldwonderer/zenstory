@@ -1,0 +1,326 @@
+"""
+Project management API endpoints
+"""
+import logging
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Header
+from pydantic import BaseModel, ConfigDict, Field
+from services.auth import get_current_active_user
+from sqlmodel import Session, select
+
+from config.datetime_utils import utcnow
+from config.project_status import (
+    PROJECT_STATUS_MAX_LENGTHS,
+    normalize_project_status_payload,
+)
+from config.project_templates import (
+    get_default_project_name,
+    get_folders_for_type,
+)
+from config.project_templates import (
+    get_project_templates as get_project_templates_config,
+)
+from core.error_codes import ErrorCode
+from core.error_handler import APIException
+from core.project_access import verify_project_ownership
+from database import get_session
+from models import (
+    ACTIVATION_EVENT_PROJECT_CREATED,
+    File,
+    Project,
+    User,
+)
+from services.features.activation_event_service import activation_event_service
+from services.quota_service import quota_service
+from utils.logger import get_logger, log_with_context
+
+logger = get_logger(__name__)
+
+router = APIRouter(prefix="/api/v1", tags=["projects"])
+ProjectTypeLiteral = Literal["novel", "short", "screenplay"]
+
+
+# Request schemas
+class CreateProjectRequest(BaseModel):
+    """Request body for creating a project."""
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = None
+    description: str | None = None
+    project_type: ProjectTypeLiteral = "novel"
+
+
+class UpdateProjectRequest(BaseModel):
+    """Request body for updating a project."""
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = None
+    description: str | None = None
+    project_type: ProjectTypeLiteral | None = None
+
+
+class PatchProjectRequest(BaseModel):
+    """Request body for patching project metadata (AI context fields)"""
+    model_config = ConfigDict(extra="forbid")
+    summary: str | None = Field(default=None, max_length=PROJECT_STATUS_MAX_LENGTHS["summary"])
+    current_phase: str | None = Field(default=None, max_length=PROJECT_STATUS_MAX_LENGTHS["current_phase"])
+    writing_style: str | None = Field(default=None, max_length=PROJECT_STATUS_MAX_LENGTHS["writing_style"])
+    notes: str | None = Field(default=None, max_length=PROJECT_STATUS_MAX_LENGTHS["notes"])
+
+
+# ==================== Project CRUD ====================
+@router.get("/projects", response_model=list[Project])
+def get_projects(
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session)
+):
+    """Get all projects for the current user (excluding soft-deleted)."""
+    projects = session.exec(
+        select(Project).where(
+            Project.owner_id == current_user.id,
+            Project.is_deleted.is_(False)
+        )
+    ).all()
+
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Retrieved user projects",
+        user_id=current_user.id,
+        project_count=len(projects),
+    )
+
+    return projects
+
+
+@router.post("/projects", response_model=Project)
+def create_project(
+    request: CreateProjectRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+    accept_language: str | None = Header(None, alias="Accept-Language")
+):
+    """Create a new project with folders based on project type."""
+    project = Project(
+        name=request.name or "",
+        description=request.description,
+        owner_id=current_user.id,
+        project_type=request.project_type,
+    )
+
+    # Check project limit
+    allowed, existing_count, max_projects = quota_service.check_project_limit(
+        session, current_user.id
+    )
+    if not allowed:
+        raise APIException(
+            error_code=ErrorCode.QUOTA_PROJECTS_EXCEEDED,
+            status_code=402,
+            detail=f"Project limit reached ({existing_count}/{max_projects}). Please upgrade your plan.",
+        )
+
+    # Parse language from Accept-Language header
+    lang = 'zh'  # Default to Chinese
+    if accept_language:
+        lang = accept_language.split(',')[0].split('-')[0]
+
+    # If no name provided, use default project name in the selected language
+    if not project.name:
+        project.name = get_default_project_name(project.project_type, lang)
+
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Creating new project",
+        user_id=current_user.id,
+        project_name=project.name,
+        project_type=project.project_type,
+        language=lang,
+    )
+
+    try:
+        session.add(project)
+        session.flush()  # Ensure project.id is generated before creating folders
+
+        # Get folder configuration based on project type and language
+        folders = get_folders_for_type(project.project_type, lang)
+
+        # Create folders for the project
+        for folder_config in folders:
+            folder = File(
+                id=f"{project.id}-{folder_config['id']}",  # Predictable ID: project_id-folder_name
+                project_id=project.id,
+                title=folder_config["title"],
+                file_type=folder_config["file_type"],
+                order=folder_config["order"],
+                parent_id=None,  # Root level folders
+            )
+            session.add(folder)
+
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to create project with initial folder structure")
+        raise APIException(
+            error_code=ErrorCode.INTERNAL_SERVER_ERROR,
+            status_code=500,
+            detail="Failed to initialize project structure.",
+        ) from None
+
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Project created successfully",
+        project_id=project.id,
+        project_name=project.name,
+        folder_count=len(folders),
+    )
+
+    try:
+        activation_event_service.record_once(
+            session,
+            user_id=current_user.id,
+            event_name=ACTIVATION_EVENT_PROJECT_CREATED,
+            project_id=project.id,
+            event_metadata={"project_type": project.project_type},
+        )
+    except Exception as e:
+        log_with_context(
+            logger,
+            logging.WARNING,
+            "Failed to record project_created activation event",
+            user_id=current_user.id,
+            project_id=project.id,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+
+    # Re-fetch from database to ensure proper serialization
+    db_project = session.get(Project, project.id)
+    return db_project
+
+
+@router.get("/project-templates")
+def list_project_templates(
+    accept_language: str | None = Header(None, alias="Accept-Language")
+):
+    """Get all available project templates.
+
+    Supports language selection via Accept-Language header (e.g., 'zh' or 'en').
+    Defaults to Chinese if not specified.
+    """
+    # Parse Accept-Language header (e.g., 'zh-CN,zh;q=0.9,en;q=0.8' -> 'zh')
+    lang = "zh"  # Default to Chinese
+    if accept_language:
+        # Extract first language code
+        lang = accept_language.split(",")[0].split("-")[0]
+
+    return get_project_templates_config(lang)
+
+
+@router.get("/projects/{project_id}", response_model=Project)
+def get_project(
+    project_id: str,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session)
+):
+    """Get a specific project."""
+    project = verify_project_ownership(project_id, current_user, session)
+    return project
+
+
+@router.put("/projects/{project_id}", response_model=Project)
+def update_project(
+    project_id: str,
+    request: UpdateProjectRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session)
+):
+    """Update a project."""
+    db_project = verify_project_ownership(project_id, current_user, session)
+
+    project_data = request.model_dump(exclude_unset=True)
+    for key, value in project_data.items():
+        setattr(db_project, key, value)
+
+    db_project.updated_at = utcnow()
+    session.add(db_project)
+    session.commit()
+    session.refresh(db_project)
+    return db_project
+
+
+@router.delete("/projects/{project_id}")
+def delete_project(
+    project_id: str,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session)
+):
+    """Delete a project (soft delete)."""
+    project = verify_project_ownership(project_id, current_user, session)
+
+    # Soft delete: mark as deleted instead of actual deletion
+    project.is_deleted = True
+    project.deleted_at = utcnow()
+    session.add(project)
+    session.commit()
+
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Project deleted successfully",
+        project_id=project_id,
+        project_name=project.name,
+        user_id=current_user.id,
+    )
+
+    return {"message": "Project deleted successfully"}
+
+
+@router.patch("/projects/{project_id}", response_model=Project)
+def patch_project(
+    project_id: str,
+    request: PatchProjectRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session)
+):
+    """
+    Partially update a project's metadata.
+
+    This endpoint is specifically designed for updating AI context fields:
+    - summary: Project summary/background for AI understanding
+    - current_phase: Current writing phase description
+    - writing_style: Writing style guidelines for AI
+    - notes: Additional notes for AI assistant
+    """
+    project = verify_project_ownership(project_id, current_user, session)
+
+    # Update only provided fields
+    update_data = request.model_dump(exclude_unset=True)
+    try:
+        normalized_status = normalize_project_status_payload(
+            {
+                "summary": update_data.get("summary"),
+                "current_phase": update_data.get("current_phase"),
+                "writing_style": update_data.get("writing_style"),
+                "notes": update_data.get("notes"),
+            }
+        )
+    except ValueError as exc:
+        raise APIException(
+            error_code=ErrorCode.VALIDATION_ERROR,
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    for field_name, field_value in normalized_status.items():
+        update_data[field_name] = field_value
+
+    for key, value in update_data.items():
+        setattr(project, key, value)
+
+    project.updated_at = utcnow()
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+
+    return project

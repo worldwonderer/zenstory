@@ -1,0 +1,27 @@
+{
+  "statusDialog": {
+    "title": "AI 记忆",
+    "aiMemory": "AI 记忆",
+    "projectSummary": "项目简介",
+    "writingStyle": "写作风格",
+    "currentPhase": "当前阶段",
+    "notes": "备注",
+    "save": "保存",
+    "saving": "保存中...",
+    "saveFailed": "保存失败,请重试",
+    "shareAsInspiration": "投稿到灵感库",
+    "sharingInspiration": "投稿中...",
+    "viewInspirationLibrary": "查看灵感库",
+    "shareSuccessPending": "已提交到灵感库，等待管理员审核",
+    "shareSuccessApproved": "灵感已发布到灵感库",
+    "shareFailed": "提交灵感失败，请重试",
+    "cancel": "取消",
+    "infoBanner": "这里的内容会作为上下文提供给 AI(并可在对话中被自动更新)。",
+    "placeholders": {
+      "summary": "描述小说的类型、世界观、主角设定等核心信息",
+      "writingStyle": "描述语言风格、叙事节奏、文字特点等",
+      "currentPhase": "说明当前写作进度和阶段性目标",
+      "notes": "记录写作要点、需要注意的事项、待解决的问题等"
+    }
+  }
+}

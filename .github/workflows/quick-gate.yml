@@ -1,0 +1,65 @@
+name: Changed-path Quick Gate
+
+on:
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changed-path-quick-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            server_backend:
+              - 'apps/server/**'
+            web_frontend:
+              - 'apps/web/**'
+            ci:
+              - '.github/workflows/**'
+              - 'scripts/ci/**'
+
+      - name: Setup Python
+        if: steps.changes.outputs.server_backend == 'true' || steps.changes.outputs.ci == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install yamllint
+        if: steps.changes.outputs.ci == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install yamllint
+
+      - name: Setup pnpm
+        if: steps.changes.outputs.web_frontend == 'true'
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.29.3
+
+      - name: Setup Node.js
+        if: steps.changes.outputs.web_frontend == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Run changed-path quick gate
+        env:
+          CHANGED_SERVER_BACKEND: ${{ steps.changes.outputs.server_backend }}
+          CHANGED_WEB_FRONTEND: ${{ steps.changes.outputs.web_frontend }}
+          CHANGED_CI: ${{ steps.changes.outputs.ci }}
+        run: |
+          bash scripts/ci/changed-path-quick-gate.sh

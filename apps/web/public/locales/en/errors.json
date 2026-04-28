@@ -1,0 +1,74 @@
+{
+  "ERR_INTERNAL_SERVER_ERROR": "Service temporarily unavailable, please try again later",
+  "ERR_VALIDATION_ERROR": "Invalid request format",
+  "ERR_DATABASE_ERROR": "Data processing failed, please try again later",
+  "ERR_SERVICE_UNAVAILABLE": "Service temporarily unavailable, please try again later",
+  "ERR_BAD_REQUEST": "Invalid request format",
+
+  "ERR_AUTH_UNAUTHORIZED": "Please login first",
+  "ERR_AUTH_INVALID_CREDENTIALS": "Invalid username or password",
+  "ERR_AUTH_TOKEN_EXPIRED": "Session expired, please login again",
+  "ERR_AUTH_TOKEN_INVALID": "Invalid session, please login again",
+  "ERR_AUTH_INACTIVE_USER": "Account has been disabled",
+  "ERR_AUTH_USERNAME_EXISTS": "Username already registered",
+  "ERR_AUTH_EMAIL_EXISTS": "Email already registered",
+  "ERR_AUTH_EMAIL_NOT_VERIFIED": "Email not verified, please verify your email first",
+  "ERR_AUTH_EMAIL_ALREADY_VERIFIED": "Email already verified",
+  "ERR_AUTH_INVALID_VERIFICATION_CODE": "Invalid or expired verification code",
+  "ERR_AUTH_INVITE_CODE_REQUIRED": "Invite code is required",
+  "ERR_AUTH_REGISTRATION_FAILED": "Registration failed, please try again later",
+  "ERR_AUTH_RESEND_FAILED": "Failed to send verification code, please try again later",
+
+  "ERR_REFERRAL_CODE_INVALID": "Invalid invite code",
+  "ERR_REFERRAL_CODE_EXPIRED": "Invite code has expired",
+  "ERR_REFERRAL_CODE_USED_UP": "Invite code usage limit reached",
+  "ERR_NOT_AUTHORIZED": "You are not authorized to perform this action",
+  "ERR_NOT_AUTHORIZED_TO_EXPORT": "You are not authorized to export this project",
+  "ERR_NOT_AUTHORIZED_TO_ACCESS_SNAPSHOT": "You are not authorized to access this snapshot",
+  "ERR_NOT_AUTHORIZED_TO_ACCESS_FIRST_SNAPSHOT": "You are not authorized to access the first snapshot",
+  "ERR_NOT_AUTHORIZED_TO_ACCESS_SECOND_SNAPSHOT": "You are not authorized to access the second snapshot",
+
+  "ERR_PROJECT_NOT_FOUND": "Project not found",
+  "ERR_PROJECT_ALREADY_EXISTS": "Project already exists",
+  "ERR_PROJECT_SOFT_DELETED": "Project has been deleted",
+  "ERR_PROJECT_EXPORT_NO_DRAFTS": "No content available to export",
+
+  "ERR_FILE_NOT_FOUND": "File not found",
+  "ERR_FILE_TYPE_INVALID": "Invalid file type",
+  "ERR_FILE_TOO_LARGE": "File is too large. Please upload a smaller .txt file.",
+  "ERR_FILE_CONTENT_TOO_LONG": "File content is too long. Please split it before upload.",
+  "ERR_VECTOR_SEARCH_UNAVAILABLE": "AI search service temporarily unavailable",
+
+  "ERR_VERSION_NOT_FOUND": "Version not found",
+  "ERR_VERSION_NO_VERSIONS_FOUND": "No version history found for this file",
+  "ERR_VERSION_DELETE_FAILED": "Failed to delete version, please try again later",
+  "ERR_VERSION_RESTORE_FAILED": "Failed to restore version, please try again later",
+
+  "ERR_SNAPSHOT_NOT_FOUND": "Snapshot not found",
+  "ERR_SNAPSHOT_ONE_OR_BOTH_NOT_FOUND": "One or both snapshots not found",
+  "ERR_SNAPSHOT_FIRST_NOT_FOUND": "First snapshot not found",
+  "ERR_SNAPSHOT_SECOND_NOT_FOUND": "Second snapshot not found",
+  "ERR_SNAPSHOT_DIFF_FAILED": "Failed to compare snapshots, please try again later",
+  "ERR_SNAPSHOT_CREATE_FAILED": "Failed to create snapshot, please try again later",
+
+  "ERR_EXPORT_NO_DRAFTS": "No content found in this project",
+
+  "ERR_CHAT_SESSION_NOT_FOUND": "Chat session not found",
+  "ERR_CHAT_MESSAGE_NOT_FOUND": "Message not found",
+
+  "ERR_QUOTA_EXPORT_FORMAT_RESTRICTED": "Your current plan does not support this export format. Please upgrade and try again",
+  "ERR_QUOTA_AI_CONVERSATIONS_EXCEEDED": "You have reached today's AI conversation limit. Please try again tomorrow or upgrade your plan",
+  "ERR_QUOTA_PROJECTS_EXCEEDED": "You have reached your current plan's project limit. Please upgrade to continue",
+  "ERR_QUOTA_FILE_VERSIONS_EXCEEDED": "You have reached your current plan's file version limit. Please upgrade to continue",
+  "ERR_VOICE_CREDENTIALS_NOT_CONFIGURED": "Voice recognition service not configured",
+  "ERR_VOICE_AUDIO_DECODE_FAILED": "Failed to decode audio data",
+  "ERR_VOICE_API_REQUEST_FAILED": "Voice recognition request failed, please try again later",
+
+  "ERR_FEATURE_NOT_INCLUDED": "This feature is not included in your current plan",
+  "ERR_QUOTA_EXCEEDED": "Quota exceeded, please try again later",
+
+  "ERR_POINTS_INSUFFICIENT_BALANCE": "Insufficient points balance",
+  "ERR_POINTS_ALREADY_CHECKED_IN": "Already checked in today",
+  "ERR_POINTS_INVALID_AMOUNT": "Invalid points amount",
+  "ERR_POINTS_REDEMPTION_MINIMUM_NOT_MET": "Minimum redemption is 7 days"
+}

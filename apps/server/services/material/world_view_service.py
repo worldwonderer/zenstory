@@ -1,0 +1,89 @@
+"""
+WorldView service - SQLModel version.
+Handles WorldView upsert and query operations.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from sqlmodel import Session, select
+
+from models.material_models import WorldView
+
+
+def _serialize_json(value: Any) -> str | None:
+    """Serialize value to JSON string if it's a dict/list."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
+class WorldViewService:
+    """WorldView domain service using SQLModel patterns."""
+
+    def get_by_novel(
+        self, session: Session, novel_id: int
+    ) -> WorldView | None:
+        """Get world view for a novel (one-to-one relationship)."""
+        statement = select(WorldView).where(WorldView.novel_id == novel_id)
+        return session.exec(statement).first()
+
+    def upsert(
+        self, session: Session, novel_id: int, data: dict[str, Any]
+    ) -> str:
+        """Upsert world view for a novel. Returns 'created' or 'updated'."""
+        existing = self.get_by_novel(session, novel_id)
+        if existing:
+            existing.power_system = data.get("power_system") or existing.power_system
+            existing.world_structure = (
+                data.get("world_structure") or existing.world_structure
+            )
+            existing.key_factions = _serialize_json(data.get("key_factions")) or existing.key_factions
+            existing.special_rules = _serialize_json(data.get("special_rules")) or existing.special_rules
+            session.add(existing)
+            session.flush()
+            return "updated"
+        else:
+            new_wv = WorldView(
+                novel_id=novel_id,
+                power_system=data.get("power_system"),
+                world_structure=data.get("world_structure"),
+                key_factions=_serialize_json(data.get("key_factions")),
+                special_rules=_serialize_json(data.get("special_rules")),
+            )
+            session.add(new_wv)
+            session.flush()
+            return "created"
+
+    def upsert_world_view(
+        self, session: Session, novel_id: int, data: dict[str, Any]
+    ) -> WorldView:
+        """Upsert world view for a novel. Returns the world view entity."""
+        existing = self.get_by_novel(session, novel_id)
+
+        if existing:
+            # Update existing world view
+            existing.power_system = data.get("power_system") or existing.power_system
+            existing.world_structure = (
+                data.get("world_structure") or existing.world_structure
+            )
+            existing.key_factions = _serialize_json(data.get("key_factions")) or existing.key_factions
+            existing.special_rules = _serialize_json(data.get("special_rules")) or existing.special_rules
+            session.add(existing)
+            session.flush()
+            return existing
+        else:
+            # Create new world view
+            new_wv = WorldView(
+                novel_id=novel_id,
+                power_system=data.get("power_system"),
+                world_structure=data.get("world_structure"),
+                key_factions=_serialize_json(data.get("key_factions")),
+                special_rules=_serialize_json(data.get("special_rules")),
+            )
+            session.add(new_wv)
+            session.flush()
+            return new_wv

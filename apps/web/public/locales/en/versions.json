@@ -1,0 +1,32 @@
+{
+  "title": "Version History",
+  "loading": "Loading...",
+  "loadFailed": "Failed to load version history",
+  "noVersions": "No version history",
+  "compare": "Compare",
+  "comparing": "Comparing...",
+  "rollback": "Rollback",
+  "viewContent": "View Content",
+  "rollbackConfirm": "Are you sure you want to rollback to version {{version}}? Current content will be saved as a new version.",
+  "rollbackSuccess": "Rollback successful",
+  "totalVersions": "{{count}} version total",
+  "totalVersions_one": "{{count}} version total",
+  "totalVersions_other": "{{count}} versions total",
+  "totalVersions_plural": "{{count}} versions total",
+  "selectedVersions": "{{count}} version selected",
+  "selectedVersions_one": "{{count}} version selected",
+  "selectedVersions_other": "{{count}} versions selected",
+  "selectedVersions_plural": "{{count}} versions selected",
+  "latest": "Latest",
+  "wordCount": "{{count}} words",
+  "versionTo": "Version {{v1}} → Version {{v2}}",
+  "linesAdded": "+{{count}} lines",
+  "linesRemoved": "-{{count}} lines",
+  "types": {
+    "created": "Created",
+    "edited": "Edited",
+    "aiEdited": "AI Edited",
+    "rolledBack": "Rolled Back",
+    "autoSave": "Auto Save"
+  }
+}

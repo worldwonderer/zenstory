@@ -1,0 +1,220 @@
+{
+  "nav": {
+    "features": "Features",
+    "pricing": "Plans & Benefits",
+    "login": "Login",
+    "getStarted": "Create Project Free",
+    "goDashboard": "Go to Dashboard"
+  },
+  "hero": {
+    "badge": "AI Writing Platform for Fiction and Scripts",
+    "titlePart1": "From Idea to Serialization,",
+    "titlePart2": "One Workspace for the Full Book",
+    "description": "zenstory unifies project files, material capture, character setup, chapter drafting, and version rollback in one workspace. Build structure first, draft faster, and revise without losing your thread.",
+    "cta": "Create Project Free",
+    "secondaryCta": "View Demo",
+    "ctaSubtext": "No credit card required · Launch in 3 minutes"
+  },
+  "features": {
+    "cloudSave": "Auto-save with deletion safety",
+    "multiDevice": "Real-time sync across devices",
+    "versionHistory": "Rollback anytime with confidence"
+  },
+  "stats": {
+    "creators": "Active Creators",
+    "wordsGenerated": "AI-assisted Words",
+    "rating": "Creator Rating",
+    "contentTypes": "Core Creative Modes"
+  },
+  "demo": {
+    "projectName": "Project: Embers of the Skyfall",
+    "autoSave": "Auto Save",
+    "versionHistory": "Version History",
+    "popular": "Recommended",
+    "pauseAutoplay": "Pause",
+    "resumeAutoplay": "Resume",
+    "scenes": {
+      "create": "Character Builder",
+      "suggest": "Context-Aware Drafting",
+      "edit": "Chapter Rewrites"
+    }
+  },
+  "whyChoose": {
+    "title": "Built for long-form creation",
+    "subtitle": "Not just prompt replies, but full project momentum",
+    "conversational": {
+      "title": "Conversational Creation",
+      "description": "Create as naturally as chatting with a friend, AI understands your intent and helps refine your ideas"
+    },
+    "context": {
+      "title": "Deep Context Understanding",
+      "description": "AI remembers your character sheets, world-building, and plot to maintain story consistency"
+    },
+    "multiType": {
+      "title": "Multi-format Support",
+      "description": "Whether it's novels, short stories, or screenplays, handle them all with ease"
+    },
+    "privacy": {
+      "title": "Privacy & Security",
+      "description": "Your content is private by default and is not used for model training unless you explicitly opt in"
+    },
+    "voiceInput": {
+      "title": "Voice Quick Capture",
+      "description": "Speak ideas instantly, transcribe them, and pin them to your active chapter."
+    },
+    "materialUpload": {
+      "title": "Dual-Track Materials",
+      "description": "Run in-project snippets and a standalone material library together for upload, parsing, and reuse."
+    },
+    "contextAware": {
+      "title": "Persistent Context Memory",
+      "description": "Keep characters, world rules, and plot lines active to reduce contradictions."
+    },
+    "versionHistory": {
+      "title": "Version Rollback and Diff",
+      "description": "Every revision is logged for rollback and comparison, so edits stay low-risk."
+    },
+    "cloudSync": {
+      "title": "Project-level Cloud Sync",
+      "description": "Keep progress synced across devices and continue writing from anywhere."
+    },
+    "export": {
+      "title": "Export-ready Delivery",
+      "description": "Package chapter structure before export to reduce formatting friction."
+    }
+  },
+  "projectTypes": {
+    "title": "Three project modes, ready out of the box",
+    "subtitle": "Built-in file trees, chapter ordering, material references, and AI strategies",
+    "novel": {
+      "name": "Long-form Serialized Novel",
+      "description": "For 50k+ word projects requiring stable world-building and chapter progression",
+      "features": [
+        "Chapter tree with drag sorting",
+        "Persistent character and relationship memory",
+        "Dual-track material references",
+        "Version diff and rollback"
+      ]
+    },
+    "short": {
+      "name": "Short and Novelette Fiction",
+      "description": "For 5k-20k word stories that need fast setup, escalation, and clean resolution",
+      "features": [
+        "Conflict-driven outlining",
+        "Rapid key-scene drafting",
+        "Length and pacing calibration"
+      ]
+    },
+    "screenplay": {
+      "name": "Short Drama and Web Series Scripts",
+      "description": "For episodic structures, character arcs, and scene-ready script output",
+      "features": [
+        "Episode plot boards",
+        "Character-arc tracking",
+        "Structured script formatting"
+      ]
+    }
+  },
+  "pricingTeaser": {
+    "title": "Start free, upgrade when needed",
+    "subtitle": "Free plan covers the full writing flow, and paid tiers unlock more speed and higher limits.",
+    "viewPricing": "View plans",
+    "primaryCta": "Create Project Free",
+    "free": {
+      "badge": "Free",
+      "title": "Get started quickly",
+      "desc": "Best for solo creators getting started with project setup and core writing workflows."
+    },
+    "pro": {
+      "badge": "Pro",
+      "title": "Boost speed and capacity",
+      "desc": "For high-frequency writing with larger context windows and higher AI usage limits."
+    },
+    "team": {
+      "badge": "Team",
+      "title": "Collaborate with one source of truth",
+      "desc": "For studios managing shared materials, version history, and project coordination."
+    }
+  },
+  "cta": {
+    "title": "Start your next story today",
+    "subtitle": "Set up a project in minutes and turn scattered ideas into reusable creative assets",
+    "button": "Create Project Free"
+  },
+  "footer": {
+    "copyright": "© 2026 zenstory. All rights reserved.",
+    "tagline": "Put AI in your creative production line"
+  },
+  "preview": {
+    "projectFiles": "Project Files",
+    "worldBuilding": "World Building",
+    "characters": "Character Sheets",
+    "outline": "Outline",
+    "draft": "Manuscript",
+    "sceneCreate": {
+      "character": {
+        "name": "Su Wan · Enigmatic Supporting Female",
+        "gender": "Gender",
+        "genderValue": "Female",
+        "age": "Age",
+        "ageValue": "19",
+        "identity": "Identity",
+        "identityValue": "Inner Disciple",
+        "personality": "Personality",
+        "personalityDesc": "Cold as ice on the outside, but delicate on the inside, with complex feelings for Lin Yi...",
+        "secret": "Secret",
+        "secretDesc": "True identity is a descendant of an ancient god clan"
+      },
+      "ai": {
+        "title": "AI Assistant",
+        "input": "Create a mysterious supporting female character for my fantasy novel",
+        "response": "Great! I'll create a mysterious female supporting character.",
+        "created": "Character Sheet Created",
+        "desc": "Inner disciple of Qingyun Sect, mysterious identity...",
+        "placeholder": "Enter your idea..."
+      }
+    },
+    "sceneSuggest": {
+      "chapter": "Chapter 1 · Awakening of the Useless",
+      "content1": "At the summit of Qingyun Mountain, clouds and mist shroud everything.",
+      "content2": "Lin Yi stood at the cliff edge, looking at the abyss beneath him, smiling bitterly. Three years ago, the moment he awakened his useless constitution sealed his fate today.",
+      "content3": "Suddenly, a silver figure walked out from the clouds and mist—it was Su Wan, that senior sister who never spoke to anyone.",
+      "ai": {
+        "title": "AI Assistant",
+        "input": "Help me write the opening of Chapter 1",
+        "response": "Great! I'll write a suspenseful opening.",
+        "writing": "Writing...",
+        "action": "Describe Su Wan's appearance",
+        "placeholder": "Enter your idea..."
+      }
+    },
+    "sceneEdit": {
+      "chapter": "Chapter 3 · Qingyun Grand Competition",
+      "scene1": "Scene 1",
+      "scene1Desc": "Qingyun Grand Competition opens, forces from all sides gather",
+      "scene2": "Scene 2 · Added",
+      "scene2Desc": "Lin Yi's first battle against senior brother Zhang Yao, shows amazing strength",
+      "scene3": "Scene 3 · Added",
+      "scene3Desc": "Su Wan watches Lin Yi in the audience, complex look in her eyes",
+      "ai": {
+        "title": "AI Assistant",
+        "input": "Expand Chapter 3 outline, add combat and Su Wan's subplot",
+        "response": "Great! I'll add combat and Su Wan's subplot.",
+        "updated": "File Updated",
+        "updatedFile": "Chapter 3 Outline",
+        "newScenes": "Added 2 scenes",
+        "undo": "One-click undo available",
+        "placeholder": "Enter your idea..."
+      }
+    }
+  },
+  "agentApi": {
+    "sectionLabel": "Agent API Integration",
+    "badge": "New",
+    "title": "Connect your AI agent to your writing workspace",
+    "subtitle": "Generate an API key, paste into Claude Code or OpenClaw, and let your agent read and write your novel directly.",
+    "supportedAgents": "Works with",
+    "cta": "Get Started Free",
+    "ctaAriaLabel": "Get started with Agent API for free"
+  }
+}

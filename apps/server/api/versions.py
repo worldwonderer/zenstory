@@ -1,0 +1,438 @@
+"""
+File version API endpoints.
+
+Provides REST endpoints for managing file version history.
+"""
+
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, ConfigDict
+from services.auth import get_current_active_user
+from services.file_version import get_file_version_service
+from sqlmodel import Session, select
+
+from core.error_codes import ErrorCode
+from core.error_handler import APIException
+from database import get_session
+from models import File, FileVersion, Project, User
+from utils.logger import get_logger, log_with_context
+
+logger = get_logger(__name__)
+
+router = APIRouter(prefix="/api/v1", tags=["versions"])
+
+
+# ==================== Helper Functions ====================
+
+
+def verify_file_ownership(session: Session, file_id: str, user: User) -> File:
+    """Verify that the user owns the file's project."""
+    file = session.get(File, file_id)
+    if not file or file.is_deleted:
+        raise APIException(error_code=ErrorCode.FILE_NOT_FOUND, status_code=404)
+
+    project = session.get(Project, file.project_id)
+    if not project or project.owner_id != user.id:
+        raise APIException(error_code=ErrorCode.NOT_AUTHORIZED, status_code=403)
+
+    # Check if project is soft-deleted
+    if project.is_deleted:
+        raise APIException(error_code=ErrorCode.PROJECT_NOT_FOUND, status_code=404)
+
+    return file
+
+
+# ==================== Request/Response Models ====================
+
+
+class FileVersionResponse(BaseModel):
+    """Response model for file version."""
+
+    id: str
+    file_id: str
+    project_id: str
+    version_number: int
+    is_base_version: bool
+    word_count: int
+    char_count: int
+    change_type: str
+    change_source: str
+    change_summary: str | None
+    lines_added: int
+    lines_removed: int
+    created_at: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FileVersionListResponse(BaseModel):
+    """Response model for version list."""
+
+    versions: list[FileVersionResponse]
+    total: int
+    file_id: str
+    file_title: str
+
+
+class CreateVersionRequest(BaseModel):
+    """Request model for creating a version."""
+
+    content: str
+    change_type: str = "edit"
+    change_source: str = "user"
+    change_summary: str | None = None
+
+
+class VersionComparisonResponse(BaseModel):
+    """Response model for version comparison."""
+
+    file_id: str
+    version1: dict
+    version2: dict
+    unified_diff: str
+    html_diff: list
+    stats: dict
+
+
+class VersionContentResponse(BaseModel):
+    """Response model for version content."""
+
+    file_id: str
+    version_number: int
+    content: str
+    word_count: int
+    char_count: int
+    created_at: str
+
+
+class RollbackResponse(BaseModel):
+    """Response model for rollback operation."""
+
+    success: bool
+    message: str
+    file_id: str
+    restored_version: int
+    new_version_number: int
+
+
+# ==================== API Endpoints ====================
+
+
+@router.get("/files/{file_id}/versions", response_model=FileVersionListResponse)
+def get_file_versions(
+    file_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    include_auto_save: bool = Query(False),
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Get version history for a file.
+
+    Returns a list of versions with metadata (not content).
+    Use /versions/{version_id}/content to get actual content.
+    """
+    log_with_context(
+        logger,
+        20,  # INFO
+        "get_file_versions called",
+        file_id=file_id,
+        user_id=current_user.id,
+        limit=limit,
+        offset=offset,
+        include_auto_save=include_auto_save,
+    )
+
+    # Check file exists and user has access
+    file = verify_file_ownership(session, file_id, current_user)
+
+    service = get_file_version_service()
+    versions = service.get_versions(
+        session=session,
+        file_id=file_id,
+        limit=limit,
+        offset=offset,
+        include_auto_save=include_auto_save,
+    )
+
+    total = service.get_version_count(
+        session,
+        file_id,
+        include_auto_save=include_auto_save,
+    )
+
+    log_with_context(
+        logger,
+        20,  # INFO
+        "get_file_versions completed",
+        file_id=file_id,
+        user_id=current_user.id,
+        version_count=len(versions),
+        total=total,
+    )
+
+    return FileVersionListResponse(
+        versions=[
+            FileVersionResponse(
+                id=v.id,
+                file_id=v.file_id,
+                project_id=v.project_id,
+                version_number=v.version_number,
+                is_base_version=v.is_base_version,
+                word_count=v.word_count,
+                char_count=v.char_count,
+                change_type=v.change_type,
+                change_source=v.change_source,
+                change_summary=v.change_summary,
+                lines_added=v.lines_added,
+                lines_removed=v.lines_removed,
+                created_at=v.created_at.isoformat(),
+            )
+            for v in versions
+        ],
+        total=total,
+        file_id=file_id,
+        file_title=file.title,
+    )
+
+
+@router.post("/files/{file_id}/versions", response_model=FileVersionResponse)
+def create_file_version(
+    file_id: str,
+    request: CreateVersionRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Create a new version for a file.
+
+    This is typically called when saving file content.
+    """
+    log_with_context(
+        logger,
+        20,  # INFO
+        "create_file_version called",
+        file_id=file_id,
+        user_id=current_user.id,
+        change_type=request.change_type,
+        change_source=request.change_source,
+        content_length=len(request.content),
+    )
+
+    # Check file exists and user has access
+    verify_file_ownership(session, file_id, current_user)
+
+    service = get_file_version_service()
+
+    try:
+        version = service.create_version(
+            session=session,
+            file_id=file_id,
+            new_content=request.content,
+            change_type=request.change_type,
+            change_source=request.change_source,
+            change_summary=request.change_summary,
+            user_id=current_user.id,
+        )
+
+        log_with_context(
+            logger,
+            20,  # INFO
+            "create_file_version completed",
+            file_id=file_id,
+            user_id=current_user.id,
+            version_number=version.version_number,
+            change_type=request.change_type,
+        )
+
+        return FileVersionResponse(
+            id=version.id,
+            file_id=version.file_id,
+            project_id=version.project_id,
+            version_number=version.version_number,
+            is_base_version=version.is_base_version,
+            word_count=version.word_count,
+            char_count=version.char_count,
+            change_type=version.change_type,
+            change_source=version.change_source,
+            change_summary=version.change_summary,
+            lines_added=version.lines_added,
+            lines_removed=version.lines_removed,
+            created_at=version.created_at.isoformat(),
+        )
+    except ValueError as e:
+        raise APIException(error_code=ErrorCode.VALIDATION_ERROR, status_code=400, detail=str(e)) from e
+
+
+@router.get("/versions/{version_id}", response_model=FileVersionResponse)
+def get_version(
+    version_id: str,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+):
+    """Get a specific version by ID."""
+    service = get_file_version_service()
+    version = service.get_version(session, version_id)
+
+    if not version:
+        raise APIException(error_code=ErrorCode.VERSION_NOT_FOUND, status_code=404)
+
+    # Verify ownership
+    verify_file_ownership(session, version.file_id, current_user)
+
+    return FileVersionResponse(
+        id=version.id,
+        file_id=version.file_id,
+        project_id=version.project_id,
+        version_number=version.version_number,
+        is_base_version=version.is_base_version,
+        word_count=version.word_count,
+        char_count=version.char_count,
+        change_type=version.change_type,
+        change_source=version.change_source,
+        change_summary=version.change_summary,
+        lines_added=version.lines_added,
+        lines_removed=version.lines_removed,
+        created_at=version.created_at.isoformat(),
+    )
+
+
+@router.get("/files/{file_id}/versions/{version_number}/content", response_model=VersionContentResponse)
+def get_version_content(
+    file_id: str,
+    version_number: int,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Get the full content of a specific version.
+
+    Reconstructs content from diffs if necessary.
+    """
+    # Verify ownership
+    verify_file_ownership(session, file_id, current_user)
+
+    service = get_file_version_service()
+
+    try:
+        content = service.get_content_at_version(session, file_id, version_number)
+
+        # Get target version metadata directly (avoid pagination limits).
+        version = session.exec(
+            select(FileVersion).where(
+                FileVersion.file_id == file_id,
+                FileVersion.version_number == version_number,
+            )
+        ).first()
+
+        if not version:
+            raise APIException(error_code=ErrorCode.VERSION_NOT_FOUND, status_code=404)
+
+        return VersionContentResponse(
+            file_id=file_id,
+            version_number=version_number,
+            content=content,
+            word_count=version.word_count,
+            char_count=version.char_count,
+            created_at=version.created_at.isoformat(),
+        )
+    except ValueError as e:
+        raise APIException(error_code=ErrorCode.VERSION_NOT_FOUND, status_code=404, detail=str(e)) from e
+
+
+@router.get(
+    "/files/{file_id}/versions/compare",
+    response_model=VersionComparisonResponse,
+)
+def compare_versions(
+    file_id: str,
+    v1: int = Query(..., description="First version number (older)"),
+    v2: int = Query(..., description="Second version number (newer)"),
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Compare two versions of a file.
+
+    Returns a unified diff and structured HTML diff data.
+    """
+    # Check file exists and user has access
+    verify_file_ownership(session, file_id, current_user)
+
+    service = get_file_version_service()
+
+    try:
+        comparison = service.compare_versions(session, file_id, v1, v2)
+        return VersionComparisonResponse(**comparison)
+    except ValueError as e:
+        raise APIException(error_code=ErrorCode.VERSION_NOT_FOUND, status_code=404, detail=str(e)) from e
+
+
+@router.post("/files/{file_id}/versions/{version_number}/rollback", response_model=RollbackResponse)
+def rollback_to_version(
+    file_id: str,
+    version_number: int,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Rollback a file to a previous version.
+
+    Creates a new version with the old content (preserves history).
+    """
+    # Check file exists and user has access
+    verify_file_ownership(session, file_id, current_user)
+
+    service = get_file_version_service()
+
+    try:
+        updated_file, new_version = service.rollback_to_version(
+            session,
+            file_id,
+            version_number,
+            user_id=current_user.id,
+        )
+
+        return RollbackResponse(
+            success=True,
+            message=f"Successfully rolled back to version {version_number}",
+            file_id=file_id,
+            restored_version=version_number,
+            new_version_number=new_version.version_number,
+        )
+    except ValueError as e:
+        raise APIException(error_code=ErrorCode.VALIDATION_ERROR, status_code=400, detail=str(e)) from e
+
+
+@router.get("/files/{file_id}/versions/latest", response_model=FileVersionResponse)
+def get_latest_version(
+    file_id: str,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+):
+    """Get the latest version for a file."""
+    # Verify ownership
+    verify_file_ownership(session, file_id, current_user)
+
+    service = get_file_version_service()
+    version = service.get_latest_version(session, file_id)
+
+    if not version:
+        raise APIException(error_code=ErrorCode.VERSION_NO_VERSIONS_FOUND, status_code=404)
+
+    return FileVersionResponse(
+        id=version.id,
+        file_id=version.file_id,
+        project_id=version.project_id,
+        version_number=version.version_number,
+        is_base_version=version.is_base_version,
+        word_count=version.word_count,
+        char_count=version.char_count,
+        change_type=version.change_type,
+        change_source=version.change_source,
+        change_summary=version.change_summary,
+        lines_added=version.lines_added,
+        lines_removed=version.lines_removed,
+        created_at=version.created_at.isoformat(),
+    )

@@ -1,0 +1,10 @@
+# Railway 配置 - Prefect Worker
+# 部署 Prefect 工作节点
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "docker/Dockerfile.prefect-worker"
+
+[deploy]
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5

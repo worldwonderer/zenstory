@@ -1,0 +1,27 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+startCommand = "/bin/sh -c \"exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --workers ${WEB_CONCURRENCY:-3} --timeout-keep-alive 300 --timeout-worker-healthcheck 600\""
+
+[deploy.healthcheck]
+path = "/health"
+intervalSeconds = 30
+timeoutSeconds = 10
+restartLimit = 3
+
+# ChromaDB Volume 持久化配置（Hobby 计划及以上）
+# 挂载持久化存储到 /app/chroma_data，确保 ChromaDB 数据在容器重启后保留
+[[deploy.volumes]]
+name = "chroma-data"
+mountTo = "/app/chroma_data"
+
+# 上传文件持久化（素材上传、问题反馈截图等）
+# 挂载到 /app/uploads 后，可直接复用现有默认上传目录配置
+[[deploy.volumes]]
+name = "uploads-data"
+mountTo = "/app/uploads"

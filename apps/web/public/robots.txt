@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Disallow: /login
+Disallow: /register
+Disallow: /dashboard
+Disallow: /profile
+Disallow: /project/
+Disallow: /verify-email
+Disallow: /auth
+Disallow: /api
+
+Sitemap: https://zenstory.ai/sitemap.xml
+

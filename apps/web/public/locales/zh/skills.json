@@ -1,0 +1,93 @@
+{
+  "title": "技能管理",
+  "description": "管理你的 AI 写作技能，自定义触发词和指令",
+  "create": "创建技能",
+  "mySkillsTab": "我的技能",
+  "discoverTab": "发现技能",
+  "userSkills": "自定义技能",
+  "builtinSkills": "内置技能",
+  "addedSkills": "已添加技能",
+  "noUserSkills": "还没有自定义技能",
+  "noAddedSkills": "还没有添加任何技能",
+  "createFirst": "创建第一个技能",
+  "browsePublic": "浏览公共技能库",
+  "readonly": "只读",
+  "added": "已添加",
+  "remove": "移除",
+  "discover": "发现技能",
+  "discoverMore": "发现更多",
+  "discoverDescription": "浏览和添加社区分享的写作技能",
+  "searchPlaceholder": "搜索技能...",
+  "searchMySkillsPlaceholder": "搜索我的技能...",
+  "noSearchResults": "没有找到匹配的技能",
+  "allCategories": "全部",
+  "categories": {
+    "writing": "写作",
+    "plot": "情节",
+    "style": "文风",
+    "character": "角色",
+    "worldbuilding": "世界观"
+  },
+  "noSkillsFound": "没有找到匹配的技能",
+  "official": "官方",
+  "community": "社区",
+  "addCount": "人添加",
+  "addToMine": "添加到我的技能",
+  "alreadyAdded": "已添加",
+  "createSkill": "创建技能",
+  "editSkill": "编辑技能",
+  "expand": "展开指令",
+  "collapse": "收起指令",
+  "batch": {
+    "selectAll": "全选",
+    "selected": "已选择 {{count}} 项",
+    "clearSelection": "取消选择",
+    "delete": "批量删除",
+    "deleteConfirmTitle": "批量删除技能",
+    "deleteConfirmMessage": "确定要删除选中的 {{count}} 个技能吗？此操作无法撤销。"
+  },
+  "form": {
+    "name": "技能名称",
+    "namePlaceholder": "输入技能名称",
+    "description": "描述",
+    "descriptionPlaceholder": "简要描述这个技能的用途",
+    "triggers": "触发词",
+    "triggersPlaceholder": "创建角色, 新建人物",
+    "triggersHint": "多个触发词用逗号分隔",
+    "instructions": "指令内容",
+    "instructionsPlaceholder": "当用户触发此技能时，AI 将遵循这些指令...",
+    "instructionsHint": "支持 Markdown 格式，如标题、列表、代码块等"
+  },
+  "deleteConfirm": {
+    "title": "删除技能",
+    "message": "确定要删除这个技能吗？此操作无法撤销。"
+  },
+  "share": {
+    "title": "分享技能",
+    "category": "选择分类",
+    "notice": "分享后，你的技能将提交审核，审核通过后会出现在公共技能库中。",
+    "submit": "提交分享",
+    "error": "分享失败，请稍后重试"
+  },
+  "stats": {
+    "title": "技能使用统计",
+    "days7": "最近 7 天",
+    "days30": "最近 30 天",
+    "days90": "最近 90 天",
+    "totalTriggers": "总触发次数",
+    "avgConfidence": "平均置信度",
+    "builtinCount": "内置技能",
+    "userCount": "自定义技能",
+    "topSkills": "最常用技能",
+    "dailyUsage": "每日使用趋势",
+    "builtin": "内置",
+    "user": "自定义",
+    "noData": "暂无使用数据"
+  },
+  "quota": {
+    "createTitle": "自定义技能额度已用尽",
+    "createDescription": "你已达到当前套餐可创建的自定义技能上限。可前往订阅页升级，或先查看套餐对比后再决定。",
+    "upgradePrimary": "查看升级方案",
+    "upgradeSecondary": "查看套餐对比"
+  }
+}

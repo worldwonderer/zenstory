@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+playwright-report
+test-results
+.nyc_output
+.git
+.gitignore
+.DS_Store
+.env.local
+.env.docker

@@ -1,0 +1,498 @@
+{
+  "nav": {
+    "home": "首页",
+    "projects": "我的项目",
+    "materials": "素材库",
+    "skills": "技能",
+    "billing": "订阅权益",
+    "logout": "退出登录",
+    "lab": "实验室",
+    "inspirations": "灵感库"
+  },
+  "userPanel": {
+    "quickSettings": "快捷设置",
+    "openPanel": "打开用户面板",
+    "adminPanel": "管理后台",
+    "replayTour": "重新查看新手引导"
+  },
+  "dashboard": {
+    "title": "项目数据统计",
+    "subtitle": "追踪你的写作进度",
+    "tabs": {
+      "overview": "总览"
+    },
+    "sections": {
+      "nextSteps": "下一步行动",
+      "statistics": "统计概览"
+    },
+    "error": {
+      "title": "加载数据统计失败",
+      "message": "加载统计页面时发生错误。"
+    }
+  },
+  "bottomNav": {
+    "projects": "项目",
+    "create": "创建",
+    "settings": "设置"
+  },
+  "billing": {
+    "title": "订阅与权益",
+    "subtitle": "查看套餐权益、配额使用情况并快速升级",
+    "currentPlan": "当前套餐",
+    "unknownPlan": "未开通",
+    "unlockPro": "解锁 Pro",
+    "unlockHint": "可通过右上角“解锁 Pro”开通，或使用兑换码直接兑换。",
+    "usageTitle": "当前配额使用",
+    "compareTitle": "套餐权益对比",
+    "catalogSubtitle": "按可完成任务选择计划，而不是按技术参数做决定",
+    "pricingHeroTitle": "按你的创作任务选择计划",
+    "pricingHeroSubtitle": "先明确目标，再选方案：从试用到专业创作一步到位。",
+    "taskLedBadge": "按创作任务选方案",
+    "billingCycleLabel": "选择计费周期",
+    "free": "免费",
+    "perMonth": "/月",
+    "perYear": "/年",
+    "current": "当前",
+    "recommended": "推荐",
+    "forUsers": "适合：{{target}}",
+    "monthly": "月付",
+    "yearly": "年付",
+    "yearlySaveUpTo": "年付最高省 {{percent}}%",
+    "yearlyMaxSaveHint": "年付最高可省 {{percent}}",
+    "yearlyMaxSaveHintFallback": "切换月付/年付，按预算灵活决策",
+    "yearlySaveBadge": "年付省 {{amount}} · {{percent}}%",
+    "yearlyEquivalent": "折合 {{price}}/月",
+    "yearlySaveAmount": "比月付省 {{amount}}",
+    "alternateYearlyPrice": "年付 {{price}}",
+    "alternateMonthlyPrice": "月付 {{price}}",
+    "monthlyToggle": "月付",
+    "yearlyToggle": "年付",
+    "showOnlyDiff": "仅看差异",
+    "showAllFeatures": "显示全部能力",
+    "noDifferences": "当前套餐关键能力暂无差异",
+    "noDiffMetric": "当前维度下，这些套餐暂无可见差异",
+    "ctaFreeStart": "免费开始",
+    "ctaUpgradePro": "升级专业版",
+    "trustTitle": "放心开通，随时可调整",
+    "trustFlexible": "随时升级或降级，下一周期自动生效",
+    "trustBilling": "账单透明可追踪，费用与周期清晰可见",
+    "trustSecurity": "数据传输与存储全程保护，创作资产更安心",
+    "summaryStarter": "快速验证想法，从灵感到首稿轻量起步。",
+    "summaryCreator": "稳定连载不掉速，适合长期日更与周更。",
+    "targetExplorer": "新手作者与轻度创作用户",
+    "targetDailyWriter": "日更作者、长篇连载创作者",
+    "metricWriting": "可创作体量",
+    "metricWritingOutcome": "支持从大纲到正文的连续输出",
+    "metricAgentRuns": "Agent 深度任务",
+    "metricAgentRunsOutcome": "用于拆解任务、扩写、润色与修订",
+    "metricProjects": "活跃项目",
+    "metricProjectsOutcome": "同时推进多本作品，不必频繁归档",
+    "metricContext": "上下文容量",
+    "metricContextOutcome": "长篇线索和角色设定更不易丢失",
+    "metricExport": "导出格式",
+    "metricExportOutcome": "完稿可直接交付给编辑、团队或客户",
+    "metricWritingFriendly": "每月可完成内容",
+    "metricAgentRunsFriendly": "复杂任务处理",
+    "metricProjectsFriendly": "可并行项目数",
+    "metricContextFriendly": "单次可读上下文",
+    "metricExportFriendly": "交付导出格式",
+    "metricWritingHelper": "根据你的更新频率估算可持续产出",
+    "metricAgentRunsHelper": "用于拆解、改稿、结构重写等深度任务",
+    "metricProjectsHelper": "同时推进多个题材或客户项目",
+    "metricContextHelper": "越大越适合长篇连贯润色",
+    "metricExportHelper": "可直接交付编辑、平台或客户",
+    "monthlyOutputEstimate": "约 {{count}} 万字/月",
+    "timesPerMonth": "次/月",
+    "projectsUnit": "个",
+    "noExportFormats": "暂无",
+    "metricMaterialUploads": "素材上传",
+    "metricMaterialUploadsOutcome": "支持持续补充资料，不中断创作流",
+    "metricMaterialDecompositions": "素材拆解次数",
+    "metricMaterialDecompositionsOutcome": "每月可拆解参考素材，快速提取结构化要点",
+    "metricCustomSkills": "自定义技能",
+    "metricCustomSkillsOutcome": "沉淀团队方法论并复用到日常创作",
+    "metricInspirationCopies": "灵感复用",
+    "metricInspirationCopiesOutcome": "将优秀模板复制到项目，快速启动创作",
+    "metricPriorityQueue": "任务排队优先级",
+    "metricPriorityQueueOutcome": "高峰期任务更快开始执行",
+    "priorityQueueStandard": "标准队列",
+    "priorityQueuePriority": "优先队列"
+  },
+  "todayActionPlan": {
+    "title": "今日 3 步建议",
+    "subtitle": "基于你的当前进度生成，每一步都可一键执行。",
+    "cta": "一键执行",
+    "executing": "执行中...",
+    "expand": "查看全部",
+    "collapse": "收起",
+    "expandHint": "展开可查看其余建议",
+    "activationDescription": "完成该里程碑，解锁更顺畅的创作流程。",
+    "personaDescription": "基于你的偏好推荐的下一步动作。",
+    "personaRecommendations": {
+      "persona_explorer_template": {
+        "title": "探索型模板推荐",
+        "description": "优先给你开放灵感模板和快速起稿入口。"
+      },
+      "persona_serial_streak": {
+        "title": "连载节奏建议",
+        "description": "设置每天写作目标并追踪连更进度。"
+      },
+      "persona_professional_efficiency": {
+        "title": "效率工作流",
+        "description": "突出大纲-章节-改稿的一键流转能力。"
+      },
+      "persona_fanfic_consistency": {
+        "title": "设定一致性检查",
+        "description": "优先推荐角色关系和设定一致性工具。"
+      },
+      "persona_studio_collab": {
+        "title": "团队协作入口",
+        "description": "推荐更适合团队分工的项目组织方式。"
+      },
+      "goal_monetize_upgrade": {
+        "title": "变现能力建议",
+        "description": "查看升级权益，优先解锁增长与商业化能力。"
+      },
+      "goal_quality_review": {
+        "title": "质量提升路径",
+        "description": "使用 AI 评审与改稿建议提高文本质量。"
+      },
+      "goal_habit_activation": {
+        "title": "写作习惯养成",
+        "description": "每日完成一个小目标，形成稳定创作节奏。"
+      },
+      "level_beginner_path": {
+        "title": "新手引导路径",
+        "description": "先从模板起步，再逐步完善角色和章节。"
+      },
+      "level_advanced_shortcut": {
+        "title": "进阶快捷模式",
+        "description": "为你优先展示批量改稿和高阶编辑能力。"
+      }
+    },
+    "defaults": {
+      "createProject": {
+        "title": "创建你的首个项目",
+        "description": "先把灵感落到项目里，后续写作与导出都会更顺畅。",
+        "cta": "一键建项目"
+      },
+      "openProject": {
+        "title": "继续最近项目",
+        "description": "延续上下文继续写，效率最高。"
+      },
+      "exportProject": {
+        "title": "验证导出链路",
+        "description": "打开项目后可直接点击“导出”，快速完成交付检查。",
+        "cta": "去项目导出"
+      },
+      "upgrade": {
+        "title": "查看升级权益",
+        "description": "提前确认配额和导出能力，避免创作中断。",
+        "cta": "去升级页"
+      },
+      "inspirations": {
+        "title": "补充灵感素材",
+        "description": "浏览精选灵感，快速补齐创作输入。"
+      }
+    }
+  },
+  "activationGuide": {
+    "title": "首日激活向导",
+    "progress": "已完成 {{done}} / {{total}}",
+    "nextAction": "继续下一步",
+    "steps": {
+      "signup_success": "完成注册",
+      "project_created": "创建项目",
+      "first_file_saved": "保存首个文件",
+      "first_ai_action_accepted": "接受首个 AI 动作"
+    }
+  },
+  "hero": {
+    "greeting": "你好 {{name}}",
+    "question": "今天想创作些什么呢？",
+    "slogan": "让 AI 成为你的创作伙伴",
+    "startWriting": "开始创作"
+  },
+  "projects": {
+    "recent": "最近项目",
+    "all": "所有项目",
+    "subtitle": "管理和浏览所有项目",
+    "new": "新建项目",
+    "filterAll": "全部",
+    "count": "共 {{count}} 个项目",
+    "noMatch": "没有匹配的项目",
+    "tryDifferent": "尝试调整搜索条件或筛选器",
+    "createFirst": "创建第一个项目",
+    "viewAll": "浏览全部",
+    "empty": "还没有任何项目",
+    "emptyHint": "点击「开始创作」创建你的第一个项目，也可以先不填灵感",
+    "searchPlaceholder": "搜索项目...",
+    "createNew": "创建新项目",
+    "namePlaceholder": "给你的作品起个名字",
+    "confirmDeleteTitle": "确定删除这个项目？",
+    "confirmDeleteMessage": "删除后将无法恢复所有内容，请谨慎操作",
+    "confirmDeleteButton": "确认删除",
+    "cancel": "取消",
+    "cannotDeleteLast": "无法删除最后一个项目",
+    "editName": "编辑项目名称",
+    "deleteProject": "删除项目"
+  },
+  "inspiration": {
+    "title": "创作灵感",
+    "novelPlaceholder": "输入你的创作灵感，比如：一个穿越到古代的程序员发现自己会写代码的能力变成了修仙功法...",
+    "shortPlaceholder": "描述你的故事创意，比如：深夜的便利店里，一位老人每晚都来买同一款已停产的糖果...",
+    "screenplayPlaceholder": "说说你想拍什么，比如：霸道总裁在相亲角被大妈嫌弃收入太低，决定隐藏身份追求真爱...",
+    "novelDesc": "AI 将根据你的灵感，帮你构思故事框架、设定世界观和人物角色",
+    "shortDesc": "AI 将帮你打磨故事结构，让短篇更有张力和余韵",
+    "screenplayDesc": "AI 将帮你设计分集剧情、对白和反转，让剧本更抓人"
+  },
+  "inspirations": {
+    "featured": "精选灵感",
+    "viewAll": "查看全部",
+    "emptyTitle": "暂无精选灵感",
+    "emptyHint": "当前暂无精选灵感，去灵感库发现更多创作灵感。",
+    "emptyCta": "查看灵感库"
+  },
+  "time": {
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "daysAgo": "{{count}} 天前",
+    "yesterday": "昨天",
+    "weeksAgo": "{{count}} 周前",
+    "monthsAgo": "{{count}} 个月前"
+  },
+  "projectType": {
+    "novel": {
+      "name": "长篇小说",
+      "description": "构建宏大的世界观体系，塑造立体的人物角色，适合 5 万字以上的连载小说"
+    },
+    "short": {
+      "name": "短篇小说",
+      "description": "在精炼的篇幅中讲述完整故事，注重情节张力和余韵，适合 5000-20000 字的独立短篇"
+    },
+    "screenplay": {
+      "name": "短剧剧本",
+      "description": "设计分集剧情和场景对白，打造节奏紧凑的微短剧，适合短视频剧本创作"
+    }
+  },
+  "common": {
+    "loading": "加载中...",
+    "appName": "zenstory",
+    "slogan": "让 AI 成为你的创作伙伴",
+    "createButton": "开始创作",
+    "confirmButton": "确认",
+    "cancelButton": "取消",
+    "done": "完成",
+    "back": "返回",
+    "retry": "重试",
+    "refresh": "刷新"
+  },
+  "folders": {
+    "worldBuilding": "设定",
+    "characters": "角色",
+    "materials": "素材",
+    "outlines": "大纲",
+    "drafts": "正文",
+    "people": "人物",
+    "concept": "构思",
+    "scenes": "场景",
+    "episodeOutlines": "分集大纲",
+    "scripts": "剧本"
+  },
+  "defaults": {
+    "novel": "我的小说",
+    "short": "我的短篇",
+    "screenplay": "我的短剧",
+    "untitled": "未命名项目"
+  },
+  "statistics": {
+    "title": "项目统计",
+    "projectHealth": {
+      "title": "项目健康度",
+      "overallStatus": "整体项目状态",
+      "status": {
+        "good": "健康",
+        "warning": "需关注",
+        "critical": "需行动",
+        "neutral": "未开始"
+      },
+      "indicators": {
+        "chapters": "章节进度",
+        "chaptersDesc": "{{percent}}% 已完成",
+        "noChapters": "暂无章节",
+        "activity": "写作活跃度",
+        "inactive": "不活跃",
+        "activityGood": "今日写作 {{count}} 字",
+        "activityWarning": "本周尚未写作",
+        "activityInactive": "开始写作以追踪进度",
+        "streak": "写作连续",
+        "streakActive": "保持势头继续加油",
+        "streakInactive": "培养写作习惯",
+        "aiUsage": "AI 协作",
+        "aiActive": "正在使用 AI 辅助",
+        "aiInactive": "试试 AI 辅助写作"
+      }
+    },
+    "continueWriting": {
+      "title": "继续创作",
+      "inProgress": "写作中",
+      "notStarted": "待开始",
+      "completed": "已完成",
+      "noFiles": "暂无文件",
+      "createFirst": "创建你的第一个章节开始创作",
+      "action": "继续写作",
+      "hintInProgress": "从上次离开的地方继续",
+      "hintNotStarted": "开始写作这个章节",
+      "hintCompleted": "回顾或继续下一章"
+    },
+    "outstandingTasks": {
+      "title": "待办事项",
+      "total": "{{count}} 项任务",
+      "allClear": "全部完成！",
+      "allClearHint": "当前没有待处理事项",
+      "notStartedCount": "未开始",
+      "draftWithoutOutlineCount": "无大纲",
+      "outlineWithoutDraftCount": "未写作",
+      "notStartedDesc": "章节尚未开始写作",
+      "draftWithoutOutlineDesc": "有内容但缺少大纲规划",
+      "outlineWithoutDraftDesc": "已规划但尚未写作",
+      "moreTasks": "还有 {{count}} 项任务",
+      "types": {
+        "draftWithoutOutline": "无大纲",
+        "outlineWithoutDraft": "未写作",
+        "notStarted": "未开始"
+      }
+    },
+    "wordCount": {
+      "title": "字数统计",
+      "today": "今日字数",
+      "thisWeek": "本周字数",
+      "thisMonth": "本月字数",
+      "total": "总字数",
+      "words": "{{count}} 字",
+      "trend": {
+        "title": "字数趋势",
+        "daily": "每日",
+        "weekly": "每周",
+        "monthly": "每月"
+      },
+      "trendDescription": "跟踪你的日/周/月创作进度，使用上方时间范围切换查看。"
+    },
+    "chapterCompletion": {
+      "title": "章节完成",
+      "completed": "已完成",
+      "total": "共 {{count}} 章",
+      "percentage": "{{percent}}% 完成",
+      "noChapters": "暂无章节",
+      "planned": "计划中",
+      "inProgress": "写作中",
+      "finished": "已完成"
+    },
+    "streak": {
+      "title": "写作连续",
+      "currentStreak": "当前连续",
+      "longestStreak": "最长连续",
+      "days": "{{count}} 天",
+      "day": "{{count}} 天",
+      "status": {
+        "active": "保持中",
+        "atRisk": "即将中断",
+        "broken": "已中断",
+        "none": "尚未开始"
+      },
+      "frozen": "已冻结",
+      "freezeAvailable": "可冻结",
+      "freezeUsed": "已使用冻结",
+      "recoveryAvailable": "可恢复",
+      "keepWriting": "继续加油！",
+      "startWriting": "开始今天的创作吧",
+      "daysUntilBreak": "{{count}} 天后将中断",
+      "tips": {
+        "title": "连续写作小贴士",
+        "daily": "每天至少写 10 个字，保持写作连续。",
+        "consistency": "比起单次高产，稳定连续更重要，哪怕每天一点点。",
+        "recovery": "如果断更了，使用连续恢复机会来保持连续记录。"
+      }
+    },
+    "lastWritingDate": "上次写作",
+    "aiUsage": {
+      "title": "AI 协作",
+      "sessions": "{{count}} 次对话",
+      "session": "{{count}} 次对话",
+      "messages": "{{count}} 条消息",
+      "message": "{{count}} 条消息",
+      "tokens": "{{count}} tokens",
+      "estimatedTokens": "预估 tokens",
+      "today": "今日使用",
+      "thisWeek": "本周使用",
+      "thisMonth": "本月使用",
+      "total": "累计使用",
+      "noUsage": "暂无使用记录",
+      "continueSession": "继续与 AI 对话",
+      "recentActivity": "最近活动",
+      "tryAgain": "开始新对话获取 AI 帮助",
+      "continueConversation": "继续对话",
+      "lastInteraction": "上次消息 {{time}}",
+      "sessionInProgress": "对话进行中",
+      "resume": "继续",
+      "getStartTitle": "开始 AI 协作",
+      "getStartDesc": "获取剧情创意、角色发展等方面的 AI 帮助",
+      "startChat": "开始对话",
+      "askForHelp": "向 AI 求助",
+      "askForHelpDesc": "获取写作项目的建议",
+      "startNew": "新建对话",
+      "tips": {
+        "title": "AI 使用建议",
+        "efficiency": "将 AI 用于头脑风暴、大纲规划和改稿，可显著提升效率。",
+        "iterative": "迭代式细化通常比一次性生成更容易得到高质量结果。",
+        "context": "给 AI 提供故事上下文（角色/设定/已有章节）能获得更贴合的建议。"
+      }
+    },
+    "loading": "加载统计数据中...",
+    "error": "加载失败",
+    "retry": "重试",
+    "noData": "暂无数据",
+    "lastUpdated": "最后更新: {{time}}"
+  },
+  "dashboardTour": {
+    "common": {
+      "next": "下一步",
+      "finish": "开始使用",
+      "skip": "跳过引导",
+      "progress": "{{current}} / {{total}}"
+    },
+    "steps": {
+      "projectType": {
+        "title": "先选你要写什么",
+        "description": "长篇、短篇、短剧会走不同的创作路径，先选最接近你目标的一种。",
+        "cta": "知道了"
+      },
+      "inspirationInput": {
+        "title": "从一句核心冲突开始",
+        "description": "可以直接输入灵感，也可以点下方推荐，快速生成第一个项目。"
+      },
+      "createProject": {
+        "title": "一键创建项目",
+        "description": "点这里后会立刻生成项目，你可以继续写作，或交给 AI 帮你扩写。",
+        "cta": "去试试"
+      },
+      "inspirationsLink": {
+        "title": "没想法就先来这里",
+        "description": "灵感库可以帮你补素材、补设定、补开头。卡住时先来这里找突破口。"
+      }
+    }
+  },
+  "agentConnection": {
+    "title": "连接你的 AI 助手",
+    "activeTitle": "AI 助手已连接",
+    "description": "让 Claude Code 或 OpenClaw 直接操作你的小说项目",
+    "createKey": "创建 Key",
+    "manageKeys": "管理",
+    "manageKeysAria": "管理 API 密钥",
+    "createKeyAria": "创建 Agent API 密钥",
+    "keyCount": "{{count}} 个活跃密钥",
+    "errorTitle": "加载失败",
+    "retry": "重试"
+  }
+}

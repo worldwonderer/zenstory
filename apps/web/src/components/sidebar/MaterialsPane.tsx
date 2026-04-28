@@ -1,0 +1,502 @@
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
+import { useProject } from "../../contexts/ProjectContext";
+import { useMaterialAttachment } from "../../contexts/MaterialAttachmentContext";
+import { useMaterialLibraryContext } from "../../contexts/MaterialLibraryContext";
+import { materialsConfig } from "../../config/materials";
+import { materialsApi } from "../../lib/materialsApi";
+import { toast } from "../../lib/toast";
+import type { MaterialEntityType, MaterialSearchResult } from "../../lib/materialsApi";
+import { logger } from "../../lib/logger";
+import {
+  ChevronDown,
+  ChevronRight,
+  BookOpen,
+  Users,
+  Globe,
+  Sparkles,
+  GitBranch,
+  Heart,
+  Plus,
+  MessageSquarePlus,
+  Check,
+  X,
+} from "lucide-react";
+
+// Entity type icons mapping
+const ENTITY_TYPE_ICONS: Record<MaterialEntityType, React.ReactNode> = {
+  characters: <Users size={12} />,
+  worldview: <Globe size={12} />,
+  goldenfingers: <Sparkles size={12} />,
+  storylines: <GitBranch size={12} />,
+  stories: <BookOpen size={12} />,
+  relationships: <Heart size={12} />,
+};
+
+type MaterialCountKey =
+  | "characters"
+  | "worldview"
+  | "golden_fingers"
+  | "storylines"
+  | "stories"
+  | "relationships";
+
+/**
+ * MaterialsPane - Material library browser component
+ *
+ * Sidebar pane for material libraries.
+ * Displays AI-extracted material libraries with search, batch selection, and import.
+ */
+export const MaterialsPane: React.FC = () => {
+  const { t } = useTranslation(['editor', 'common']);
+  const { currentProjectId } = useProject();
+  const { addMaterial } = useMaterialAttachment();
+  const materialLib = useMaterialLibraryContext();
+  const isLibraryLoading = materialLib.isLoading || (materialLib.isFetching && materialLib.libraries.length === 0);
+
+  // Entity lists state
+  const [entityLists, setEntityLists] = useState<Record<string, { id: number; name: string }[]>>({});
+  const [entityListLoading, setEntityListLoading] = useState<Record<string, boolean>>({});
+
+  // Batch selection state
+  const [batchMode, setBatchMode] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set()); // key: "novelId:entityType:entityId"
+  const [isBatchImporting, setIsBatchImporting] = useState(false);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<MaterialSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Track loading state with ref to avoid stale closure
+  const entityListLoadingRef = useRef<Record<string, boolean>>({});
+
+  // Load entity list for a specific novel + entity type
+  const loadEntityList = useCallback(async (novelId: number, entityType: MaterialEntityType) => {
+    const key = `${novelId}:${entityType}`;
+
+    // Check ref to avoid duplicate requests
+    if (entityListLoadingRef.current[key]) return;
+
+    // Also check if already loaded
+    if (entityLists[key]) return;
+
+    entityListLoadingRef.current[key] = true;
+    setEntityListLoading(prev => ({ ...prev, [key]: true }));
+
+    try {
+      let items: { id: number; name: string }[] = [];
+      const novel = materialLib.libraries.find(l => l.id === novelId);
+      if (!novel) return;
+
+      // Use existing API endpoints to get entity lists
+      if (entityType === 'characters') {
+        const data = await materialsApi.getCharacters(String(novelId));
+        items = data.map((c) => ({ id: Number(c.id), name: c.name }));
+      } else if (entityType === 'worldview') {
+        const data = await materialsApi.getWorldView(String(novelId));
+        if (data) {
+          const displayName = (data.world_structure && data.world_structure.trim())
+            ? data.world_structure.substring(0, 30)
+            : 'World View';
+          items = [{ id: data.id, name: displayName }];
+        }
+      } else if (entityType === 'goldenfingers') {
+        const data = await materialsApi.getGoldenFingers(String(novelId));
+        items = data.map((g) => ({ id: g.id, name: g.name }));
+      } else if (entityType === 'storylines') {
+        const data = await materialsApi.getStoryLines(String(novelId));
+        items = data.map((s) => ({ id: s.id, name: s.title }));
+      } else if (entityType === 'stories') {
+        const data = await materialsApi.getStories(String(novelId));
+        items = data.map((s) => ({ id: Number(s.id), name: s.title }));
+      } else if (entityType === 'relationships') {
+        const data = await materialsApi.getRelationships(String(novelId));
+        items = data.map((r) => ({ id: r.id, name: `${r.character_a_name} ↔ ${r.character_b_name}` }));
+      }
+
+      setEntityLists(prev => ({ ...prev, [key]: items }));
+    } catch (err) {
+      logger.error('Failed to load entity list:', err);
+      toast.error('加载素材列表失败');
+    } finally {
+      entityListLoadingRef.current[key] = false;
+      setEntityListLoading(prev => ({ ...prev, [key]: false }));
+    }
+  }, [entityLists, materialLib.libraries]);
+
+  // Handle entity type toggle with lazy loading
+  const handleEntityTypeToggle = useCallback((novelId: number, entityType: MaterialEntityType) => {
+    materialLib.toggleEntityType(novelId, entityType);
+    loadEntityList(novelId, entityType);
+  }, [materialLib, loadEntityList]);
+
+  // Handle entity item click - load preview
+  const handleEntityClick = useCallback((novelId: number, entityType: MaterialEntityType, entityId: number) => {
+    materialLib.loadPreview(novelId, entityType, entityId);
+  }, [materialLib]);
+
+  // Quick import - use default parameters, no dialog
+  const handleQuickImport = useCallback(async (novelId: number, entityType: MaterialEntityType, entityId: number) => {
+    if (!currentProjectId) return;
+    try {
+      await materialsApi.importToProject({
+        project_id: currentProjectId,
+        novel_id: novelId,
+        entity_type: entityType,
+        entity_id: entityId,
+      });
+      toast.success('素材导入成功');
+    } catch (err) {
+      logger.error('Failed to quick import material:', err);
+      toast.error('素材导入失败，请重试');
+    }
+  }, [currentProjectId]);
+
+  // Attach library material to chat
+  const handleAttachToChat = useCallback((novelId: number, entityType: MaterialEntityType, entityId: number, itemName: string) => {
+    // Use a virtual ID for library materials
+    const virtualId = `lib_${novelId}_${entityType}_${entityId}`;
+    addMaterial(virtualId, itemName, {
+      novelId,
+      entityType,
+      entityId,
+    });
+  }, [addMaterial]);
+
+  // Search timeout ref
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Handle search with debouncing
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query);
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    searchTimeoutRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const results = await materialsApi.searchMaterials(query);
+        setSearchResults(results);
+      } catch (err) {
+        logger.error('Failed to search materials:', err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+  }, []);
+
+  // Cleanup search timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, []);
+
+  // Batch mode handlers
+  const toggleBatchMode = useCallback(() => {
+    setBatchMode(prev => !prev);
+    setSelectedItems(new Set());
+  }, []);
+
+  const toggleItemSelection = useCallback((novelId: number, entityType: MaterialEntityType, entityId: number) => {
+    const key = `${novelId}:${entityType}:${entityId}`;
+    setSelectedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleBatchImport = useCallback(async () => {
+    if (!currentProjectId || selectedItems.size === 0) return;
+    setIsBatchImporting(true);
+    try {
+      const items = Array.from(selectedItems).map(key => {
+        const [novelId, entityType, entityId] = key.split(':');
+        return {
+          novel_id: Number(novelId),
+          entity_type: entityType as MaterialEntityType,
+          entity_id: Number(entityId),
+        };
+      });
+      await materialsApi.batchImport(currentProjectId, items);
+      toast.success(`成功导入 ${items.length} 个素材`);
+      setBatchMode(false);
+      setSelectedItems(new Set());
+    } catch (err) {
+      logger.error('Failed to batch import:', err);
+      toast.error('批量导入失败，请重试');
+    } finally {
+      setIsBatchImporting(false);
+    }
+  }, [currentProjectId, selectedItems]);
+
+  // Entity type labels
+  const entityTypeLabels: Record<MaterialEntityType, string> = {
+    characters: t('editor:fileTree.referenceCharacters'),
+    worldview: t('editor:fileTree.referenceWorldview'),
+    goldenfingers: t('editor:fileTree.referenceGoldenFingers'),
+    storylines: t('editor:fileTree.referenceStorylines'),
+    stories: t('editor:fileTree.referenceStories'),
+    relationships: t('editor:fileTree.referenceRelationships'),
+  };
+
+  const entityTypes: { type: MaterialEntityType; countKey: MaterialCountKey }[] = [
+    { type: 'characters', countKey: 'characters' },
+    { type: 'worldview', countKey: 'worldview' },
+    { type: 'goldenfingers', countKey: 'golden_fingers' },
+    { type: 'storylines', countKey: 'storylines' },
+    { type: 'stories', countKey: 'stories' },
+    ...(materialsConfig.relationshipsEnabled
+      ? [{ type: 'relationships' as const, countKey: 'relationships' as const }]
+      : []),
+  ];
+
+  return (
+    <div className="w-full h-full text-sm overflow-auto p-2">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2 px-2">
+        <div className="flex items-center gap-2">
+          <BookOpen size={14} className="text-[hsl(var(--text-secondary))]" />
+          <span className="text-sm font-medium text-[hsl(var(--text-primary))]">
+            {t('editor:fileTree.referenceLibrary')}
+          </span>
+          <span className="text-[10px] text-[hsl(var(--text-secondary))]">
+            ({t('editor:fileTree.aiExtracted')})
+          </span>
+        </div>
+        <button
+          onClick={toggleBatchMode}
+          className={`p-1 text-xs ${batchMode ? 'text-[hsl(var(--accent-primary))]' : 'text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--accent-primary))]'} transition-all`}
+          title={batchMode ? t('common:cancel') : t('editor:fileTree.batchSelect')}
+        >
+          {batchMode ? <X size={14} /> : <Check size={14} />}
+        </button>
+      </div>
+
+      {/* Search input - only show when there are libraries */}
+      {materialLib.libraries.length > 0 && (
+        <div className="px-2 py-1 mb-2">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => handleSearch(e.target.value)}
+            placeholder={t('editor:fileTree.searchMaterials')}
+            className="w-full px-2 py-1 text-xs rounded border border-[hsl(var(--border-primary))] bg-[hsl(var(--bg-secondary))] text-[hsl(var(--text-primary))] placeholder-[hsl(var(--text-secondary))] focus:outline-none focus:border-[hsl(var(--accent-primary))]"
+          />
+        </div>
+      )}
+
+      {/* Search results */}
+      {searchQuery.trim() && (
+        <div className="mb-2">
+          {isSearching ? (
+            <div className="px-2 py-2 text-[hsl(var(--text-secondary))] text-xs italic">
+              {t('common:loading')}
+            </div>
+          ) : searchResults.length === 0 ? (
+            <div className="px-2 py-2 text-[hsl(var(--text-secondary))] text-xs italic">
+              {t('editor:fileTree.noSearchResults')}
+            </div>
+          ) : (
+            searchResults.map((result) => (
+              <div
+                key={`${result.novel_id}:${result.entity_type}:${result.entity_id}`}
+                className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer group transition-colors text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-tertiary))]"
+                onClick={() => handleEntityClick(result.novel_id, result.entity_type, result.entity_id)}
+              >
+                <span className="w-3" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs truncate">{result.name}</div>
+                  <div className="text-[10px] text-[hsl(var(--text-secondary))] truncate">{result.novel_title}</div>
+                </div>
+                <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-all">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAttachToChat(result.novel_id, result.entity_type, result.entity_id, result.name);
+                    }}
+                    className="p-0.5 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--accent-primary))] transition-colors"
+                    title={t('editor:fileTree.attachToChat')}
+                  >
+                    <MessageSquarePlus size={12} />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleQuickImport(result.novel_id, result.entity_type, result.entity_id);
+                    }}
+                    className="p-0.5 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--accent-primary))] transition-colors"
+                    title={t('editor:fileTree.addToProject')}
+                  >
+                    <Plus size={12} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Normal library tree (only show when not searching) */}
+      {!searchQuery.trim() && (
+        isLibraryLoading ? (
+          <div className="px-2 py-2 text-[hsl(var(--text-secondary))] text-xs italic">
+            {t('common:loading')}
+          </div>
+        ) : materialLib.libraries.length === 0 ? (
+          <div className="px-3 py-3 text-[hsl(var(--text-secondary))] text-xs">
+            <p className="italic mb-1">{t('editor:fileTree.referenceLibraryEmpty')}</p>
+            <p className="text-[10px] opacity-70">{t('editor:fileTree.referenceLibraryEmptyHint')}</p>
+          </div>
+        ) : (
+          materialLib.libraries.map((lib) => {
+            const isNovelExpanded = materialLib.expandedNovels.has(lib.id);
+
+            return (
+              <div key={lib.id} className="mb-1">
+                {/* Novel header */}
+                <div
+                  className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-tertiary))]"
+                  onClick={() => materialLib.toggleNovel(lib.id)}
+                >
+                  {isNovelExpanded ? (
+                    <ChevronDown size={14} className="text-[hsl(var(--text-secondary))] shrink-0" />
+                  ) : (
+                    <ChevronRight size={14} className="text-[hsl(var(--text-secondary))] shrink-0" />
+                  )}
+                  <span className="text-[hsl(var(--text-secondary))]">
+                    <BookOpen size={14} />
+                  </span>
+                  <span className="flex-1 truncate text-sm">{lib.title}</span>
+                </div>
+
+                {/* Entity type categories */}
+                {isNovelExpanded && (
+                  <div className="mt-0.5">
+                    {entityTypes
+                      .filter(({ countKey }) => (lib.counts[countKey] || 0) > 0)
+                      .map(({ type, countKey }) => {
+                        const typeKey = `${lib.id}:${type}`;
+                        const isTypeExpanded = materialLib.expandedTypes.get(typeKey) || false;
+                        const items = entityLists[typeKey] || [];
+                        const isLoadingItems = entityListLoading[typeKey] || false;
+
+                        return (
+                          <div key={type}>
+                            {/* Entity type header */}
+                            <div
+                              className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer group transition-colors text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-tertiary))]"
+                              style={{ marginLeft: 12 }}
+                              onClick={() => handleEntityTypeToggle(lib.id, type)}
+                            >
+                              {isTypeExpanded ? (
+                                <ChevronDown size={12} className="text-[hsl(var(--text-secondary))] shrink-0" />
+                              ) : (
+                                <ChevronRight size={12} className="text-[hsl(var(--text-secondary))] shrink-0" />
+                              )}
+                              <span className="text-[hsl(var(--text-secondary))] shrink-0">
+                                {ENTITY_TYPE_ICONS[type]}
+                              </span>
+                              <span className="flex-1 truncate text-xs">{entityTypeLabels[type]}</span>
+                              <span className="text-[hsl(var(--text-secondary))] text-xs">
+                                {lib.counts[countKey] || 0}
+                              </span>
+                            </div>
+
+                            {/* Entity items */}
+                            {isTypeExpanded && (
+                              <div className="mt-0.5">
+                                {isLoadingItems ? (
+                                  <div className="px-2 py-1 text-[hsl(var(--text-secondary))] text-xs italic" style={{ marginLeft: 24 }}>
+                                    {t('common:loading')}
+                                  </div>
+                                ) : (
+                                  items.map((item) => (
+                                    <div
+                                      key={item.id}
+                                      className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer group transition-colors text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-tertiary))]"
+                                      style={{ marginLeft: 24 }}
+                                      onClick={() => handleEntityClick(lib.id, type, item.id)}
+                                    >
+                                      {batchMode && (
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedItems.has(`${lib.id}:${type}:${item.id}`)}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            toggleItemSelection(lib.id, type, item.id);
+                                          }}
+                                          className="shrink-0"
+                                        />
+                                      )}
+                                      {!batchMode && <span className="w-3" />}
+                                      <span className="flex-1 truncate text-xs">{item.name}</span>
+                                      {!batchMode && (
+                                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-all">
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleAttachToChat(lib.id, type, item.id, item.name);
+                                            }}
+                                            className="p-0.5 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--accent-primary))] transition-colors"
+                                            title={t('editor:fileTree.attachToChat')}
+                                          >
+                                            <MessageSquarePlus size={12} />
+                                          </button>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleQuickImport(lib.id, type, item.id);
+                                            }}
+                                            className="p-0.5 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--accent-primary))] transition-colors"
+                                            title={t('editor:fileTree.addToProject')}
+                                          >
+                                            <Plus size={12} />
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )
+      )}
+
+      {/* Batch import action bar */}
+      {batchMode && selectedItems.size > 0 && (
+        <div className="px-2 py-2 border-t border-[hsl(var(--border-primary))] flex items-center justify-between mt-2">
+          <span className="text-xs text-[hsl(var(--text-secondary))]">
+            {t('editor:fileTree.batchSelected', { count: selectedItems.size })}
+          </span>
+          <button
+            onClick={handleBatchImport}
+            disabled={isBatchImporting}
+            className="px-2 py-1 text-xs rounded bg-[hsl(var(--accent-primary))] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {isBatchImporting ? t('common:loading') : t('editor:fileTree.batchImport')}
+          </button>
+        </div>
+      )}
+
+    </div>
+  );
+};

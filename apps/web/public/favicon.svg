@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8B5CF6"/>
+      <stop offset="100%" style="stop-color:#6366F1"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- 背景 -->
+  <rect width="32" height="32" rx="8" fill="url(#bg)"/>
+  
+  <!-- 对话气泡（狗头轮廓：带两只耳朵） -->
+  <path d="M8 10 Q6 6 9 8 L10 10 L10 10 Q10 7 16 7 Q22 7 22 10 L23 8 Q26 6 24 10 L24 10 Q26 12 26 16 Q26 22 16 22 Q6 22 6 16 Q6 12 8 10 Z" fill="#fff"/>
+  
+  <!-- 气泡尾巴 -->
+  <polygon points="10,22 13,22 9,26" fill="#fff"/>
+  
+  <!-- 两个点代表眼睛/也像省略号 -->
+  <circle cx="12" cy="15" r="1.8" fill="#6366F1"/>
+  <circle cx="20" cy="15" r="1.8" fill="#6366F1"/>
+</svg>

@@ -1,0 +1,93 @@
+{
+  "title": "Skills",
+  "description": "Manage your AI writing skills with custom triggers and instructions",
+  "create": "Create Skill",
+  "mySkillsTab": "My Skills",
+  "discoverTab": "Discover",
+  "userSkills": "Custom Skills",
+  "builtinSkills": "Built-in Skills",
+  "addedSkills": "Added Skills",
+  "noUserSkills": "No custom skills yet",
+  "noAddedSkills": "No added skills yet",
+  "createFirst": "Create your first skill",
+  "browsePublic": "Browse public skills",
+  "readonly": "Read-only",
+  "added": "Added",
+  "remove": "Remove",
+  "discover": "Discover Skills",
+  "discoverMore": "Discover more",
+  "discoverDescription": "Browse and add community-shared writing skills",
+  "searchPlaceholder": "Search skills...",
+  "searchMySkillsPlaceholder": "Search my skills...",
+  "noSearchResults": "No matching skills found",
+  "allCategories": "All",
+  "categories": {
+    "writing": "Writing",
+    "plot": "Plot",
+    "style": "Style",
+    "character": "Character",
+    "worldbuilding": "Worldbuilding"
+  },
+  "noSkillsFound": "No matching skills found",
+  "official": "Official",
+  "community": "Community",
+  "addCount": "added",
+  "addToMine": "Add to My Skills",
+  "alreadyAdded": "Already Added",
+  "createSkill": "Create Skill",
+  "editSkill": "Edit Skill",
+  "expand": "Expand instructions",
+  "collapse": "Collapse instructions",
+  "batch": {
+    "selectAll": "Select All",
+    "selected": "{{count}} selected",
+    "clearSelection": "Clear",
+    "delete": "Delete",
+    "deleteConfirmTitle": "Delete Skills",
+    "deleteConfirmMessage": "Are you sure you want to delete {{count}} selected skills? This action cannot be undone."
+  },
+  "form": {
+    "name": "Skill Name",
+    "namePlaceholder": "Enter skill name",
+    "description": "Description",
+    "descriptionPlaceholder": "Briefly describe what this skill does",
+    "triggers": "Triggers",
+    "triggersPlaceholder": "create character, new person",
+    "triggersHint": "Separate multiple triggers with commas",
+    "instructions": "Instructions",
+    "instructionsPlaceholder": "When this skill is triggered, AI will follow these instructions...",
+    "instructionsHint": "Supports Markdown format: headings, lists, code blocks, etc."
+  },
+  "deleteConfirm": {
+    "title": "Delete Skill",
+    "message": "Are you sure you want to delete this skill? This action cannot be undone."
+  },
+  "share": {
+    "title": "Share Skill",
+    "category": "Select Category",
+    "notice": "After sharing, your skill will be submitted for review. Once approved, it will appear in the public skill library.",
+    "submit": "Submit",
+    "error": "Failed to share. Please try again later."
+  },
+  "stats": {
+    "title": "Skill Usage Statistics",
+    "days7": "Last 7 days",
+    "days30": "Last 30 days",
+    "days90": "Last 90 days",
+    "totalTriggers": "Total Triggers",
+    "avgConfidence": "Avg Confidence",
+    "builtinCount": "Built-in",
+    "userCount": "Custom",
+    "topSkills": "Top Skills",
+    "dailyUsage": "Daily Usage Trend",
+    "builtin": "Built-in",
+    "user": "Custom",
+    "noData": "No usage data yet"
+  },
+  "quota": {
+    "createTitle": "Custom skill quota reached",
+    "createDescription": "You've reached the custom skill limit for your current plan. Upgrade your plan, or compare plans before deciding.",
+    "upgradePrimary": "View upgrade options",
+    "upgradeSecondary": "Compare plans"
+  }
+}

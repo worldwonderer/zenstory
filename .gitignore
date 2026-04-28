@@ -1,0 +1,149 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+# lib/ 移除，因为会误匹配 apps/web/src/lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.venv*/
+.venv-server/
+venv/
+ENV/
+env/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+chroma_data/
+
+# Vector database
+chroma_data/
+*.chromadb
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+dist-ssr/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.production
+.env.vercel
+.env.railway
+apps/server/.env
+apps/server/.env.docker
+apps/web/.env.local
+apps/web/.env.docker
+
+# Logs
+logs/
+*.log
+
+# Archives
+.archive/
+
+# Test coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# Build artifacts
+*.pyc
+stats.html
+
+.codebuddy/
+.claude/
+.claude-code/
+.actrc
+ralph/
+tasks/
+
+# Project tooling
+.ace-tool/
+.logs/
+.pids/
+.serena/
+.uv-cache/
+.ruff_cache/
+.kiro/
+.shared/
+.playwright-mcp/
+static/
+*.timestamp_*/
+playwright-report/
+test-results/
+.openspec
+prd.json
+progress.txt
+.omc/
+.omx/
+apps/deepnovel/
+apps/server/.omc/
+
+# Server temporary files
+apps/server/uploads/
+apps/server/tmp/
+apps/server/*.bak
+apps/server/services/*.bak/
+apps/server/sync_models_migration.sql
+# Temp directories
+.tmp_*
+output/
+
+# Legacy internal directories
+deepnovel/
+prompt参考/
+
+
+# Auto Claude data directory and files
+.auto-claude*
+
+# Auto Claude data directory
+.auto-claude/
+
+# Auto Claude generated files
+.auto-claude-security.json
+.auto-claude-status
+.claude_settings.json
+.worktrees/
+.security-key
+logs/security/

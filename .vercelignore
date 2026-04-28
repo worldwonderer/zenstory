@@ -1,0 +1,40 @@
+# Vercel Ignore - Files to exclude from deployment
+# =================================================
+
+# Backend files (not needed for frontend build)
+apps/server/
+apps/server/*
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+chroma_data/
+
+# Development and testing
+node_modules/
+.pnpm-store/
+.pnpm-debug.log
+.env.local
+.env.development
+
+# Build artifacts (will be built on Vercel)
+dist/
+build/
+*.log
+
+# Documentation markdown must be deployable for DocsPage import.meta.glob.
+# Do not ignore *.md at root.
+scripts/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store

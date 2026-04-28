@@ -1,0 +1,25 @@
+[run]
+source = .
+omit =
+    */tests/*
+    */venv/*
+    */__pycache__/*
+    */alembic/*
+    */migrations/*
+    # Prefect flows are background processing, not API routes
+    */flows/*
+    # Scripts are not part of the core application
+    */scripts/*
+    # Docker configuration
+    */docker/*
+
+[report]
+fail_under = 80
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if TYPE_CHECKING:
+    @abstractmethod
+    if __name__ == .__main__.:

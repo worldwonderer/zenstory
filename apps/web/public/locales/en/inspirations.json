@@ -1,0 +1,66 @@
+{
+  "title": "Inspiration Library",
+  "subtitle": "Discover and use project templates created by the community",
+  "searchPlaceholder": "Search inspirations...",
+  "search": "Search",
+  "view": "View",
+  "use": "Use",
+  "copying": "Copying...",
+  "copied": "Copied!",
+  "useThis": "Use This Template",
+  "copyCount_one": "{{count}} copy",
+  "copyCount_other": "{{count}} copies",
+  "community": "Community",
+  "featured": "Featured",
+  "back": "Back",
+  "copySuccess": "Inspiration copied to your workspace!",
+  "copyError": "Failed to copy inspiration. Please try again.",
+  "copyAuthRequired": "Please sign in before copying inspirations.",
+  "copyQuotaExceeded": "You've reached your monthly inspiration copy limit.",
+  "copyQuotaExceededTitle": "Inspiration copy quota reached",
+  "copyQuotaExceededModalDesc": "Your monthly inspiration copy quota has been used up. Review upgrade options now, or compare plans before deciding.",
+  "projectQuotaExceededTitle": "Project limit reached",
+  "projectQuotaExceededModalDesc": "You've reached your plan's project limit. Review upgrade options now, or compare plans before deciding.",
+  "copyQuotaUpgradePrimary": "See upgrade options",
+  "copyQuotaUpgradeSecondary": "Compare plans",
+  "projectTypes": {
+    "novel": "Novel",
+    "short": "Short Story",
+    "screenplay": "Screenplay"
+  },
+  "heroHints": {
+    "novel": "Long-form narrative template",
+    "short": "Short story inspiration template",
+    "screenplay": "Screenplay structure template"
+  },
+  "description": "Description",
+  "tags": "Tags",
+  "fileStructure": "File Structure",
+  "noFiles": "No files in this template",
+  "projectName": "Project Name (Optional)",
+  "projectNameHint": "Leave empty to use the template name",
+  "cancel": "Cancel",
+  "noResults": "No inspirations found matching your search.",
+  "resultsCount_one": "{{count}} inspiration found",
+  "resultsCount_other": "{{count}} inspirations found",
+  "loadError": "Failed to load inspirations. Please try again.",
+  "retry": "Retry",
+  "page": "Page {{current}} of {{total}}",
+  "pagination": {
+    "previous": "Previous page",
+    "next": "Next page"
+  },
+  "mySubmissions": {
+    "title": "My Submissions",
+    "count": "{{count}} items",
+    "loading": "Loading submission status...",
+    "empty": "No submissions yet. Open a project and click \"Submit to Inspiration Library\".",
+    "submittedAt": "Submitted on {{date}}",
+    "rejectionReason": "Rejection reason: {{reason}}",
+    "status": {
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected"
+    }
+  }
+}

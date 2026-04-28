@@ -1,0 +1,65 @@
+# Docker Ignore - Files to exclude from Docker image
+# =================================================
+
+# Python cache and virtual environment
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Database files (will be stored in PostgreSQL on Railway)
+*.db
+*.sqlite
+*.sqlite3
+chroma_data/
+
+# Environment files (use platform/docker env variables instead)
+.env
+.env.local
+.env.development
+.env.railway
+.env.docker
+
+# Development and testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Node modules (not needed for backend)
+node_modules/

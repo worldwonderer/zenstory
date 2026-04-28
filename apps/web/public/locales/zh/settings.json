@@ -1,0 +1,233 @@
+{
+  "title": "设置",
+  "nav": {
+    "profile": "个人资料",
+    "general": "通用",
+    "subscription": "订阅",
+    "points": "积分",
+    "referral": "邀请",
+    "agent": "Agent"
+  },
+  "profile": {
+    "anonymous": "匿名用户",
+    "edit": "编辑资料"
+  },
+  "editor": {
+    "title": "编辑器偏好",
+    "fontSize": "正文字体大小",
+    "lineHeight": "正文行间距",
+    "autoSaveInterval": "自动保存草稿间隔"
+  },
+  "theme": {
+    "title": "外观主题",
+    "mode": "主题模式",
+    "dark": "深色主题",
+    "light": "浅色主题",
+    "color": "主题颜色"
+  },
+  "language": {
+    "title": "语言偏好",
+    "label": "界面语言",
+    "zh": "中文",
+    "en": "English"
+  },
+  "actions": {
+    "resetDefault": "恢复默认偏好",
+    "cancel": "取消",
+    "saving": "正在保存...",
+    "save": "保存偏好",
+    "saved": "偏好已保存",
+    "confirmReset": "确定要恢复默认偏好吗？这不会影响您的创作内容。"
+  },
+  "apiKeys": {
+    "title": "API 密钥",
+    "create": "创建密钥",
+    "createTitle": "创建新 API 密钥",
+    "delete": "删除",
+    "deleteTitle": "删除 API 密钥",
+    "deleteConfirm": "确定要删除此密钥吗？此操作无法撤销。",
+    "regenerate": "重新生成",
+    "regenerateTitle": "重新生成 API 密钥",
+    "regenerateConfirm": "旧密钥将立即失效。",
+    "regenerating": "正在重新生成...",
+    "createdTitle": "API 密钥已创建",
+    "copyWarning": "请立即复制此密钥。它只会显示一次。",
+    "done": "完成",
+    "loading": "加载中...",
+    "noKeys": "暂无 API 密钥。创建一个开始使用。",
+    "created": "创建于",
+    "lastUsed": "最后使用",
+    "expires": "过期时间",
+    "disable": "禁用",
+    "enable": "启用",
+    "status": {
+      "active": "活跃",
+      "disabled": "已禁用"
+    },
+    "permissions": {
+      "read": "读取",
+      "write": "写入"
+    },
+    "form": {
+      "name": "名称",
+      "namePlaceholder": "例如：我的 API 密钥",
+      "description": "描述",
+      "descriptionPlaceholder": "可选描述",
+      "permissions": "权限",
+      "projectIds": "项目 ID（用逗号分隔）",
+      "projectIdsPlaceholder": "留空表示所有项目",
+      "expiresAt": "过期时间"
+    },
+    "errors": {
+      "fetchFailed": "获取 API 密钥失败",
+      "createFailed": "创建 API 密钥失败",
+      "deleteFailed": "删除 API 密钥失败",
+      "regenerateFailed": "重新生成 API 密钥失败",
+      "toggleFailed": "切换密钥状态失败",
+      "nameRequired": "名称为必填项"
+    },
+    "emptyState": "创建 API Key 后，将链接和密钥发给你的 AI 助手（Claude Code、OpenClaw 等），它会自动接入你的创作空间。",
+    "agentPromptZh": "请先阅读 {{skillUrl}} 了解我的小说写作平台 API，然后用以下 API Key 接入：\nAPI Key: {{apiKey}}\n请求头: X-Agent-API-Key: {{apiKey}}\n\n接入后请先调用 GET {{skillUrl}} 验证连接。",
+    "agentPromptEn": "Read {{skillUrl}} to learn about my novel writing platform API, then connect with this API key:\nAPI Key: {{apiKey}}\nHeader: X-Agent-API-Key: {{apiKey}}\n\nAfter connecting, verify by calling GET {{skillUrl}}.",
+    "copyPrompt": "复制给 AI 的提示词",
+    "copiedPrompt": "已复制！",
+    "testConnection": "测试连接",
+    "testing": "测试中...",
+    "testSuccess": "API Key 有效且处于活跃状态。",
+    "testFailed": "连接失败：{{error}}",
+    "hintBar": "将 SKILL.md 链接和 API Key 发给你的 AI 助手，它会自动接入。"
+  },
+  "subscription": {
+    "usage": "使用量",
+    "active": "生效中",
+    "expired": "已过期",
+    "cancelled": "已取消",
+    "none": "未开通",
+    "daysRemaining": "剩余 {{days}} 天",
+    "upgradePrimary": "升级专业版",
+    "redeemCode": "兑换码",
+    "redeemTitle": "兑换会员",
+    "redeem": "兑换",
+    "codeLabel": "兑换码",
+    "wechatGuide": "没有兑换码？可添加微信号获取：AIchuangzuo999",
+    "codeRequired": "请输入兑换码",
+    "invalidFormat": "兑换码格式不正确",
+    "redeemFailed": "兑换失败，请检查兑换码",
+    "redeemSuccess": "兑换成功！",
+    "featuresTitle": "套餐权益",
+    "unlimited": "无限",
+    "yes": "是",
+    "no": "否",
+    "features": {
+      "ai_conversations_per_day": "每日 AI 对话次数",
+      "max_ai_conversations_per_day": "每日 AI 对话次数",
+      "context_window_tokens": "上下文窗口",
+      "file_versions_per_file": "每文件版本数",
+      "max_projects": "最大项目数",
+      "export_formats": "导出格式",
+      "custom_prompts": "自定义提示词",
+      "priority_support": "优先支持",
+      "material_uploads": "素材上传次数",
+      "material_decompositions": "素材拆解次数",
+      "custom_skills": "自定义技能数量",
+      "inspiration_copies_monthly": "灵感复用次数"
+    }
+  },
+  "points": {
+    "comingSoon": "积分功能即将上线",
+    "balance": "积分余额",
+    "pendingExpiration": "{{count}} 积分即将过期",
+    "history": "积分记录",
+    "historyError": "加载历史记录失败",
+    "noHistory": "暂无积分记录",
+    "totalTransactions": "共 {{count}} 条记录",
+    "expired": "已过期",
+    "dailyCheckIn": "每日签到",
+    "streakDays": "连续 {{days}} 天",
+    "alreadyCheckedIn": "今日已签到",
+    "checkIn": "签到领积分",
+    "checkInFailed": "签到失败，请稍后重试",
+    "earnMore": "获取更多积分",
+    "completed": "已完成",
+    "redeemPro": "兑换 Pro 会员",
+    "currentBalance": "当前积分",
+    "selectDuration": "选择兑换时长",
+    "days": "天",
+    "points": "积分",
+    "proBenefits": "Pro 会员权益",
+    "redeem": "兑换",
+    "insufficient": "积分不足",
+    "redeemFailed": "兑换失败，请稍后重试",
+    "benefit": {
+      "unlimitedAI": "无限 AI 对话",
+      "unlimitedProjects": "无限项目",
+      "allFormats": "所有导出格式",
+      "priority": "优先功能体验"
+    },
+    "transaction": {
+      "check_in": "签到",
+      "check_in_streak": "连续签到奖励",
+      "referral": "邀请奖励",
+      "skill_contribution": "技能贡献",
+      "inspiration_contribution": "灵感贡献",
+      "profile_complete": "完善资料",
+      "redeem_pro": "兑换 Pro",
+      "admin_grant": "系统赠送",
+      "expiration": "积分过期"
+    },
+    "time": {
+      "minutesAgo": "{{count}} 分钟前",
+      "hoursAgo": "{{count}} 小时前",
+      "yesterday": "昨天",
+      "daysAgo": "{{count}} 天前"
+    }
+  },
+  "referral": {
+    "statsError": "加载统计数据失败，请重试",
+    "totalInvites": "总邀请数",
+    "successfulInvites": "成功邀请",
+    "totalPoints": "累计积分",
+    "availablePoints": "可用积分",
+    "rewardsHistory": "奖励历史",
+    "noRewards": "暂无奖励记录",
+    "used": "已使用",
+    "rewardType": {
+      "points": "积分",
+      "pro_trial": "Pro试用",
+      "credits": "额度"
+    },
+    "myCodes": "我的邀请码",
+    "maxCodesHint": "最多可创建 {{count}} 个邀请码",
+    "generateCode": "生成邀请码",
+    "noCodes": "暂无邀请码",
+    "createFirstHint": "创建邀请码邀请好友，获取奖励",
+    "createFirstCode": "创建第一个邀请码",
+    "loadError": "加载邀请码失败，请重试",
+    "createError": "创建邀请码失败，请重试",
+    "codeLabel": "邀请码",
+    "copyCode": "复制邀请码",
+    "shareCode": "分享邀请码",
+    "usageLabel": "已使用",
+    "status": {
+      "expired": "已过期",
+      "disabled": "已停用",
+      "exhausted": "已用完",
+      "available": "可用"
+    },
+    "expiry": {
+      "tomorrow": "明天过期",
+      "daysLeft": "{{count}}天后过期"
+    },
+    "share": {
+      "title": "zenstory写作 - 邀请码",
+      "codeLabel": "邀请码"
+    }
+  },
+  "common": {
+    "previous": "上一页",
+    "next": "下一页",
+    "loading": "处理中...",
+    "cancel": "取消",
+    "processing": "处理中..."
+  }
+}

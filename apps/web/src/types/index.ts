@@ -1,0 +1,1402 @@
+// ==================== Core Models ====================
+
+export type ProjectType = "novel" | "short" | "screenplay";
+
+export interface Project {
+  id?: string;
+  name: string;
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+  // Project type: novel, short, screenplay
+  project_type?: ProjectType;
+  // Project status fields for AI context awareness
+  summary?: string;        // Project summary/background
+  current_phase?: string;  // Current writing phase
+  writing_style?: string;  // Writing style guidelines
+  notes?: string;          // Notes for AI assistant
+}
+
+/**
+ * Request body for patching project status fields
+ */
+export interface PatchProjectRequest {
+  summary?: string;
+  current_phase?: string;
+  writing_style?: string;
+  notes?: string;
+}
+
+// ==================== File Model (Unified) ====================
+
+/**
+ * File types supported in the system
+ */
+export type FileType =
+  | "folder"
+  | "outline"
+  | "draft"
+  | "document"
+  | "character"
+  | "lore"
+  | "material"
+  | "script";  // Script content (for screenplay)
+
+/**
+ * Unified File model used by AI agent.
+ * All project content (outlines, drafts, characters, lores, etc.) is stored as Files.
+ */
+export interface File {
+  id: string;
+  project_id: string;
+  title: string;
+  content: string;
+  file_type: FileType;
+  parent_id: string | null;
+  order: number;
+  file_metadata: string | null; // JSON string
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * File tree node for hierarchical display
+ */
+export interface FileTreeNode {
+  id: string;
+  title: string;
+  file_type: string;
+  parent_id: string | null;
+  order: number;
+  content?: string;
+  metadata: Record<string, unknown> | null;
+  children: FileTreeNode[];
+}
+
+/**
+ * Tree node type for UI
+ */
+export type TreeNodeType = FileType;
+
+export interface TreeNode {
+  id: string;
+  name: string;
+  type: TreeNodeType;
+  children?: TreeNode[];
+  data?: Record<string, unknown>;
+}
+
+/**
+ * Selected item for editor
+ */
+export interface SelectedItem {
+  id: string;
+  type: TreeNodeType;
+  title: string;
+}
+
+// ==================== Search ====================
+
+// ==================== Snapshot / Version ====================
+
+export interface Snapshot {
+  id?: string;
+  project_id: string;
+  file_id?: string;
+  data: string;
+  description?: string;
+  snapshot_type?: "auto" | "manual" | "pre_ai_edit" | "pre_rollback";
+  version?: number;
+  created_at?: string;
+}
+
+export interface SnapshotComparison {
+  snapshot1: {
+    id: string;
+    created_at: string;
+  };
+  snapshot2: {
+    id: string;
+    created_at: string;
+  };
+  changes: {
+    added: Array<{
+      file_id: string;
+      version_number: number;
+      version_id: string;
+    }>;
+    removed: Array<{
+      file_id: string;
+      version_number: number;
+      version_id: string;
+    }>;
+    modified: Array<{
+      file_id: string;
+      old_version: number;
+      new_version: number;
+    }>;
+  };
+}
+
+// ==================== File Version (New) ====================
+
+/**
+ * File version for tracking individual file changes
+ */
+export interface FileVersion {
+  id: string;
+  file_id: string;
+  project_id: string;
+  version_number: number;
+  is_base_version: boolean;
+  word_count: number;
+  char_count: number;
+  change_type: "create" | "edit" | "ai_edit" | "restore" | "auto_save";
+  change_source: "user" | "ai" | "system";
+  change_summary?: string;
+  lines_added: number;
+  lines_removed: number;
+  created_at: string;
+}
+
+/**
+ * Response for file version list
+ */
+export interface FileVersionListResponse {
+  versions: FileVersion[];
+  total: number;
+  file_id: string;
+  file_title: string;
+}
+
+/**
+ * Response for version content
+ */
+export interface VersionContentResponse {
+  file_id: string;
+  version_number: number;
+  content: string;
+  word_count: number;
+  char_count: number;
+  created_at: string;
+}
+
+/**
+ * Version comparison result
+ */
+export interface VersionComparison {
+  file_id: string;
+  version1: {
+    number: number;
+    created_at: string | null;
+    change_type: string | null;
+    change_source: string | null;
+    word_count: number;
+  };
+  version2: {
+    number: number;
+    created_at: string | null;
+    change_type: string | null;
+    change_source: string | null;
+    word_count: number;
+  };
+  unified_diff: string;
+  html_diff: DiffLine[];
+  stats: {
+    lines_added: number;
+    lines_removed: number;
+    word_diff: number;
+  };
+}
+
+/**
+ * Single line in HTML diff
+ */
+export interface DiffLine {
+  type: "equal" | "added" | "removed";
+  old_line: number | null;
+  new_line: number | null;
+  content: string;
+}
+
+// ==================== Conflict Detection ====================
+
+export type ConflictType =
+  | "timeline_conflict"
+  | "character_conflict"
+  | "lore_conflict"
+  | "logic_conflict"
+  | "style_conflict"
+  | "missing_foreshadowing"
+  | "contradiction"
+  | "pov_conflict"
+  | "tense_conflict";
+
+export interface Conflict {
+  type: ConflictType;
+  severity: "low" | "medium" | "high";
+  title: string;
+  description: string;
+  location?: string;
+  suggestions: string[];
+  references: Record<string, unknown>[];
+}
+
+export type ApplyAction =
+  | "insert"
+  | "replace"
+  | "new_snippet"
+  | "reference_only";
+
+// ==================== Agent Context Items ====================
+
+export type ContextPriority =
+  | "critical"
+  | "constraint"
+  | "relevant"
+  | "inspiration";
+
+/**
+ * Context item assembled by backend for the agent prompt.
+ *
+ * NOTE: This is used for UI display only (sources/citations panel).
+ */
+export interface AgentContextItem {
+  id: string;
+  type: string; // outline/draft/character/lore/snippet/timeline/material...
+  title: string;
+  content: string;
+  relevance_score?: number | null;
+  priority?: ContextPriority;
+  metadata?: Record<string, unknown>;
+}
+
+// ==================== SSE Event Types ====================
+
+export type SSEEventType =
+  | "thinking"
+  | "thinking_content"
+  | "context"
+  | "content"
+  | "content_start"
+  | "content_end"
+  | "tool_call"
+  | "tool_result"
+  | "conflict"
+  | "reference"
+  | "file_created"
+  | "file_content"
+  | "file_content_end"
+  | "file_edit_start"
+  | "file_edit_applied"
+  | "file_edit_end"
+  | "skill_matched"
+  | "skills_matched"
+  | "agent_selected"
+  | "iteration_exhausted"
+  | "router_thinking"
+  | "router_decided"
+  | "handoff"
+  | "workflow_stopped"
+  | "workflow_complete"
+  | "session_started"
+  | "parallel_start"
+  | "parallel_task_start"
+  | "parallel_task_end"
+  | "parallel_end"
+  | "steering_received"
+  | "compaction_start"
+  | "compaction_done"
+  | "done"
+  | "error";
+
+export interface SSEThinkingData {
+  message: string;
+  step?: string;
+}
+
+export interface SSEThinkingContentData {
+  content: string;
+  is_complete?: boolean;
+}
+
+export interface SSEContextData {
+  items: AgentContextItem[];
+  token_count?: number;
+}
+
+export interface SSEContentData {
+  text: string;
+  index?: number;
+}
+
+export interface SSEToolCallData {
+  tool_use_id?: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface SSEToolResultData {
+  tool_use_id?: string;
+  tool_name: string;
+  status: "success" | "error";
+  data?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface SSEConflictData {
+  type: ConflictType;
+  severity: "low" | "medium" | "high";
+  title: string;
+  description: string;
+  suggestions: string[];
+}
+
+export interface SSEErrorData {
+  message: string;
+  code?: string;
+  retryable: boolean;
+}
+
+export interface SSEFileCreatedData {
+  file_id: string;
+  file_type: string;
+  title: string;
+}
+
+export interface SSEFileContentData {
+  file_id: string;
+  chunk: string;
+}
+
+export interface SSEFileContentEndData {
+  file_id: string;
+}
+
+export interface SSEFileEditStartData {
+  file_id: string;
+  title: string;
+  total_edits: number;
+  file_type?: string;
+}
+
+export interface SSEFileEditAppliedData {
+  file_id: string;
+  edit_index: number;
+  op: string;
+  old_preview?: string;
+  new_preview?: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface SSEFileEditEndData {
+  file_id: string;
+  edits_applied: number;
+  new_length: number;
+  new_content?: string;  // Full content after edits (for diff review)
+  original_content?: string;  // Content before edits (for diff review)
+  file_type?: string;
+  title?: string;
+}
+
+export interface SSESkillMatchedData {
+  skill_id: string;
+  skill_name: string;
+  matched_trigger: string;
+}
+
+export interface SSESkillsMatchedData {
+  skills: Array<{
+    id: string;
+    name: string;
+    trigger: string;
+    confidence: number;
+  }>;
+  total_count: number;
+}
+
+export interface SSEAgentSelectedData {
+  agent_type: string;
+  agent_name: string;
+  iteration?: number;
+  max_iterations?: number;
+  remaining?: number;
+}
+
+export interface SSEIterationExhaustedData {
+  layer: "collaboration" | "tool_call";
+  iterations_used: number;
+  max_iterations: number;
+  reason: string;
+  last_agent?: string;
+}
+
+export interface SSERoutingMetadata {
+  agent_type: string;
+  workflow_type: string;
+  reason: string;
+  confidence: number;
+}
+
+export interface SSERouterDecidedData {
+  initial_agent: string;
+  workflow_plan: string;
+  workflow_agents: string[];
+  routing_metadata?: SSERoutingMetadata;
+}
+
+export interface SSEWorkflowEvaluationData {
+  complete_score: number;
+  clarification_score: number;
+  consistency_score: number;
+  decision_reason: string;
+}
+
+export interface SSEWorkflowStoppedData {
+  reason:
+    | "clarification_needed"
+    | "error"
+    | "user_cancelled"
+    | "invalid_handoff"
+    | (string & {});
+  agent_type: string;
+  message: string;
+  /**
+   * Optional clarification payload (when reason === "clarification_needed").
+   * Backend may provide the same string in `message` for backward compatibility.
+   */
+  question?: string;
+  /** Optional context to help the user answer the clarification. */
+  context?: string;
+  /** Optional list of concrete information points the user should provide. */
+  details?: string[];
+  confidence?: number;
+  evaluation?: SSEWorkflowEvaluationData;
+}
+
+export interface SSEWorkflowCompleteData {
+  reason: "task_complete";
+  agent_type: string;
+  message: string;
+  confidence?: number;
+  evaluation?: SSEWorkflowEvaluationData;
+}
+
+export interface SSEHandoffPacket {
+  target_agent: string;
+  reason: string;
+  context?: string;
+  completed?: string[];
+  todo?: string[];
+  evidence?: string[];
+}
+
+export interface SSEHandoffData {
+  target_agent: string;
+  reason: string;
+  context?: string;
+  handoff_packet?: SSEHandoffPacket;
+}
+
+export interface SSESessionStartedData {
+  session_id: string;
+}
+
+export interface SSEParallelStartData {
+  execution_id: string;
+  task_count: number;
+  task_descriptions: string[];
+}
+
+export interface SSEParallelTaskStartData {
+  execution_id: string;
+  task_id: string;
+  task_type: string;
+  description: string;
+}
+
+export interface SSEParallelTaskEndData {
+  execution_id: string;
+  task_id: string;
+  status: "completed" | "failed";
+  result_preview?: string;
+  error?: string;
+}
+
+export interface SSEParallelEndData {
+  execution_id: string;
+  total_tasks: number;
+  completed: number;
+  failed: number;
+  duration_ms: number;
+}
+
+export interface SSESteeringReceivedData {
+  message_id: string;
+  preview: string;
+}
+
+export interface SSECompactionStartData {
+  tokens_before: number;
+  messages_count: number;
+}
+
+export interface SSECompactionDoneData {
+  tokens_after: number;
+  messages_removed: number;
+  summary_preview: string;
+}
+
+export interface SSEDoneData {
+  apply_action?: ApplyAction;
+  refs?: number[];
+  assistant_message_id?: string;
+  session_id?: string;
+}
+
+export interface SSEEvent {
+  type: SSEEventType;
+  data:
+    | SSEThinkingData
+    | SSEThinkingContentData
+    | SSEContextData
+    | SSEContentData
+    | SSEToolCallData
+    | SSEToolResultData
+    | SSEConflictData
+    | SSEErrorData
+    | SSEDoneData
+    | SSEFileCreatedData
+    | SSEFileContentData
+    | SSEFileContentEndData
+    | SSEFileEditStartData
+    | SSEFileEditAppliedData
+    | SSEFileEditEndData
+    | SSESkillMatchedData
+    | SSESkillsMatchedData
+    | SSEAgentSelectedData
+    | SSEIterationExhaustedData
+    | SSERouterDecidedData
+    | SSEHandoffData
+    | SSEWorkflowStoppedData
+    | SSEWorkflowCompleteData
+    | SSESessionStartedData
+    | SSEParallelStartData
+    | SSEParallelTaskStartData
+    | SSEParallelTaskEndData
+    | SSEParallelEndData
+    | SSESteeringReceivedData
+    | SSECompactionStartData
+    | SSECompactionDoneData
+    | Record<string, unknown>;
+}
+
+// ==================== Agent Stream State ====================
+
+export interface ToolCall {
+  id: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  status: "pending" | "success" | "error";
+  result?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface AgentStreamState {
+  isStreaming: boolean;
+  isThinking: boolean;
+  thinkingMessage: string;
+  thinkingContent: string;
+  content: string;
+  conflicts: Conflict[];
+  contextItems: AgentContextItem[];
+  contextTokenCount?: number | null;
+  error: string | null;
+  errorCode?: string | null;
+  applyAction: ApplyAction | null;
+  refs: number[];
+  toolCalls: ToolCall[];
+}
+
+// ==================== Agent Request/Response ====================
+
+export interface AgentResponse {
+  text: string;
+  apply_action: ApplyAction;
+  refs: number[];
+  used_files: Record<string, unknown>[];
+  used_snippets?: Record<string, unknown>[]; // Alias for used_files for backward compatibility
+  conflicts: Conflict[];
+  reasoning?: string;
+}
+
+export interface AgentRequest {
+  project_id: string;
+  message: string;
+  session_id?: string;
+  selected_text?: string;
+  context_before?: string;
+  context_after?: string;
+  file_id?: string;
+  outline_id?: string; // For backward compatibility
+  metadata?: Record<string, unknown>;
+  stream?: boolean;
+}
+
+export interface AgentExecutionResult {
+  success: boolean;
+  response: AgentResponse | null;
+  context_data?: Record<string, unknown>;
+}
+
+// ==================== Diff Review Types ====================
+
+/**
+ * Operation type for edit actions
+ */
+export type EditOperation = 
+  | 'replace' 
+  | 'insert_after' 
+  | 'insert_before' 
+  | 'append' 
+  | 'prepend' 
+  | 'delete';
+
+/**
+ * A single pending edit waiting for user review
+ */
+export interface PendingEdit {
+  id: string;
+  op: EditOperation;
+  oldText?: string;
+  newText?: string;
+  status: 'pending' | 'accepted' | 'rejected';
+}
+
+/**
+ * State for diff review mode in the editor
+ */
+export interface DiffReviewState {
+  isReviewing: boolean;
+  fileId: string;
+  originalContent: string;    // Content before AI edits
+  modifiedContent: string;    // Content after AI edits  
+  pendingEdits: PendingEdit[];
+}
+
+/**
+ * Response for rollback operation
+ */
+export interface RollbackResponse {
+  success: boolean;
+  message: string;
+  file_id: string;
+  restored_version: number;
+  new_version_number: number;
+}
+
+// ==================== Text Quote ====================
+
+/**
+ * Text quote for referencing selected text from editor in AI chat
+ */
+export interface TextQuote {
+  id: string;
+  text: string;
+  fileId: string;
+  fileTitle: string;
+  createdAt: Date;
+}
+
+// ==================== Skill Types ====================
+
+/**
+ * Skill source type
+ */
+export type SkillSource = "builtin" | "user" | "added";
+
+/**
+ * Skill model for display
+ */
+export interface Skill {
+  id: string;
+  name: string;
+  description: string | null;
+  triggers: string[];
+  instructions: string;
+  source: SkillSource;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * Request for creating a skill
+ */
+export interface CreateSkillRequest {
+  name: string;
+  description?: string;
+  triggers: string[];
+  instructions: string;
+}
+
+/**
+ * Request for updating a skill
+ */
+export interface UpdateSkillRequest {
+  name?: string;
+  description?: string;
+  triggers?: string[];
+  instructions?: string;
+  is_active?: boolean;
+}
+
+/**
+ * Skill usage statistics
+ */
+export interface SkillUsageStats {
+  total_triggers: number;
+  builtin_count: number;
+  user_count: number;
+  avg_confidence: number;
+  top_skills: TopSkillItem[];
+  daily_usage: DailyUsageItem[];
+}
+
+export interface TopSkillItem {
+  skill_id: string;
+  skill_name: string;
+  skill_source: SkillSource;
+  count: number;
+}
+
+export interface DailyUsageItem {
+  date: string;
+  count: number;
+}
+
+// ==================== Public Skill Types ====================
+
+/**
+ * Public skill status
+ */
+export type PublicSkillStatus = "pending" | "approved" | "rejected";
+
+/**
+ * Public skill source
+ */
+export type PublicSkillSource = "official" | "community";
+
+/**
+ * Public skill model
+ */
+export interface PublicSkill {
+  id: string;
+  name: string;
+  description: string | null;
+  instructions: string;
+  category: string;
+  tags: string[];
+  source: PublicSkillSource;
+  author_id: string | null;
+  author_name?: string;
+  status: PublicSkillStatus;
+  add_count: number;
+  created_at: string;
+  is_added?: boolean;
+}
+
+/**
+ * User added skill from public library
+ */
+export interface AddedSkill {
+  id: string;
+  public_skill_id: string;
+  name: string;
+  description: string | null;
+  instructions: string;
+  category: string;
+  source: "added";
+  is_active: boolean;
+  added_at: string;
+}
+
+/**
+ * My skills response
+ */
+export interface MySkillsResponse {
+  user_skills: Skill[];
+  added_skills: AddedSkill[];
+  total: number;
+}
+
+/**
+ * Public skill list response
+ */
+export interface PublicSkillListResponse {
+  skills: PublicSkill[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+/**
+ * Skill category
+ */
+export interface SkillCategory {
+  name: string;
+  count: number;
+}
+
+// ==================== Agent API Key Types ====================
+
+/**
+ * Agent API Key model (matches backend ApiKeyResponse)
+ */
+export interface AgentApiKey {
+  id: string;
+  name: string;
+  description?: string;
+  key_prefix: string;
+  scopes: string[];
+  project_ids?: string[];
+  is_active: boolean;
+  last_used_at?: string;
+  expires_at?: string;
+  request_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Request for creating an Agent API Key (matches backend CreateApiKeyRequest)
+ */
+export interface CreateAgentApiKeyRequest {
+  name: string;
+  description?: string;
+  scopes?: string[];
+  project_ids?: string[];
+  expires_in_days?: number;
+}
+
+/**
+ * Response for creating an Agent API Key (matches backend ApiKeyWithSecretResponse)
+ */
+export interface CreateAgentApiKeyResponse {
+  id: string;
+  name: string;
+  description?: string;
+  key: string;
+  key_prefix: string;
+  scopes: string[];
+  project_ids?: string[];
+  is_active: boolean;
+  expires_at?: string;
+  created_at: string;
+}
+
+/**
+ * Response for regenerating an Agent API Key (matches backend RegenerateKeyResponse)
+ */
+export interface RegenerateAgentApiKeyResponse {
+  key: string;
+}
+
+/**
+ * Agent API Key list response (matches backend ApiKeyListResponse)
+ */
+export interface AgentApiKeyListResponse {
+  keys: AgentApiKey[];
+  total: number;
+}
+
+// ==================== Material Library Types ====================
+
+/**
+ * Material status
+ */
+export type MaterialStatus = "pending" | "processing" | "completed" | "failed";
+
+/**
+ * Material main type - represents a novel/book in the material library
+ */
+export interface Material {
+  id: string;
+  user_id: string;
+  title: string;
+  author: string | null;
+  synopsis: string | null;
+  status: MaterialStatus;
+  created_at: string;
+  updated_at: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Material chapter
+ */
+export interface MaterialChapter {
+  id: string;
+  material_id: string;
+  chapter_number: number;
+  title: string;
+  content: string;
+  word_count: number;
+  created_at: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Material plot point
+ */
+export interface MaterialPlot {
+  id: string;
+  material_id: string;
+  chapter_id: string | null;
+  plot_type: string;
+  description: string;
+  sequence: number;
+  created_at: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Material character
+ */
+export interface MaterialCharacter {
+  id: string;
+  material_id: string;
+  name: string;
+  role: string | null;
+  description: string | null;
+  traits: string | null;
+  created_at: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Material story/scene
+ */
+export interface MaterialStory {
+  id: string;
+  material_id: string;
+  chapter_id: string | null;
+  title: string;
+  content: string;
+  sequence: number;
+  created_at: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Material story line
+ */
+export interface MaterialStoryLine {
+  id: string;
+  material_id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Material tree node for hierarchical display
+ */
+export interface MaterialTreeNode {
+  id: string;
+  title: string;
+  type: "material" | "chapter" | "plot" | "character" | "story" | "storyline" | "world" | "cheat" | "goldfinger" | "relationship" | "timeline";
+  material_id?: string;
+  chapter_id?: string;
+  content?: string;
+  metadata?: Record<string, unknown>;
+  children?: MaterialTreeNode[];
+}
+
+/**
+ * Ingestion job status
+ */
+export type IngestionJobStatus = "pending" | "processing" | "completed" | "failed";
+
+/**
+ * Ingestion job for importing materials
+ */
+export interface IngestionJob {
+  id: string;
+  user_id: string;
+  material_id: string | null;
+  file_name: string;
+  file_size: number;
+  status: IngestionJobStatus;
+  progress: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+// ==================== Inspiration ====================
+
+/**
+ * Inspiration source type
+ */
+export type InspirationSource = "official" | "community";
+
+/**
+ * Inspiration status
+ */
+export type InspirationStatus = "pending" | "approved" | "rejected";
+
+/**
+ * Inspiration model - project templates for discovery
+ */
+export interface Inspiration {
+  id: string;
+  name: string;
+  description: string | null;
+  cover_image: string | null;
+  project_type: ProjectType;
+  tags: string[];
+  source: InspirationSource;
+  author_id: string | null;
+  original_project_id: string | null;
+  copy_count: number;
+  is_featured: boolean;
+  created_at: string;
+}
+
+/**
+ * Inspiration detail with file preview
+ */
+export interface InspirationDetail extends Inspiration {
+  file_preview: Array<{
+    title: string;
+    file_type: FileType;
+    has_content: boolean;
+  }>;
+}
+
+/**
+ * Inspiration list response
+ */
+export interface InspirationListResponse {
+  inspirations: Inspiration[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+/**
+ * Copy inspiration request
+ */
+export interface CopyInspirationRequest {
+  project_name?: string;
+}
+
+/**
+ * Copy inspiration response
+ */
+export interface CopyInspirationResponse {
+  success: boolean;
+  message: string;
+  project_id: string | null;
+  project_name: string | null;
+}
+
+/**
+ * Submit inspiration request
+ */
+export interface SubmitInspirationRequest {
+  project_id: string;
+  name?: string;
+  description?: string;
+  cover_image?: string;
+  tags?: string[];
+}
+
+/**
+ * Submit inspiration response
+ */
+export interface SubmitInspirationResponse {
+  success: boolean;
+  message: string;
+  inspiration_id: string;
+  status: InspirationStatus;
+}
+
+/**
+ * Current user's inspiration submission item
+ */
+export interface MyInspirationSubmission {
+  id: string;
+  name: string;
+  description: string | null;
+  tags: string[];
+  status: InspirationStatus;
+  copy_count: number;
+  rejection_reason: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+}
+
+/**
+ * Current user's inspiration submissions response
+ */
+export interface MyInspirationSubmissionsResponse {
+  items: MyInspirationSubmission[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+// ==================== Subscription Types ====================
+
+/**
+ * Subscription tier
+ */
+export type SubscriptionTier = "free" | "pro";
+
+/**
+ * Subscription status response from API
+ */
+export interface SubscriptionStatus {
+  tier: SubscriptionTier;
+  status: string;
+  display_name: string;
+  current_period_end: string | null;
+  days_remaining: number | null;
+  features: Record<string, unknown>;
+}
+
+/**
+ * Quota usage response from API
+ */
+export interface QuotaResponse {
+  ai_conversations: {
+    used: number;
+    limit: number;
+    reset_at: string | null;
+  };
+  projects: {
+    used: number;
+    limit: number;
+  };
+  material_uploads?: {
+    used: number;
+    limit: number;
+  };
+  material_decompositions?: {
+    used: number;
+    limit: number;
+  };
+  skill_creates?: {
+    used: number;
+    limit: number;
+  };
+  inspiration_copies?: {
+    used: number;
+    limit: number;
+  };
+}
+
+/**
+ * Subscription history item
+ */
+export interface SubscriptionHistoryItem {
+  id: string;
+  action: string;
+  plan_name: string;
+  start_date: string;
+  end_date: string | null;
+  created_at: string;
+}
+
+/**
+ * Redeem code request
+ */
+export interface RedeemCodeRequest {
+  code: string;
+}
+
+/**
+ * Redeem code response
+ */
+export interface RedeemCodeResponse {
+  success: boolean;
+  message: string;
+  tier: string | null;
+  duration_days: number | null;
+}
+
+// ==================== Points Types ====================
+
+/**
+ * Points balance response
+ */
+export interface PointsBalance {
+  available: number;
+  pending_expiration: number;
+  nearest_expiration_date: string | null;
+}
+
+/**
+ * Check-in response
+ */
+export interface CheckInResponse {
+  success: boolean;
+  points_earned: number;
+  streak_days: number;
+  message: string;
+}
+
+/**
+ * Check-in status response
+ */
+export interface CheckInStatus {
+  checked_in: boolean;
+  streak_days: number;
+  points_earned_today: number;
+}
+
+/**
+ * Points transaction item
+ */
+export interface PointsTransaction {
+  id: string;
+  amount: number;
+  balance_after: number;
+  transaction_type: string;
+  source_id: string | null;
+  description: string | null;
+  expires_at: string | null;
+  is_expired: boolean;
+  created_at: string;
+}
+
+/**
+ * Transaction history response
+ */
+export interface TransactionHistoryResponse {
+  transactions: PointsTransaction[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+/**
+ * Earn opportunity item
+ */
+export interface EarnOpportunity {
+  type: string;
+  points: number;
+  description: string;
+  is_completed: boolean;
+  is_available: boolean;
+}
+
+/**
+ * Redeem Pro request
+ */
+export interface RedeemProRequest {
+  days: number;
+}
+
+/**
+ * Redeem Pro response
+ */
+export interface RedeemProResponse {
+  success: boolean;
+  points_spent: number;
+  pro_days: number;
+  new_period_end: string;
+}
+
+// ============================================
+// Agent Enhancement Event Types
+// ============================================
+
+/**
+ * Compaction event - triggered when context is compressed
+ */
+export interface CompactionStartEvent {
+  type: "compaction_start";
+  tokens_before: number;
+  messages_count: number;
+}
+
+export interface CompactionDoneEvent {
+  type: "compaction_done";
+  tokens_after: number;
+  messages_removed: number;
+  summary_preview: string;
+}
+
+/**
+ * Session lifecycle event - provides session ID for steering
+ */
+export interface SessionStartedEvent {
+  type: "session_started";
+  session_id: string;
+}
+
+/**
+ * Parallel execution events
+ */
+export interface ParallelStartEvent {
+  type: "parallel_start";
+  execution_id: string;
+  task_count: number;
+  task_descriptions: string[];
+}
+
+export interface ParallelTaskStartEvent {
+  type: "parallel_task_start";
+  execution_id: string;
+  task_id: string;
+  task_type: string;
+  description: string;
+}
+
+export interface ParallelTaskEndEvent {
+  type: "parallel_task_end";
+  execution_id: string;
+  task_id: string;
+  status: "completed" | "failed";
+  result_preview?: string;
+  error?: string;
+}
+
+export interface ParallelEndEvent {
+  type: "parallel_end";
+  execution_id: string;
+  total_tasks: number;
+  completed: number;
+  failed: number;
+  duration_ms: number;
+}
+
+/**
+ * Steering event - triggered when steering message is received
+ */
+export interface SteeringReceivedEvent {
+  type: "steering_received";
+  message_id: string;
+  preview: string;
+}
+
+/**
+ * Union type for all new agent events
+ */
+export type AgentEnhancementEvent =
+  | CompactionStartEvent
+  | CompactionDoneEvent
+  | SessionStartedEvent
+  | ParallelStartEvent
+  | ParallelTaskStartEvent
+  | ParallelTaskEndEvent
+  | ParallelEndEvent
+  | SteeringReceivedEvent;
