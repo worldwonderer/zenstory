@@ -12,7 +12,7 @@ Write novels with a conversational AI interface. Three-panel layout: File Tree +
 
 **[zenstory.ai](https://zenstory.ai/)** · [Getting Started](#quick-start) · [Documentation](docs/) · [Contributing](CONTRIBUTING.md)
 
-[English](#features) · [中文](#功能特性)
+[English](#features) · [中文文档](README_CN.md)
 
 </div>
 
