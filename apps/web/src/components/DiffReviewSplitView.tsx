@@ -370,7 +370,7 @@ export const DiffReviewSplitView = ({
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-full bg-[hsl(var(--bg-secondary))] px-2 py-0.5 text-[10px] font-mono text-[hsl(var(--text-tertiary))]">
-                              {t("editor:reviewParagraphLabel", "段落")} #{getDisplayNumber(edit.id) ?? virtualRow.index + 1}
+                              {t("editor:reviewParagraphLabel", "段落")} #{getDisplayNumber(edit.id) ?? index + 1}
                             </span>
                             <span
                               className={cn(

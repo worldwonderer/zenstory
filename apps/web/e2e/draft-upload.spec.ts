@@ -1,4 +1,4 @@
-import { test, expect, Page, APIRequestContext } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { TEST_USERS, config } from './config'
 import { TIMEOUTS } from './constants'
 
@@ -77,12 +77,12 @@ test.describe('Draft Upload', () => {
 
     expect(fileChooser).toBeTruthy()
     // Draft upload accepts .txt and .md
-    const accepted = fileChooser.inputElement.then(el => el.getAttribute('accept') || '')
+    const _accepted = fileChooser.inputElement.then(el => el.getAttribute('accept') || '')
     // The input element should exist
     expect(await fileChooser.inputElement).toBeTruthy()
   })
 
-  test('should upload a txt file and create draft entries', async ({ page, request }) => {
+  test('should upload a txt file and create draft entries', async ({ page: _page, request }) => {
     test.skip(!projectId, 'No project available for testing')
 
     // Upload via API directly (more reliable than file dialog for content verification)
@@ -118,7 +118,7 @@ test.describe('Draft Upload', () => {
     }
   })
 
-  test('should show error toast for invalid file type', async ({ page, request }) => {
+  test('should show error toast for invalid file type', async ({ page: _page, request }) => {
     test.skip(!projectId, 'No project available for testing')
 
     const uploadRes = await request.post(
@@ -142,7 +142,7 @@ test.describe('Draft Upload', () => {
     expect(data.errors[0]).toContain('ERR_FILE_TYPE_INVALID')
   })
 
-  test('should preserve paragraph indentation after chapter split', async ({ page, request }) => {
+  test('should preserve paragraph indentation after chapter split', async ({ page: _page, request }) => {
     test.skip(!projectId, 'No project available for testing')
 
     const content = '第一章 缩进\n　　段落有全角空格缩进。\n　　第二段也有缩进。'

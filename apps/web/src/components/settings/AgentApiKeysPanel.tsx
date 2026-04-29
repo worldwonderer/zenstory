@@ -29,7 +29,7 @@ const formatDate = (dateStr?: string) => {
   return new Date(dateStr).toLocaleDateString();
 };
 
-function ScopeBadge({ scope, label }: { scope: string; label: string }) {
+function ScopeBadge({ label }: { scope: string; label: string }) {
   return (
     <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-[hsl(var(--bg-tertiary))] text-[hsl(var(--text-secondary))]">
       {label}

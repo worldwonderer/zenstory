@@ -80,7 +80,7 @@ function DashboardContent() {
   useEffect(() => {
     const state = location.state as { openSettingsTab?: string } | null;
     if (state?.openSettingsTab) {
-      setSettingsDefaultTab(state.openSettingsTab);
+      setSettingsDefaultTab(state.openSettingsTab); // eslint-disable-line react-hooks/set-state-in-effect
       setShowSettings(true);
       navigate(location.pathname, { replace: true, state: {} });
     }

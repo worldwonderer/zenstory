@@ -48,8 +48,7 @@ export interface EditorProps {}
  * - Folder hint when a folder is selected
  * - Loading spinner during initial file load
  * - Error message on load failure
- * - VirtualizedEditor for large documents (>10000 words)
- * - SimpleEditor for standard-sized documents
+ * - SimpleEditor for all documents
  *
  * Handles AI streaming content display and diff review mode for
  * accepting/rejecting AI-suggested edits.

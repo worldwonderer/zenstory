@@ -50,12 +50,6 @@ export const InlineDiffEditor = forwardRef<InlineDiffEditorHandle, InlineDiffEdi
     initialAutoScrollDoneRef.current = false;
   }, [originalContent, modifiedContent]);
 
-  const editIdToIndexMap = useMemo(() => {
-    const map = new Map<string, number>();
-    pendingEdits.forEach((edit, index) => map.set(edit.id, index));
-    return map;
-  }, [pendingEdits]);
-
   const scrollToEdit = useCallback((editId: string) => {
     if (!editId) return;
 
