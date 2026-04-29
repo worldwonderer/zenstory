@@ -189,8 +189,6 @@ zenstory/
 - [x] Skills system & marketplace
 - [x] Version snapshots & diff comparison
 - [x] Voice input
-- [ ] Real-time collaborative editing
-- [ ] More model support (GPT-4o, Gemini, Qwen)
 - [ ] Native mobile app
 
 ---
