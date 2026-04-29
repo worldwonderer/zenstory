@@ -15,7 +15,7 @@
 
 **2,000+ Creators &middot; 12M Words Generated &middot; 4.9 Rating**
 
-Not just another AI chatbox. ZenStory's Agent directly operates your file system — creating character cards, decomposing reference materials, planning outlines, and writing chapter by chapter — all within a conversation.
+ZenStory's Agent directly operates your file system — creating character cards, decomposing reference materials, planning outlines, and writing chapter by chapter — all within a conversation.
 
 **[zenstory.ai](https://zenstory.ai/)** &middot; [Quick Start](#quick-start) &middot; [中文文档](README.md)
 
@@ -71,7 +71,7 @@ The AI doesn't stay in the chat box — it operates your creative files through 
 
 ### 2. Five-Agent Collaborative Writing Engine
 
-Not one AI — a professional writing team. Five specialized agents with clear roles and intelligent collaboration:
+Five specialized agents with clear roles, forming a complete AI writing team:
 
 ```
 ┌─────────┐    ┌─────────┐    ┌──────────┐    ┌─────────┐    ┌──────────────────┐
@@ -185,7 +185,7 @@ This isn't just "AI-assisted writing" — it's **AI ecosystem interconnection**.
 
 ### 8. Commercial-Grade Features
 
-ZenStory isn't just a tech demo — it's a complete commercial product:
+ZenStory is a complete commercial product:
 
 - **Subscription tiers** — Free / Pro / Max plans, choose by creative task
 - **Quota management** — Fine-grained control over word count, agent tasks, project count, material uploads
@@ -196,21 +196,6 @@ ZenStory isn't just a tech demo — it's a complete commercial product:
 - **Project types** — Novel, Short Story, Screenplay — each with dedicated creative guidance
 
 ---
-
-## Tech Stack
-
-<div align="center">
-
-| Layer | Technology |
-|:---:|:---|
-| **Frontend** | React 19 &middot; TypeScript &middot; Vite &middot; Tailwind CSS 4 &middot; Zustand &middot; TanStack Query &middot; Tiptap |
-| **Backend** | FastAPI &middot; Python 3.12+ &middot; SQLModel &middot; Alembic |
-| **AI Engine** | Anthropic Claude &middot; DeepSeek &middot; LangGraph &middot; LlamaIndex |
-| **Vector Search** | ChromaDB (Hybrid RAG: keyword + semantic vector) |
-| **Database** | SQLite (dev) / PostgreSQL (production) |
-| **Deployment** | Vercel (frontend) + Railway (backend) + Cloudflare (CDN) |
-
-</div>
 
 ---
 
