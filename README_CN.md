@@ -156,31 +156,6 @@ pnpm dev
 
 ---
 
-## 技术架构
-
-| 层 | 技术 |
-|---|------|
-| **前端** | React 19 · TypeScript · Vite · Tailwind CSS 4 · TanStack Query · Zustand · Tiptap |
-| **后端** | FastAPI · SQLModel · Alembic · JWT · ChromaDB |
-| **AI Agent** | Multi-Agent Workflow · RAG Hybrid Search · Token Budget Manager · Context Prioritizer |
-| **模型** | Anthropic Claude · DeepSeek（OpenAI 兼容接口） |
-| **部署** | Vercel (前端) · Railway (后端) · Cloudflare CDN |
-
-```
-zenstory/
-├── apps/
-│   ├── web/          # React 前端 (Vite + TypeScript)
-│   └── server/       # FastAPI 后端
-│       ├── agent/    # AI Agent 系统（多 Agent 协作、工具、上下文、技能）
-│       ├── api/      # API 路由层
-│       ├── models/   # 数据模型层
-│       └── services/ # 业务逻辑层
-├── docs/             # 文档与截图
-└── docker-compose.yml
-```
-
----
-
 ## 路线图
 
 - [x] 多 Agent 协作写作引擎

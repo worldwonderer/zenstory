@@ -156,31 +156,6 @@ pnpm dev
 
 ---
 
-## Tech Architecture
-
-| Layer | Technologies |
-|-------|-------------|
-| **Frontend** | React 19 &middot; TypeScript &middot; Vite &middot; Tailwind CSS 4 &middot; TanStack Query &middot; Zustand &middot; Tiptap |
-| **Backend** | FastAPI &middot; SQLModel &middot; Alembic &middot; JWT &middot; ChromaDB |
-| **AI Agent** | Multi-Agent Workflow &middot; RAG Hybrid Search &middot; Token Budget Manager &middot; Context Prioritizer |
-| **Models** | Anthropic Claude &middot; DeepSeek (OpenAI-compatible) |
-| **Infra** | Vercel (frontend) &middot; Railway (backend) &middot; Cloudflare CDN |
-
-```
-zenstory/
-├── apps/
-│   ├── web/          # React frontend (Vite + TypeScript)
-│   └── server/       # FastAPI backend
-│       ├── agent/    # AI Agent system (multi-agent, tools, context, skills)
-│       ├── api/      # API route layer
-│       ├── models/   # Data model layer
-│       └── services/ # Business logic layer
-├── docs/             # Documentation & screenshots
-└── docker-compose.yml
-```
-
----
-
 ## Roadmap
 
 - [x] Multi-Agent collaborative writing engine
