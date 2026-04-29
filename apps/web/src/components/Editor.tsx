@@ -6,11 +6,7 @@
  * - Automatic version creation on file save
  * - Streaming content updates during AI generation
  * - Diff review mode for AI-suggested edits
- * - Virtualized editing for large documents
  * - Material preview and import from reference library
- *
- * The editor automatically selects between SimpleEditor and VirtualizedEditor
- * based on document size for optimal performance.
  *
  * @module components/Editor
  */
@@ -25,9 +21,7 @@ import { ApiError } from "../lib/apiClient";
 import { handleApiError } from "../lib/errorHandler";
 import { toast } from "../lib/toast";
 import { logger } from "../lib/logger";
-import { shouldVirtualize } from "../lib/documentChunker";
 import { SimpleEditor } from "./SimpleEditor";
-import { VirtualizedEditor } from "./VirtualizedEditor";
 import { MaterialPreview } from "./MaterialPreview";
 import { ImportMaterialDialog } from "./ImportMaterialDialog";
 import type { File, FileTreeNode } from "../types";
@@ -651,12 +645,7 @@ const EditorComponent: React.FC<EditorProps> = () => {
     // Check if this file is in diff review mode
     const isInReviewMode = diffReviewState?.isReviewing && diffReviewState.fileId === file.id;
 
-    // Determine if virtualized editor should be used based on document size
-    // Threshold: 10000 words (configurable in documentChunker.ts)
-    // Temporarily disabled — virtualized editor has spacing issues with large docs
-    const useVirtualized = false; // shouldVirtualize(displayContent);
-
-    // Common props for both editors
+    // Common editor props
     const editorProps = {
       fileId: file.id,
       projectId: currentProjectId || undefined,
@@ -679,13 +668,8 @@ const EditorComponent: React.FC<EditorProps> = () => {
       onFinishReview: handleFinishReview,
     };
 
-    // Use VirtualizedEditor for large documents, SimpleEditor for small ones
     return renderWithUpgradeModal(
-      useVirtualized ? (
-        <VirtualizedEditor {...editorProps} />
-      ) : (
-        <SimpleEditor {...editorProps} />
-      )
+      <SimpleEditor {...editorProps} />
     );
   }
 
