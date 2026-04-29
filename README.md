@@ -2,182 +2,182 @@
 
 # ZenStory
 
-**Conversational AI Agent Meets File System — The Commercial-Grade Writing Workbench**
+**对话即创作 — AI Agent 驱动的商业级写作工作台**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/worldwonderer/zenstory?style=social)](https://github.com/worldwonderer/zenstory)
 [![Website](https://img.shields.io/website?url=https%3A%2F%2Fzenstory.ai&label=zenstory.ai)](https://zenstory.ai/)
 
-Not just another AI chatbox — ZenStory's Agent directly operates your file system. From material decomposition to inspiration generation, from outline planning to chapter-by-chapter writing, the entire creative workflow is AI-collaborative.
+不只是 AI 对话框——Agent 直接操作你的文件系统，从素材拆解到灵感激发，从大纲规划到逐章写作，全流程 AI 协作。
 
-**[zenstory.ai](https://zenstory.ai/)** &middot; [Quick Start](#quick-start) &middot; [中文文档](README_CN.md)
+**[zenstory.ai](https://zenstory.ai/)** &middot; [快速开始](#快速开始) &middot; [English](README_EN.md)
 
 </div>
 
 ---
 
-## Why ZenStory?
+## 为什么选择 ZenStory？
 
-Traditional AI writing tools stop at "chat + copy-paste." ZenStory makes the AI Agent a true writing partner — it creates, edits, and organizes files directly in your file tree, understands character settings and world-building constraints, and can even decompose reference materials into reusable creative elements.
+传统的 AI 写作工具停留在"聊天 + 复制粘贴"。ZenStory 让 AI Agent 成为真正的写作伙伴——它直接在文件树上创建、编辑和组织你的创作文件，理解角色设定和世界观约束，甚至能自动拆解参考素材为可复用的创作元素。
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/workspace.png" alt="ZenStory Three-Panel Workspace" width="100%"></td>
+    <td><img src="docs/screenshots/workspace.png" alt="ZenStory 三栏工作台" width="100%"></td>
   </tr>
   <tr>
-    <td align="center"><b>Three-Panel Workspace — File Tree &middot; Editor &middot; AI Chat, everything at your fingertips</b></td>
+    <td align="center"><b>三栏工作台 — 文件树 · 编辑器 · AI 对话，一切触手可及</b></td>
   </tr>
 </table>
 
 ---
 
-## Core Highlights
+## 核心亮点
 
-### Multi-Agent Collaborative Writing Engine
+### 多 Agent 协作写作引擎
 
-Not one AI — a professional writing team. Five specialized agents, each with a clear role:
+不是一个 AI，而是一支专业写作团队。五个专职 Agent 各司其职：
 
-| Agent | Role |
+| Agent | 职责 |
 |-------|------|
-| **Router** | Intent classification, automatic workflow selection |
-| **Planner** | Story structure and chapter pacing |
-| **Hook Designer** | Plot twists, suspense, and climaxes |
-| **Writer** | Content creation with adaptive style |
-| **Quality Reviewer** | Consistency checking and quality assurance |
+| **Router** | 意图识别，自动选择最佳工作流 |
+| **Planner** | 规划故事结构，拆解章节节奏 |
+| **Hook Designer** | 设计情节转折、悬念与高潮 |
+| **Writer** | 专注内容创作，风格自适应 |
+| **Quality Reviewer** | 一致性检查、质量把关 |
 
-Four intelligent workflows — Quick Write, Standard, Full Collaboration, and Hook Focus — the Router automatically assesses task complexity and routes to the optimal path.
+四种智能工作流——快速直写、标准流程、完整协作、转折专攻——Router 自动判断任务复杂度，匹配最优路径。
 
-### Conversation x File System = A New Creative Paradigm
+### 对话 x 文件系统 = 全新创作范式
 
-The AI doesn't stay in the chat box — it directly operates your creative files:
+AI 不只停留在对话框里，它直接操作你的创作文件：
 
-- **File operations in conversation** — "Create a villain character" and the Agent automatically creates a character card with filled-in details
-- **Context-aware** — The AI understands your character relationships and world-building rules, no continuity errors
-- **Diff review mode** — AI changes shown as inline diffs, apply only after your approval — you stay in control
-- **Streaming generation** — Watch the AI write in real-time, intervene and adjust at any moment
+- **对话中完成文件操作** — "帮我创建一个反派角色"，Agent 自动新建角色卡并填充设定
+- **上下文感知** — AI 理解你的角色关系、世界观规则，不会写出"穿帮"的内容
+- **Diff 审阅模式** — AI 修改先展示差异对比，确认后再应用，掌控权始终在你手里
+- **流式生成** — 实时看到 AI 逐字创作的过程，随时介入调整
 
 <table>
   <tr>
-    <td align="center"><b>AI Chat-Driven Creation</b></td>
-    <td align="center"><b>Intelligent File Tree</b></td>
+    <td align="center"><b>AI 对话驱动创作</b></td>
+    <td align="center"><b>智能文件树管理</b></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/ai-chat.png" alt="AI Chat-Driven Creation" width="100%"></td>
-    <td><img src="docs/screenshots/file-tree.png" alt="File Tree Management" width="100%"></td>
+    <td><img src="docs/screenshots/ai-chat.png" alt="AI 对话驱动创作" width="100%"></td>
+    <td><img src="docs/screenshots/file-tree.png" alt="文件树管理" width="100%"></td>
   </tr>
 </table>
 
-### Material Library & Inspiration Engine
+### 素材库 & 灵感引擎
 
-**Material Decomposition** — Upload reference works you admire (novel excerpts, writing guides, style examples) and the AI automatically decomposes them into reusable creative elements: character templates, plot structures, narrative techniques, dialogue styles...
+**素材拆解** — 上传你欣赏的参考作品（小说片段、写作教程、风格范例），AI 自动拆解为可复用的创作元素：角色模板、情节结构、叙事技巧、对话风格……
 
-**Inspiration Generator** — Based on your project context, the AI proactively generates creative inspiration cards to break through writer's block. The richer your materials, the more precise the inspiration.
+**灵感激发** — 基于项目上下文，AI 主动生成创意灵感卡片，打破创作瓶颈。你的素材越丰富，灵感越精准。
 
-**Hybrid Search (RAG)** — Dual-engine keyword + semantic vector search to precisely locate relevant fragments across massive material libraries.
+**混合检索（RAG）** — 关键词 + 向量语义搜索双引擎，精准定位海量素材中的相关片段。
 
-### Skills System & Marketplace
+### 技能系统 & 市场
 
-13+ built-in professional writing skills, ready to use:
+13+ 内置专业写作技能，开箱即用：
 
-| Category | Skills |
-|----------|--------|
-| Writing | Continue Writing &middot; Scene Description &middot; Dialogue Generation &middot; Opening Creation |
-| Plot | Conflict Design &middot; Suspense Design &middot; Reversal Design &middot; Rhythm Control |
-| Style | Immersion Enhancement &middot; Text Polishing |
-| Setup | Character Creation &middot; Outline Generation &middot; World Building |
+| 分类 | 技能 |
+|------|------|
+| 写作 | 继续写作 · 场景描写 · 对话生成 · 开头创作 |
+| 情节 | 冲突设计 · 悬念设计 · 反转设计 · 节奏控制 |
+| 风格 | 沉浸增强 · 文本润色 |
+| 设定 | 角色创建 · 大纲生成 · 世界观构建 |
 
-Support custom skill creation with Markdown format, one-click sharing to the skill marketplace. Community-driven, growing stronger with use.
+支持自定义技能创建，Markdown 格式定义，一键分享到技能市场。社区共建，越用越强。
 
-### Professional Writing Workbench
+### 专业写作工作台
 
-- **Six file types** — Outline, Draft, Script, Character, Lore, Snippet — each with a specialized editing interface
-- **Smart sorting** — Auto-detects Chinese and Arabic chapter numbers ("第一章" / "Chapter 1"), orders accordingly
-- **Version snapshots** — Auto-save on every edit, one-click diff comparison between any two versions, rollback support
-- **Project-level snapshots** — A time machine for your entire project, return to any creative checkpoint
-- **Multi-format export** — One-click export to Word / Markdown / Plain Text, chapters auto-merged in order
-- **Voice input** — Speech-to-text, long-press recording, mobile-friendly
-- **Dark mode** — Eye-friendly writing, follows system preference
-- **Bilingual** — Full i18n support for English and Chinese interfaces
+- **六种文件类型** — 大纲、草稿、剧本、角色、世界观、片段，各类型独立编辑界面
+- **智能排序** — 自动识别中英文章节编号（"第一章" / "Chapter 1"），按顺序排列
+- **版本快照** — 每次编辑自动保存，一键对比任意两个版本的差异，支持回滚
+- **项目级快照** — 整个项目的时光机，随时回到任意创作节点
+- **多格式导出** — 一键导出 Word / Markdown / 纯文本，章节自动按序合并
+- **语音输入** — 语音转文字，长Press 录音，移动端友好
+- **深色模式** — 护眼写作，自动跟随系统偏好
+- **中英双语** — 界面全面国际化支持
 
 <table>
   <tr>
-    <td align="center"><b>Version Comparison & Rollback</b></td>
-    <td align="center"><b>AI Skills Marketplace</b></td>
+    <td align="center"><b>版本对比与回滚</b></td>
+    <td align="center"><b>AI 技能市场</b></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/version-history.png" alt="Version History" width="100%"></td>
-    <td><img src="apps/web/public/docs-images/user-guide/skills.png" alt="Skills Marketplace" width="100%"></td>
+    <td><img src="docs/screenshots/version-history.png" alt="版本历史" width="100%"></td>
+    <td><img src="apps/web/public/docs-images/user-guide/skills.png" alt="技能市场" width="100%"></td>
   </tr>
 </table>
 
 ---
 
-## Quick Start
+## 快速开始
 
-### Prerequisites
+### 环境要求
 
 - Node.js >= 18
 - Python >= 3.12
 - pnpm
 
-### Option 1: Docker Compose (Recommended)
+### 方式一：Docker Compose（推荐）
 
-One API key, one command:
+只需一个 API Key，一行命令启动：
 
 ```bash
 export DEEPSEEK_API_KEY=your-key
 docker compose up -d --build
 ```
 
-Open:
-- Frontend: http://localhost:5173
-- API Docs: http://localhost:8000/docs
+访问：
+- 前端：http://localhost:5173
+- API 文档：http://localhost:8000/docs
 
-> Data persists in Docker volumes. Works with SQLite out of the box.
+> 数据持久化在 Docker volume 中，开箱即用 SQLite。
 
-### Option 2: Local Development
+### 方式二：本地开发
 
 ```bash
-# 1. Backend
+# 1. 后端
 cd apps/server
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # Edit .env to add your API key
+cp .env.example .env          # 编辑 .env 填入 API Key
 python3 main.py
 
-# 2. Frontend (new terminal)
+# 2. 前端（新终端）
 cd apps/web
 pnpm install
 cp .env.example .env.local
 pnpm dev
 ```
 
-> For production deployment (PostgreSQL + Redis), see [docs/docker-compose.md](docs/docker-compose.md).
+> 生产部署（PostgreSQL + Redis）请参考 [docs/docker-compose.md](docs/docker-compose.md)。
 
 ---
 
-## Roadmap
+## 路线图
 
-- [x] Multi-Agent collaborative writing engine
-- [x] Material library with AI decomposition
-- [x] Inspiration engine
-- [x] Skills system & marketplace
-- [x] Version snapshots & diff comparison
-- [x] Voice input
-- [ ] Native mobile app
+- [x] 多 Agent 协作写作引擎
+- [x] 素材库 AI 拆解
+- [x] 灵感引擎
+- [x] 技能系统 & 市场
+- [x] 版本快照 & Diff 对比
+- [x] 语音输入
+- [ ] 移动端原生 App
 
 ---
 
-## Contributing
+## 参与贡献
 
-Contributions are welcome!
+欢迎通过以下方式参与：
 
-- [Report a Bug](https://github.com/worldwonderer/zenstory/issues/new?template=bug_report.md)
-- [Request a Feature](https://github.com/worldwonderer/zenstory/issues/new?template=feature_request.md)
-- Submit a Pull Request
+- [提交 Bug](https://github.com/worldwonderer/zenstory/issues/new?template=bug_report.md)
+- [功能建议](https://github.com/worldwonderer/zenstory/issues/new?template=feature_request.md)
+- 提交 Pull Request
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 了解贡献流程。
 
-## License
+## 许可证
 
 [MIT License](LICENSE) &copy; 2024-2026 ZenStory
