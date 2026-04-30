@@ -1,6 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
 import { TEST_USERS, config } from './config'
-import { TIMEOUTS } from './constants'
 
 const API_BASE = config.apiBaseUrl
 const TEST_EMAIL = TEST_USERS.standard.email
