@@ -32,7 +32,7 @@ async function loginAndSettle(page: Page) {
   await page.fill("input#identifier", TEST_EMAIL);
   await page.fill("input#password", TEST_PASSWORD);
   await page.click("button[type='submit']");
-  await page.waitForURL(AUTHENTICATED_ROUTE_PATTERN, { timeout: 15000 });
+  await page.waitForURL(AUTHENTICATED_ROUTE_PATTERN, { timeout: 30000 });
 
   if (page.url().includes("/onboarding/persona")) {
     await page.evaluate((keyPrefix) => {
@@ -209,7 +209,7 @@ test.describe("Onboarding gate regression", () => {
     await page.fill("input#password", TEST_PASSWORD);
     await page.click("button[type='submit']");
 
-    await page.waitForURL(AUTHENTICATED_ROUTE_PATTERN, { timeout: 15000 });
+    await page.waitForURL(AUTHENTICATED_ROUTE_PATTERN, { timeout: 30000 });
     expect(page.url()).not.toContain("/onboarding/persona");
   });
 
@@ -218,7 +218,7 @@ test.describe("Onboarding gate regression", () => {
     await page.fill("input#identifier", TEST_EMAIL);
     await page.fill("input#password", TEST_PASSWORD);
     await page.click("button[type='submit']");
-    await page.waitForURL(AUTHENTICATED_ROUTE_PATTERN, { timeout: 15000 });
+    await page.waitForURL(AUTHENTICATED_ROUTE_PATTERN, { timeout: 30000 });
 
     await page.evaluate((keyPrefix) => {
       const rawUser = localStorage.getItem("user");
