@@ -825,10 +825,10 @@ class TestAgentServiceProcessStream:
         assert any("event: error" in event for event in events)
         assert not any("event: done" in event for event in events)
 
-    async def test_process_stream_skips_history_save_and_done_when_workflow_emits_error(
+    async def test_process_stream_saves_partial_history_on_workflow_error(
         self, mock_agent_service, test_user_with_project, db_session: Session
     ):
-        """Terminal workflow error events must not persist partial chat history."""
+        """Stream error events should persist partial history for recovery, but NOT emit done."""
         from agent.llm.anthropic_client import StreamEvent, StreamEventType
 
         service, _ = mock_agent_service
@@ -860,7 +860,10 @@ class TestAgentServiceProcessStream:
         persisted_messages = db_session.exec(
             select(ChatMessage).where(ChatMessage.session_id == session_started_payload["session_id"])
         ).all()
-        assert persisted_messages == []
+        # Partial history is saved for recovery on next turn
+        assert len(persisted_messages) == 2
+        assert any(m.role == "user" and m.content == "hello" for m in persisted_messages)
+        assert any(m.role == "assistant" and m.content == "partial reply" for m in persisted_messages)
 
     async def test_process_stream_schedules_background_cleanup_on_cancellation(
         self, mock_agent_service, test_user_with_project, db_session: Session

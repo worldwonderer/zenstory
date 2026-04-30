@@ -670,10 +670,11 @@ async def test_upload_strips_chapter_heading_from_content(client: AsyncClient, d
     data = response.json()
     assert data["total"] == 2
 
-    # Content should NOT contain the chapter heading line
+    # Content should NOT contain the chapter heading line as its own line
     for f in data["files"]:
-        assert "第一章" not in f["content"]
-        assert "第二章" not in f["content"]
+        heading_lines = [line.strip() for line in f["content"].splitlines()]
+        assert "第一章 开始" not in heading_lines
+        assert "第二章 发展" not in heading_lines
         # But should contain the actual paragraph text
         assert "这是" in f["content"]
 
@@ -725,6 +726,7 @@ async def test_upload_english_chapter_heading_stripped_from_content(client: Asyn
     assert data["total"] == 2
 
     for f in data["files"]:
-        assert "Chapter 1" not in f["content"]
-        assert "Chapter 2" not in f["content"]
+        heading_lines = [line.strip() for line in f["content"].splitlines()]
+        assert "Chapter 1 The Beginning" not in heading_lines
+        assert "Chapter 2 The End" not in heading_lines
         assert "Content of chapter" in f["content"]

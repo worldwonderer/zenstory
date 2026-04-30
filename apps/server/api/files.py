@@ -212,6 +212,17 @@ def _build_upload_snippets(base_title: str, content: str) -> list[tuple[str, str
     return snippets or [(normalized_base_title, content)]
 
 
+def _strip_heading_line(content: str, heading: str) -> str:
+    """Remove the heading line from content, preserving body indentation."""
+    lines = content.split("\n")
+    if lines and lines[0].strip() == heading:
+        remaining = lines[1:]
+        while remaining and not remaining[0].strip():
+            remaining.pop(0)
+        return "\n".join(remaining)
+    return content
+
+
 def _build_draft_chapters(base_title: str, content: str) -> list[tuple[str, str]]:
     """
     Build draft chapter list from uploaded novel text.
@@ -223,21 +234,18 @@ def _build_draft_chapters(base_title: str, content: str) -> list[tuple[str, str]
     chapter_segments = _extract_chapter_segments(content)
 
     if not chapter_segments:
+        # Even without splitting, strip a lone chapter heading if present
+        lines = content.splitlines()
+        if lines and lines[0].strip() and CHAPTER_HEADING_PATTERN.match(lines[0].strip()):
+            heading = lines[0].strip()
+            body = _strip_heading_line(content, heading)
+            return [(normalized, body)]
         return [(normalized, content)]
 
     chapters = []
     for heading, chapter_content in chapter_segments:
         label = _truncate_title(heading or "章节", 60)
-        # Strip the heading line from content since it's already the title
-        content_lines = chapter_content.split("\n")
-        if content_lines and content_lines[0].strip() == heading:
-            remaining = content_lines[1:]
-            # Remove leading blank lines but preserve indentation of first text line
-            while remaining and not remaining[0].strip():
-                remaining.pop(0)
-            body = "\n".join(remaining)
-        else:
-            body = chapter_content
+        body = _strip_heading_line(chapter_content, heading)
         chapters.append((f"{normalized} - {label}", body))
 
     return chapters

@@ -150,18 +150,11 @@ jobs:
       if: always()
       run: |
         cd apps/web
-        REPORT_DIR=""
         if [ -d ./blob-report ] && [ -n "$(find ./blob-report -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-          REPORT_DIR="./blob-report"
-        elif [ -d ./blob-reports ] && [ -n "$(find ./blob-reports -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-          REPORT_DIR="./blob-reports"
-        fi
-
-        if [ -z "$REPORT_DIR" ]; then
+          pnpm exec playwright merge-reports --reporter html ./blob-report
+        else
           echo "No shard reports generated for this job, skipping merge."
-          exit 0
         fi
-        pnpm exec playwright merge-reports --reporter html "$REPORT_DIR"
 
     - name: Upload Playwright report
       uses: actions/upload-artifact@v4

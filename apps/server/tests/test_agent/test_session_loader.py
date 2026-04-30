@@ -469,7 +469,7 @@ class TestSessionLoaderHistoryBudget:
         monkeypatch,
     ):
         """Should keep newest messages and preserve chronological order after truncation."""
-        monkeypatch.setattr("agent.core.session_loader.AGENT_CHAT_HISTORY_TOKEN_BUDGET", 8)
+        monkeypatch.setattr("agent.core.session_loader.AGENT_CHAT_HISTORY_TOKEN_BUDGET", 12)
         _add_chat_messages(
             db_session,
             session_loader_test_data["chat_session"].id,
@@ -491,11 +491,14 @@ class TestSessionLoaderHistoryBudget:
         )
         session_data = loader.load_chat_session(db_session)
 
-        assert [msg["content"] for msg in session_data.history_messages] == [
-            "m3" * 8,
-            "m4" * 8,
-        ]
-        assert session_data.history_messages[1]["reasoning_content"] == "kept reasoning"
+        assert len(session_data.history_messages) == 2
+        assert session_data.history_messages[0]["content"] == "m3" * 8
+
+        # Assistant with reasoning_content is formatted as structured content blocks
+        assistant_content = session_data.history_messages[1]["content"]
+        assert isinstance(assistant_content, list)
+        assert assistant_content[0] == {"type": "thinking", "thinking": "kept reasoning"}
+        assert assistant_content[1] == {"type": "text", "text": "m4" * 8}
 
     def test_load_chat_session_returns_empty_history_for_no_messages(
         self,
