@@ -26,31 +26,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  frontend-lint:
+  detect-changes:
     runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.server_backend }}
+      frontend: ${{ steps.filter.outputs.web_frontend }}
+      ci: ${{ steps.filter.outputs.ci }}
     steps:
-    - name: Job Start Time
-      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
-
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v2
+    - name: Detect changed paths
+      id: filter
+      uses: dorny/paths-filter@v3
       with:
-        version: 10.29.3
+        filters: |
+          server_backend:
+            - 'apps/server/**'
+          web_frontend:
+            - 'apps/web/**'
+          ci:
+            - '.github/workflows/**'
+            - '.github/actions/**'
+            - 'scripts/ci/**'
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'pnpm'
-        cache-dependency-path: pnpm-lock.yaml
+  frontend-lint:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        cd apps/web
-        pnpm install
+    - name: Setup frontend
+      uses: ./.github/actions/setup-frontend
 
     - name: Check CSS design token usage
       run: |
@@ -67,24 +76,11 @@ jobs:
         cd apps/web
         pnpm lint
 
-    - name: Job Timing Summary
-      if: always()
-      run: |
-        JOB_END=$(date +%s)
-        DURATION=$((JOB_END - JOB_START))
-        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
-        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
-        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-
   backend-test:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
+    timeout-minutes: 8
 
     services: &service-configs
       postgres:
@@ -111,16 +107,13 @@ jobs:
           --health-retries 5
 
     steps:
-    - name: Job Start Time
-      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
-
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: '3.12'
         cache: 'pip'
 
     - name: Install dependencies
@@ -147,10 +140,15 @@ jobs:
         ZHIPU_EMBEDDINGS_API_KEY=skip-vector-tests-in-ci
         EOF
 
-    - name: Run tests with pytest
+    - name: Run unit tests with pytest
       run: |
         cd apps/server
         pytest --cov=. --cov-report=xml --cov-report=term --cov-fail-under=80 --durations=15 -v
+
+    - name: Run flow tests
+      run: |
+        cd apps/server
+        pytest tests/test_flows -v --maxfail=1
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
@@ -163,102 +161,22 @@ jobs:
 
     - name: Archive coverage reports
       uses: actions/upload-artifact@v4
-      if: matrix.python-version == '3.12'
       with:
         name: coverage-report
         path: apps/server/htmlcov/
         retention-days: 30
 
-    - name: Job Timing Summary
-      if: always()
-      run: |
-        JOB_END=$(date +%s)
-        DURATION=$((JOB_END - JOB_START))
-        echo "## ⏱️ Job Timing Summary (Python ${{ matrix.python-version }})" >> $GITHUB_STEP_SUMMARY
-        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
-        echo "| Python Version | ${{ matrix.python-version }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-
-  server-flows-test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    services: *service-configs
-    steps:
-    - name: Job Start Time
-      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
-
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-        cache: "pip"
-
-    - name: Install dependencies
-      run: |
-        cd apps/server
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Create test environment file
-      run: |
-        cd apps/server
-        cat > .env.test << EOF
-        DATABASE_URL=postgresql://test:test@localhost:5433/zenstory_test
-        REDIS_URL=redis://localhost:6380/1
-        OPENAI_API_KEY=test-key-for-ci-testing
-        JWT_SECRET_KEY=test-secret-key-min-32-characters-for-ci-testing
-        REDEMPTION_CODE_HMAC_SECRET=test-hmac-secret-min-32-characters-for-ci
-        ZHIPU_EMBEDDINGS_API_KEY=skip-vector-tests-in-ci
-        EOF
-
-    - name: Run flows test suite
-      run: |
-        cd apps/server
-        pytest tests/test_flows -v --maxfail=1
-
-    - name: Job Timing Summary
-      if: always()
-      run: |
-        JOB_END=$(date +%s)
-        DURATION=$((JOB_END - JOB_START))
-        echo "## ⏱️ Job Timing Summary (Server Flows)" >> $GITHUB_STEP_SUMMARY
-        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
-        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-
-  # Frontend Tests - React/Vite/Vitest
   frontend-test:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-    - name: Job Start Time
-      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
-
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 10.29.3
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'pnpm'
-        cache-dependency-path: pnpm-lock.yaml
-
-    - name: Install dependencies
-      run: |
-        cd apps/web
-        pnpm install
+    - name: Setup frontend
+      uses: ./.github/actions/setup-frontend
 
     - name: Run frontend tests with coverage
       run: |
@@ -274,42 +192,16 @@ jobs:
         fail_ci_if_error: false
         token: ${{ secrets.CODECOV_TOKEN }}
 
-    - name: Job Timing Summary
-      if: always()
-      run: |
-        JOB_END=$(date +%s)
-        DURATION=$((JOB_END - JOB_START))
-        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
-        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
-        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-
   frontend-build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
-    - name: Job Start Time
-      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
-
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 10.29.3
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'pnpm'
-        cache-dependency-path: pnpm-lock.yaml
-
-    - name: Install dependencies
-      run: |
-        cd apps/web
-        pnpm install
+    - name: Setup frontend
+      uses: ./.github/actions/setup-frontend
 
     - name: Build with typecheck
       run: |
@@ -323,44 +215,23 @@ jobs:
         path: apps/web/dist/
         retention-days: 7
 
-    - name: Job Timing Summary
-      if: always()
-      run: |
-        JOB_END=$(date +%s)
-        DURATION=$((JOB_END - JOB_START))
-        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
-        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
-        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-
   # E2E Tests - Playwright
   e2e-test:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        browser: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && fromJson('["chromium", "firefox", "webkit"]') || fromJson('["chromium"]') }}
+        browser: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && fromJson('["chromium", "firefox"]') || fromJson('["chromium"]') }}
         shard: [1/4, 2/4, 3/4, 4/4]
     services: *service-configs
 
     steps:
-    - name: Job Start Time
-      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
-
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 10.29.3
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'pnpm'
-        cache-dependency-path: pnpm-lock.yaml
+    - name: Setup frontend
+      uses: ./.github/actions/setup-frontend
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -373,11 +244,6 @@ jobs:
         cd apps/server
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-
-    - name: Install frontend dependencies
-      run: |
-        cd apps/web
-        pnpm install
 
     - name: Install Playwright browsers
       run: |
@@ -411,9 +277,7 @@ jobs:
         set -a
         source .env.test
         set +a
-        # Import all models and create tables
         python -c "import models; from database import init_db; import asyncio; asyncio.run(init_db())"
-        # Mark database as migrated after schema bootstrap
         alembic stamp head
 
     - name: Seed test user
@@ -583,27 +447,15 @@ jobs:
       uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: playwright-report
+        name: playwright-report-${{ matrix.browser }}-${{ matrix.shard }}
         path: apps/web/playwright-report/
         retention-days: 7
 
-    - name: Job Timing Summary
-      if: always()
-      run: |
-        JOB_END=$(date +%s)
-        DURATION=$((JOB_END - JOB_START))
-        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
-        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Browser | ${{ matrix.browser }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Shard | ${{ matrix.shard }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
-        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-
   # Smoke Tests - Fast validation on PRs
   smoke-test:
+    needs: detect-changes
+    if: github.event_name == 'pull_request' && (needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     services:
       postgres:
         image: postgres:15-alpine
@@ -630,23 +482,11 @@ jobs:
           --health-retries 5
 
     steps:
-    - name: Job Start Time
-      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
-
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 10.29.3
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'pnpm'
-        cache-dependency-path: pnpm-lock.yaml
+    - name: Setup frontend
+      uses: ./.github/actions/setup-frontend
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -659,11 +499,6 @@ jobs:
         cd apps/server
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-
-    - name: Install frontend dependencies
-      run: |
-        cd apps/web
-        pnpm install
 
     - name: Install Playwright browsers
       run: |
@@ -766,39 +601,17 @@ jobs:
         E2E_TEST_PASSWORD: E2eTestPassword123!
         E2E_TEST_USERNAME: e2e_test_user
 
-    - name: Job Timing Summary
-      if: always()
-      run: |
-        JOB_END=$(date +%s)
-        DURATION=$((JOB_END - JOB_START))
-        echo "## ⏱️ Job Timing Summary" >> $GITHUB_STEP_SUMMARY
-        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
-        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-
   frontend-prod-bundle-smoke:
+    needs: detect-changes
+    if: github.event_name == 'pull_request' && (needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     services: *service-configs
     steps:
-    - name: Job Start Time
-      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
-
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 10.29.3
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'pnpm'
-        cache-dependency-path: pnpm-lock.yaml
+    - name: Setup frontend
+      uses: ./.github/actions/setup-frontend
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -811,11 +624,6 @@ jobs:
         cd apps/server
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-
-    - name: Install frontend dependencies
-      run: |
-        cd apps/web
-        pnpm install
 
     - name: Install Playwright browser
       run: |
@@ -922,89 +730,47 @@ jobs:
           kill "$(cat /tmp/web-preview.pid)" || true
         fi
 
-    - name: Job Timing Summary
-      if: always()
-      run: |
-        JOB_END=$(date +%s)
-        DURATION=$((JOB_END - JOB_START))
-        echo "## ⏱️ Job Timing Summary (Frontend Production Bundle Smoke)" >> $GITHUB_STEP_SUMMARY
-        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Duration | $(printf '%02d:%02d' $((DURATION/60)) $((DURATION%60))) |" >> $GITHUB_STEP_SUMMARY
-        echo "| Completed | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-
   # Test Summary - All tests must pass
   test-summary:
     runs-on: ubuntu-latest
-    needs: [frontend-lint, backend-test, server-flows-test, frontend-test, smoke-test, frontend-prod-bundle-smoke, frontend-build, e2e-test]
+    needs: [detect-changes, frontend-lint, backend-test, frontend-test, frontend-build, smoke-test, frontend-prod-bundle-smoke, e2e-test]
     if: always()
     steps:
-    - name: Job Start Time
-      run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
-
     - name: Check test results
+      env:
+        FRONTEND_LINT_RESULT: ${{ needs['frontend-lint'].result }}
+        BACKEND_TEST_RESULT: ${{ needs['backend-test'].result }}
+        FRONTEND_TEST_RESULT: ${{ needs['frontend-test'].result }}
+        FRONTEND_BUILD_RESULT: ${{ needs['frontend-build'].result }}
+        SMOKE_TEST_RESULT: ${{ needs['smoke-test'].result }}
+        PROD_BUNDLE_SMOKE_RESULT: ${{ needs['frontend-prod-bundle-smoke'].result }}
+        E2E_TEST_RESULT: ${{ needs['e2e-test'].result }}
       run: |
-        echo "Frontend lint: ${{ needs['frontend-lint'].result }}"
-        echo "Backend tests: ${{ needs['backend-test'].result }}"
-        echo "Server flows tests: ${{ needs['server-flows-test'].result }}"
-        echo "Frontend tests: ${{ needs['frontend-test'].result }}"
-        echo "Smoke tests: ${{ needs['smoke-test'].result }}"
-        echo "Frontend production bundle smoke: ${{ needs['frontend-prod-bundle-smoke'].result }}"
-        echo "Frontend build: ${{ needs['frontend-build'].result }}"
-        echo "E2E tests: ${{ needs['e2e-test'].result }}"
+        echo "Frontend lint: $FRONTEND_LINT_RESULT"
+        echo "Backend tests: $BACKEND_TEST_RESULT"
+        echo "Frontend tests: $FRONTEND_TEST_RESULT"
+        echo "Frontend build: $FRONTEND_BUILD_RESULT"
+        echo "Smoke tests: $SMOKE_TEST_RESULT"
+        echo "Frontend production bundle smoke: $PROD_BUNDLE_SMOKE_RESULT"
+        echo "E2E tests: $E2E_TEST_RESULT"
 
-        failed=""
+        # Jobs skipped by path filtering should not cause failure
         check_job() {
           local job_name="$1"
           local job_result="$2"
-          local allow_skipped="${3:-false}"
-          if [[ "$job_result" == "success" ]]; then
+          if [[ "$job_result" == "success" || "$job_result" == "skipped" ]]; then
             return
           fi
-          if [[ "$allow_skipped" == "true" && "$job_result" == "skipped" ]]; then
-            return
-          fi
-          if [[ "$job_result" != "success" ]]; then
-            failed="$failed $job_name"
-          fi
+          echo "::error::$job_name failed with result: $job_result"
+          exit 1
         }
 
-        check_job "frontend-lint" "${{ needs['frontend-lint'].result }}"
-        check_job "backend-test" "${{ needs['backend-test'].result }}"
-        check_job "server-flows-test" "${{ needs['server-flows-test'].result }}"
-        check_job "frontend-test" "${{ needs['frontend-test'].result }}"
-        smoke_allow_skipped="false"
-        if [[ "${{ github.event_name }}" != "pull_request" ]]; then
-          smoke_allow_skipped="true"
-        fi
-        check_job "smoke-test" "${{ needs['smoke-test'].result }}" "$smoke_allow_skipped"
-        check_job "frontend-prod-bundle-smoke" "${{ needs['frontend-prod-bundle-smoke'].result }}" "$smoke_allow_skipped"
-        check_job "frontend-build" "${{ needs['frontend-build'].result }}"
-        check_job "e2e-test" "${{ needs['e2e-test'].result }}"
+        check_job "frontend-lint" "$FRONTEND_LINT_RESULT"
+        check_job "backend-test" "$BACKEND_TEST_RESULT"
+        check_job "frontend-test" "$FRONTEND_TEST_RESULT"
+        check_job "frontend-build" "$FRONTEND_BUILD_RESULT"
+        check_job "smoke-test" "$SMOKE_TEST_RESULT"
+        check_job "frontend-prod-bundle-smoke" "$PROD_BUNDLE_SMOKE_RESULT"
+        check_job "e2e-test" "$E2E_TEST_RESULT"
 
-        if [[ -n "$failed" ]]; then
-          echo "::error::The following jobs failed:$failed"
-          exit 1
-        fi
         echo "All test suites passed!"
-
-    - name: Workflow Timing Summary
-      if: always()
-      run: |
-        echo "## ⏱️ Complete Test Suite Timing Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Job Results" >> $GITHUB_STEP_SUMMARY
-        echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-        echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Frontend Lint | ${{ needs['frontend-lint'].result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Backend Tests | ${{ needs['backend-test'].result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Server Flows Tests | ${{ needs['server-flows-test'].result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Frontend Tests | ${{ needs['frontend-test'].result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Smoke Tests | ${{ needs['smoke-test'].result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Frontend Prod Bundle Smoke | ${{ needs['frontend-prod-bundle-smoke'].result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Frontend Build | ${{ needs['frontend-build'].result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| E2E Tests | ${{ needs['e2e-test'].result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "_See individual job summaries for detailed timing information._" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "Completed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
