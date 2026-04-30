@@ -5,7 +5,7 @@ Tests the Anthropic SDK client wrapper.
 """
 
 import os
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import httpx
 import pytest
@@ -148,20 +148,22 @@ class TestAnthropicClientInit:
         """Test initialization with API key in config."""
         from agent.llm.anthropic_client import AnthropicClient, AnthropicConfig
 
-        with patch("agent.llm.anthropic_client.AsyncAnthropic") as mock_anthropic:
-            config = AnthropicConfig(api_key="test-api-key")
-            AnthropicClient(config)
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("agent.llm.anthropic_client.AsyncAnthropic") as mock_anthropic:
+                config = AnthropicConfig(api_key="test-api-key")
+                AnthropicClient(config)
 
-            mock_anthropic.assert_called_once_with(
-                api_key="test-api-key",
-                base_url=None,
-            )
+                mock_anthropic.assert_called_once_with(
+                    api_key="test-api-key",
+                    base_url=None,
+                    http_client=ANY,
+                )
 
     def test_init_with_env_api_key(self):
         """Test initialization with API key from environment."""
         from agent.llm.anthropic_client import AnthropicClient, AnthropicConfig
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "env-api-key"}):
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "env-api-key"}, clear=True):
             with patch("agent.llm.anthropic_client.AsyncAnthropic") as mock_anthropic:
                 config = AnthropicConfig()
                 AnthropicClient(config)
@@ -169,6 +171,7 @@ class TestAnthropicClientInit:
                 mock_anthropic.assert_called_once_with(
                     api_key="env-api-key",
                     base_url=None,
+                    http_client=ANY,
                 )
 
     def test_init_without_api_key_raises(self):
@@ -197,6 +200,7 @@ class TestAnthropicClientInit:
                 mock_anthropic.assert_called_once_with(
                     api_key="env-api-key",
                     base_url="https://anthropic-proxy.example.com",
+                    http_client=ANY,
                 )
 
 
@@ -251,7 +255,7 @@ class TestAnthropicClientSingleton:
 
         seen_calls: list[tuple[str | None, str | None]] = []
 
-        def _fake_async_anthropic(*, api_key=None, base_url=None):
+        def _fake_async_anthropic(*, api_key=None, base_url=None, **kwargs):
             seen_calls.append((api_key, base_url))
             return _FakeAnthropic([_FakeStreamCM(stream=_FakeStream(events=[], final_message=None))])
 
@@ -300,7 +304,7 @@ class TestAnthropicClientStreamMessageRetry:
         ]
         fake_client = _FakeAnthropic(cms)
 
-        def _fake_async_anthropic(*, api_key=None, base_url=None):
+        def _fake_async_anthropic(*, api_key=None, base_url=None, **kwargs):
             return fake_client
 
         with patch("agent.llm.anthropic_client.AsyncAnthropic", _fake_async_anthropic):
@@ -332,7 +336,7 @@ class TestAnthropicClientStreamMessageRetry:
         ]
         fake_client = _FakeAnthropic(cms)
 
-        def _fake_async_anthropic(*, api_key=None, base_url=None):
+        def _fake_async_anthropic(*, api_key=None, base_url=None, **kwargs):
             return fake_client
 
         async def _fake_process_stream_event(self, raw_event, current_tool_use):
@@ -379,7 +383,7 @@ class TestAnthropicClientStreamMessageRetry:
         ]
         fake_client = _FakeAnthropic(cms)
 
-        def _fake_async_anthropic(*, api_key=None, base_url=None):
+        def _fake_async_anthropic(*, api_key=None, base_url=None, **kwargs):
             return fake_client
 
         with patch("agent.llm.anthropic_client.AsyncAnthropic", _fake_async_anthropic):
@@ -422,7 +426,7 @@ class TestAnthropicClientStreamMessageRetry:
         ]
         fake_client = _FakeAnthropic(cms)
 
-        def _fake_async_anthropic(*, api_key=None, base_url=None):
+        def _fake_async_anthropic(*, api_key=None, base_url=None, **kwargs):
             return fake_client
 
         with patch("agent.llm.anthropic_client.AsyncAnthropic", _fake_async_anthropic):
@@ -465,7 +469,7 @@ class TestAnthropicClientStreamMessageRetry:
         ]
         fake_client = _FakeAnthropic(cms)
 
-        def _fake_async_anthropic(*, api_key=None, base_url=None):
+        def _fake_async_anthropic(*, api_key=None, base_url=None, **kwargs):
             return fake_client
 
         with patch("agent.llm.anthropic_client.AsyncAnthropic", _fake_async_anthropic):
@@ -502,7 +506,7 @@ class TestAnthropicClientStreamMessageRetry:
         ])
         seen_base_urls: list[str | None] = []
 
-        def _fake_async_anthropic(*, api_key=None, base_url=None):
+        def _fake_async_anthropic(*, api_key=None, base_url=None, **kwargs):
             seen_base_urls.append(base_url)
             if base_url == "https://api.z.ai/api/anthropic":
                 return primary_client
@@ -548,7 +552,7 @@ class TestAnthropicClientStreamMessageRetry:
         ]
         fake_client = _FakeAnthropic(cms)
 
-        def _fake_async_anthropic(*, api_key=None, base_url=None):
+        def _fake_async_anthropic(*, api_key=None, base_url=None, **kwargs):
             return fake_client
 
         async def _fake_process_stream_event(self, raw_event, current_tool_use):

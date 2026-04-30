@@ -1,0 +1,14 @@
+---
+extends: default
+rules:
+  line-length:
+    max: 300
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+  indentation: disable
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1
