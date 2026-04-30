@@ -82,6 +82,7 @@ async function loginAndNavigateToProject(page: Page) {
 }
 
 test.describe('Chat input compact layout', () => {
+  test.skip(!!process.env.CI, 'Skill creation requires real API keys — skip in CI')
   test('selected skills stay compact and do not squeeze the input area', async ({ page }) => {
     await page.addInitScript(
       ([storageKey, storageValue]) => localStorage.setItem(storageKey, storageValue),
