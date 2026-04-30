@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
@@ -68,7 +69,7 @@ vi.mock('../../contexts/AuthContext', () => ({
       email: 'test@example.com',
       avatar_url: null,
       is_superuser: false,
-      created_at: '2026-04-06T00:00:00Z',
+      created_at: '2026-04-28T00:00:00Z',
     },
     logout: mockLogout,
   }),
@@ -117,34 +118,41 @@ vi.mock('../../lib/onboardingPersona', () => ({
 
 import Dashboard from '../Dashboard';
 
-const renderDashboard = () => render(
-  <MemoryRouter initialEntries={['/dashboard']}>
-    <Routes>
-      <Route path="/dashboard" element={<Dashboard />}>
-        <Route
-          index
-          element={(
-            <div>
-              <div data-tour-id="dashboard-project-type-tabs">
-                <button type="button">长篇小说</button>
-                <button type="button">短篇小说</button>
-                <button type="button">短剧剧本</button>
-              </div>
-              <textarea data-tour-id="dashboard-inspiration-input" />
-              <button type="button" data-tour-id="dashboard-create-project">开始创作</button>
-              <div data-tour-id="dashboard-inspirations-section">
-                <div data-tour-id="dashboard-inspirations-entry">
-                  <div data-tour-id="dashboard-inspirations-heading">精选灵感</div>
-                  <button type="button" data-tour-id="dashboard-inspirations-link">查看全部</button>
+const renderDashboard = () => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <Routes>
+          <Route path="/dashboard" element={<Dashboard />}>
+            <Route
+              index
+              element={(
+                <div>
+                  <div data-tour-id="dashboard-project-type-tabs">
+                    <button type="button">长篇小说</button>
+                    <button type="button">短篇小说</button>
+                    <button type="button">短剧剧本</button>
+                  </div>
+                  <textarea data-tour-id="dashboard-inspiration-input" />
+                  <button type="button" data-tour-id="dashboard-create-project">开始创作</button>
+                  <div data-tour-id="dashboard-inspirations-section">
+                    <div data-tour-id="dashboard-inspirations-entry">
+                      <div data-tour-id="dashboard-inspirations-heading">精选灵感</div>
+                      <button type="button" data-tour-id="dashboard-inspirations-link">查看全部</button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          )}
-        />
-      </Route>
-    </Routes>
-  </MemoryRouter>,
-);
+              )}
+            />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
+  )
+}
 
 describe('Dashboard coachmark tour', () => {
   beforeEach(() => {

@@ -28,16 +28,16 @@ from .referral_service import (
     get_user_referral_stats,
     validate_invite_code,
 )
+from .upgrade_funnel_event_service import (
+    UpgradeFunnelEventService,
+    upgrade_funnel_event_service,
+)
 from .verification_service import (
     generate_verification_code,
     get_code_ttl,
     get_remaining_cooldown,
     send_verification_code,
     verify_code,
-)
-from .upgrade_funnel_event_service import (
-    UpgradeFunnelEventService,
-    upgrade_funnel_event_service,
 )
 
 __all__ = [

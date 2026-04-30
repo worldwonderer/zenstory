@@ -774,7 +774,7 @@ async def get_writing_context(
             asyncio.to_thread(_assemble_in_thread),
             timeout=10.0,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log_with_context(
             logger,
             logging.WARNING,
@@ -786,7 +786,7 @@ async def get_writing_context(
             error_code=ErrorCode.INTERNAL_ERROR,
             status_code=504,
             detail="Writing context assembly timed out",
-        )
+        ) from None
 
     # Build response with content_snippet cap
     items = []

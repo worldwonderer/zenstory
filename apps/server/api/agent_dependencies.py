@@ -1,7 +1,5 @@
 """Shared authentication dependencies for Agent API routers."""
 
-from typing import TypeAlias
-
 from fastapi import Depends
 from sqlmodel import Session
 
@@ -14,7 +12,7 @@ from services.agent_auth_service import (
     verify_scope,
 )
 
-AgentAuthContext: TypeAlias = tuple[Session, str, AgentApiKey]
+type AgentAuthContext = tuple[Session, str, AgentApiKey]
 
 
 def require_scope(required_scope: str):

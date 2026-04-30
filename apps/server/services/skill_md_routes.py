@@ -5,7 +5,6 @@ Extracts endpoint metadata from FastAPI routers to auto-generate
 accurate API documentation, eliminating manual sync drift.
 """
 
-import logging
 from dataclasses import dataclass, field
 
 from fastapi.routing import APIRoute

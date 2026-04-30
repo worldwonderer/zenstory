@@ -128,9 +128,7 @@ def _memory_set(key: str, payload: str, ttl_seconds: int) -> None:
 
     # Best-effort pruning to avoid unbounded growth when running without Redis.
     should_prune = False
-    if len(_memory_cache) > _MEMORY_MAX_ENTRIES:
-        should_prune = True
-    elif (now - _memory_last_prune_monotonic) >= _MEMORY_PRUNE_INTERVAL_SECONDS:
+    if len(_memory_cache) > _MEMORY_MAX_ENTRIES or (now - _memory_last_prune_monotonic) >= _MEMORY_PRUNE_INTERVAL_SECONDS:
         should_prune = True
 
     if not should_prune:

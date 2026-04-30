@@ -506,7 +506,7 @@ def _ensure_draft_folder(session: Session, project_id: str) -> File:
         if not existing or existing.is_deleted:
             raise
         if existing.project_id != project_id or existing.file_type != "folder":
-            raise APIException(error_code=ErrorCode.VALIDATION_ERROR, status_code=400)
+            raise APIException(error_code=ErrorCode.VALIDATION_ERROR, status_code=400) from None
         return existing
 
     session.refresh(draft_folder)
