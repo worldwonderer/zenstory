@@ -53,6 +53,7 @@ runs:
         E2E_TEST_ADMIN_EMAIL=test-admin@zenstory.test
         E2E_TEST_ADMIN_PASSWORD=TestAdmin123!
         E2E_TEST_ADMIN_USERNAME=test_admin
+        AUTH_RATE_LIMIT_ENABLED=false
         EOF
 
     - name: Run database migrations
@@ -102,6 +103,7 @@ runs:
         E2E_TEST_ADMIN_EMAIL: test-admin@zenstory.test
         E2E_TEST_ADMIN_PASSWORD: TestAdmin123!
         E2E_TEST_ADMIN_USERNAME: test_admin
+        AUTH_RATE_LIMIT_ENABLED: false
       run: |
         cd ${{ inputs.app-dir }}
         set -a
