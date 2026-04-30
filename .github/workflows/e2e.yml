@@ -1,0 +1,197 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily (nightly)
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'default'
+        type: choice
+        options:
+          - full
+          - default
+          - nightly
+          - release
+          - smoke
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.server_backend }}
+      frontend: ${{ steps.filter.outputs.web_frontend }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Detect changed paths
+      id: filter
+      uses: dorny/paths-filter@v3
+      with:
+        filters: |
+          server_backend:
+            - 'apps/server/**'
+          web_frontend:
+            - 'apps/web/**'
+          ci:
+            - '.github/workflows/**'
+            - '.github/actions/**'
+            - 'scripts/ci/**'
+
+  e2e-test:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        browser: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.suite == 'full')) && fromJson('["chromium", "firefox"]') || fromJson('["chromium"]') }}
+        shard: ${{ (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.suite == 'full' || github.event.inputs.suite == 'default'))) && fromJson('["1/2", "2/2"]') || fromJson('["1/1"]') }}
+    services: &service-configs
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: zenstory_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup frontend
+      uses: ./.github/actions/setup-frontend
+
+    - name: Setup backend
+      uses: ./.github/actions/setup-backend
+
+    - name: Install Playwright browsers
+      run: |
+        cd apps/web
+        pnpm exec playwright install --with-deps ${{ matrix.browser }}
+
+    - name: Run E2E tests
+      run: |
+        cd apps/web
+        if [ "${{ github.event_name }}" == "push" ]; then
+          pnpm exec playwright test --project=${{ matrix.browser }} --shard=${{ matrix.shard }}
+        elif [ "${{ github.event_name }}" == "schedule" ] || [ "${{ github.event.inputs.suite }}" == "nightly" ]; then
+          if [ "${{ matrix.shard }}" != "1/2" ] || [ "${{ matrix.browser }}" != "chromium" ]; then
+            echo "Nightly lane runs on chromium shard 1/2 only for extended tests. Skipping browser=${{ matrix.browser }} shard=${{ matrix.shard }}."
+            exit 0
+          fi
+          E2E_ENABLE_VERSION_HISTORY_E2E=true \
+          E2E_ENABLE_SKILL_CREATE_E2E=true \
+          pnpm exec playwright test e2e/versions.spec.ts e2e/skills.spec.ts e2e/skills-flow.spec.ts --project=${{ matrix.browser }}
+        elif [ "${{ github.event.inputs.suite }}" == "full" ]; then
+          E2E_ENABLE_VERSION_HISTORY_E2E=true \
+          E2E_ENABLE_SKILL_CREATE_E2E=true \
+          E2E_ENABLE_VOICE_INPUT_E2E=true \
+          E2E_ENABLE_VISUAL_REGRESSION_E2E=true \
+          E2E_ENABLE_PERFORMANCE_E2E=true \
+          E2E_ENABLE_LARGE_DOCUMENT_E2E=true \
+          pnpm exec playwright test --project=${{ matrix.browser }} --shard=${{ matrix.shard }}
+        elif [ "${{ github.event.inputs.suite }}" == "release" ]; then
+          if [ "${{ matrix.shard }}" != "1/1" ]; then
+            echo "Release lane runs on single shard only. Skipping shard ${{ matrix.shard }}."
+            exit 0
+          fi
+          E2E_ENABLE_VISUAL_REGRESSION_E2E=true \
+          E2E_ENABLE_PERFORMANCE_E2E=true \
+          E2E_ENABLE_LARGE_DOCUMENT_E2E=true \
+          E2E_ENABLE_CONCURRENT_E2E=true \
+          pnpm exec playwright test e2e/visual.spec.ts e2e/performance.spec.ts e2e/large-document.spec.ts e2e/concurrent.spec.ts --project=${{ matrix.browser }}
+        elif [ "${{ github.event.inputs.suite }}" == "smoke" ]; then
+          pnpm exec playwright test e2e/smoke.spec.ts --project=${{ matrix.browser }}
+        else
+          pnpm exec playwright test --project=${{ matrix.browser }} --shard=${{ matrix.shard }}
+        fi
+      env:
+        CI: true
+        PLAYWRIGHT_EXTERNAL_BACKEND: "1"
+        E2E_ENABLE_CHAT_E2E: "true"
+        E2E_ENABLE_CONCURRENT_E2E: "true"
+        E2E_ENABLE_DEEP_LINK_E2E: "true"
+        E2E_ENABLE_ERROR_RECOVERY_E2E: "true"
+        E2E_ENABLE_EXPORT_E2E: "true"
+        E2E_ENABLE_FILES_E2E: "true"
+        E2E_ENABLE_FILE_SEARCH_E2E: "true"
+        E2E_ENABLE_MOCKED_CHAT: "true"
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+
+    - name: Merge Shard Reports
+      if: always()
+      run: |
+        cd apps/web
+        REPORT_DIR=""
+        if [ -d ./blob-report ] && [ -n "$(find ./blob-report -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+          REPORT_DIR="./blob-report"
+        elif [ -d ./blob-reports ] && [ -n "$(find ./blob-reports -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+          REPORT_DIR="./blob-reports"
+        fi
+
+        if [ -z "$REPORT_DIR" ]; then
+          echo "No shard reports generated for this job, skipping merge."
+          exit 0
+        fi
+        pnpm exec playwright merge-reports --reporter html "$REPORT_DIR"
+
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: playwright-report-${{ matrix.browser }}-${{ matrix.shard }}
+        path: apps/web/playwright-report/
+        retention-days: 7
+
+  e2e-summary:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, e2e-test]
+    if: always()
+    steps:
+    - name: Check E2E results
+      env:
+        E2E_TEST_RESULT: ${{ needs['e2e-test'].result }}
+      run: |
+        echo "E2E tests: $E2E_TEST_RESULT"
+
+        check_job() {
+          local job_name="$1"
+          local job_result="$2"
+          if [[ "$job_result" == "success" || "$job_result" == "skipped" ]]; then
+            return
+          fi
+          echo "::error::$job_name failed with result: $job_result"
+          exit 1
+        }
+
+        check_job "e2e-test" "$E2E_TEST_RESULT"
+
+        echo "All E2E checks passed!"

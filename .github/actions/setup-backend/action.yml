@@ -1,0 +1,127 @@
+name: 'Setup Backend'
+description: 'Setup Python, install deps, create env, migrate DB, seed user, start backend, health check'
+
+inputs:
+  app-dir:
+    description: 'Backend app directory relative to repo root'
+    required: false
+    default: 'apps/server'
+  backend-log-path:
+    description: 'Path for backend server log output'
+    required: false
+    default: '/tmp/zenstory-backend.log'
+  postgres-port:
+    description: 'PostgreSQL port (mapped from service container)'
+    required: false
+    default: '5433'
+  redis-port:
+    description: 'Redis port (mapped from service container)'
+    required: false
+    default: '6380'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install backend dependencies
+      shell: bash
+      run: |
+        cd ${{ inputs.app-dir }}
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Create test environment file
+      shell: bash
+      run: |
+        cd ${{ inputs.app-dir }}
+        cat > .env.test << EOF
+        DATABASE_URL=postgresql://test:test@localhost:${{ inputs.postgres-port }}/zenstory_test
+        REDIS_URL=redis://localhost:${{ inputs.redis-port }}/1
+        OPENAI_API_KEY=test-key-for-ci-testing
+        JWT_SECRET_KEY=test-secret-key-min-32-characters-for-ci-testing
+        REDEMPTION_CODE_HMAC_SECRET=test-hmac-secret-min-32-characters-for-ci
+        ZHIPU_EMBEDDINGS_API_KEY=skip-vector-tests-in-ci
+        ANTHROPIC_API_KEY=test-key-for-ci-testing
+        E2E_TEST_EMAIL=e2e-test@zenstory.local
+        E2E_TEST_PASSWORD=E2eTestPassword123!
+        E2E_TEST_USERNAME=e2e_test_user
+        E2E_TEST_ADMIN_EMAIL=test-admin@zenstory.test
+        E2E_TEST_ADMIN_PASSWORD=TestAdmin123!
+        E2E_TEST_ADMIN_USERNAME=test_admin
+        EOF
+
+    - name: Run database migrations
+      shell: bash
+      env:
+        DATABASE_URL: postgresql://test:test@localhost:${{ inputs.postgres-port }}/zenstory_test
+        REDIS_URL: redis://localhost:${{ inputs.redis-port }}/1
+      run: |
+        cd ${{ inputs.app-dir }}
+        cp .env.test .env
+        set -a
+        source .env.test
+        set +a
+        python -c "import models; from database import init_db; import asyncio; asyncio.run(init_db())"
+        alembic stamp head
+
+    - name: Seed test user
+      shell: bash
+      env:
+        DATABASE_URL: postgresql://test:test@localhost:${{ inputs.postgres-port }}/zenstory_test
+        REDIS_URL: redis://localhost:${{ inputs.redis-port }}/1
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+        E2E_TEST_ADMIN_EMAIL: test-admin@zenstory.test
+        E2E_TEST_ADMIN_PASSWORD: TestAdmin123!
+        E2E_TEST_ADMIN_USERNAME: test_admin
+      run: |
+        cd ${{ inputs.app-dir }}
+        set -a
+        source .env.test
+        set +a
+        python scripts/seed_test_user.py
+
+    - name: Start backend server
+      shell: bash
+      env:
+        PYTHONUNBUFFERED: 1
+        DATABASE_URL: postgresql://test:test@localhost:${{ inputs.postgres-port }}/zenstory_test
+        REDIS_URL: redis://localhost:${{ inputs.redis-port }}/1
+        OPENAI_API_KEY: test-key-for-ci-testing
+        JWT_SECRET_KEY: test-secret-key-min-32-characters-for-ci-testing
+        ANTHROPIC_API_KEY: test-key-for-ci-testing
+        E2E_TEST_EMAIL: e2e-test@zenstory.local
+        E2E_TEST_PASSWORD: E2eTestPassword123!
+        E2E_TEST_USERNAME: e2e_test_user
+        E2E_TEST_ADMIN_EMAIL: test-admin@zenstory.test
+        E2E_TEST_ADMIN_PASSWORD: TestAdmin123!
+        E2E_TEST_ADMIN_USERNAME: test_admin
+      run: |
+        cd ${{ inputs.app-dir }}
+        set -a
+        source .env.test
+        set +a
+        nohup python main.py > ${{ inputs.backend-log-path }} 2>&1 &
+        echo $! > /tmp/zenstory-backend.pid
+        sleep 5
+
+    - name: Wait for backend health check
+      shell: bash
+      run: |
+        for i in {1..30}; do
+          if curl -f http://localhost:8000/health 2>/dev/null; then
+            echo "Backend is healthy!"
+            exit 0
+          fi
+          echo "Waiting for backend... ($i/30)"
+          sleep 1
+        done
+        echo "Backend failed to start"
+        cat ${{ inputs.backend-log-path }} || true
+        exit 1

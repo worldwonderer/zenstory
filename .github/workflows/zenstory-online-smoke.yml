@@ -13,9 +13,6 @@ on:
         type: string
   schedule:
     - cron: "30 */6 * * *"
-  workflow_run:
-    workflows: ["Tests"]
-    types: [completed]
 
 concurrency:
   group: zenstory-online-smoke-${{ github.ref }}
@@ -25,11 +22,7 @@ jobs:
   smoke:
     name: zenstory deployed smoke
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name != 'workflow_run' ||
-      (
-        github.event.workflow_run.head_branch == 'main'
-      )
+    if: always()
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
