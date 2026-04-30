@@ -59,7 +59,7 @@ test.describe('Admin route guard', () => {
   test('redirects unauthenticated users from admin pages to login', async ({ page }) => {
     await page.goto('/admin/users');
     await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
-    await expect(page.getByRole('button', { name: /登录|log in|login/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /登录|log in|login/i }).first()).toBeVisible();
   });
 
   test('shows permission denied page for authenticated non-admin user', async ({ page }) => {

@@ -154,7 +154,7 @@ test.describe('Security - XSS Protection', () => {
     const editor = page.locator('textarea').first();
     const xssPayload = '<script>alert("XSS")</script>这是测试内容';
     await editor.fill(xssPayload);
-    await page.waitForLoadState('networkidle', { timeout: 10000 });
+    await page.waitForTimeout(500);
 
     // Verify script tag is escaped (visible as text, not executed)
     const contentCheck = await page.evaluate(() => {
@@ -542,7 +542,7 @@ test.describe('Security - Input Validation', () => {
     // Test various special characters
     const specialChars = '< > & " \' / \\ \n \t \r {{ }} <% %>';
     await editor.fill(specialChars);
-    await page.waitForLoadState('networkidle', { timeout: 10000 });
+    await page.waitForTimeout(500);
 
     // Reload and verify content persisted safely
     await page.reload();
