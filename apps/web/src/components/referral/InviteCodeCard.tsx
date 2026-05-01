@@ -69,7 +69,7 @@ export const InviteCodeCard: React.FC<InviteCodeCardProps> = ({ inviteCode }) =>
   const usageText = `${inviteCode.current_uses}/${inviteCode.max_uses}`;
   const isExhausted = inviteCode.current_uses >= inviteCode.max_uses;
   const isExpired = inviteCode.expires_at
-    ? new Date(inviteCode.expires_at).getTime() <= Date.now()
+    ? new Date(inviteCode.expires_at).getTime() <= new Date().getTime()
     : false;
   const expiryText = formatExpiry(inviteCode.expires_at);
 

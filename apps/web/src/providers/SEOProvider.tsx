@@ -42,7 +42,7 @@ export function SEOProvider({ children }: { children: React.ReactNode }) {
 
     // 如果没有配置，使用默认配置
     if (!config) {
-      config = { ...defaultSEOConfig[langKey] } || { ...defaultSEOConfig.en };
+      config = defaultSEOConfig[langKey] ?? defaultSEOConfig.en;
     }
 
     // eslint-disable-next-line react-hooks/set-state-in-effect

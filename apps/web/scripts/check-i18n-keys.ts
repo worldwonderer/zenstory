@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const LOCALES_DIR = join(__dirname, '../public/locales');
-const LOCALES = ['zh', 'en'];
+const _LOCALES = ['zh', 'en'];
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
