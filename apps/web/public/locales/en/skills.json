@@ -40,6 +40,8 @@
   "collapse": "Collapse instructions",
   "batch": {
     "selectAll": "Select All",
+    "selected_one": "1 selected",
+    "selected_other": "{{count}} selected",
     "selected": "{{count}} selected",
     "clearSelection": "Clear",
     "delete": "Delete",

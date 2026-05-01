@@ -4,6 +4,7 @@ import { LazyMarkdown } from "../../components/LazyMarkdown";
 import { Check, X, Zap, ChevronDown, ChevronUp, AlertTriangle, RefreshCw } from "lucide-react";
 import { AdminPageState } from "../../components/admin";
 import { adminApi, type PendingSkill } from "../../lib/adminApi";
+import { getLocaleCode } from "../../lib/i18n-helpers";
 import { logger } from "../../lib/logger";
 
 export default function SkillReviewPage() {
@@ -186,7 +187,7 @@ function SkillReviewCard({
               {skill.category}
             </span>
             <span className="text-xs text-[hsl(var(--text-tertiary))]">
-              {new Date(skill.created_at).toLocaleDateString()}
+              {new Date(skill.created_at).toLocaleDateString(getLocaleCode())}
             </span>
           </div>
         </div>

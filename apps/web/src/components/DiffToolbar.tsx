@@ -97,21 +97,21 @@ export const DiffToolbar = ({
             </div>
             <div className="min-w-0">
               <span className="text-sm font-medium leading-tight text-[hsl(var(--text-primary))]">
-                {t('editor:reviewMode', '按段落审阅 AI 更改')}
+                {t('editor:reviewMode')}
               </span>
               <span className="mt-0.5 block text-[10px] leading-tight text-[hsl(var(--text-secondary))]">
-                {t('editor:reviewModeHint', '右侧按段落块逐条审阅，待审默认采纳，支持快捷键。')}
+                {t('editor:reviewModeHint')}
               </span>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-[hsl(var(--bg-primary)/0.88)] px-2.5 py-1 text-xs text-[hsl(var(--text-secondary))] ring-1 ring-[hsl(var(--border-primary)/0.3)]">
-              {t('editor:paragraphBlocksCount', '共 {{count}} 个段落块', { count: totalCount })}
+              {t('editor:paragraphBlocksCount', { count: totalCount })}
             </span>
             {pendingCount > 0 && (
               <span className="rounded-full bg-[hsl(var(--warning)/0.14)] px-2.5 py-1 text-xs font-medium text-[hsl(var(--warning))]">
-                {t('editor:pendingCount', '待审 {{count}}', { count: pendingCount })}
+                {t('editor:pendingCount', { count: pendingCount })}
               </span>
             )}
             {acceptedCount > 0 && (
@@ -137,10 +137,10 @@ export const DiffToolbar = ({
             className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition-all
             text-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.1)]
             disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-            title={t('editor:acceptAll', 'Accept all')}
+            title={t('editor:acceptAll')}
           >
             <CheckCheck size={14} />
-            <span className="hidden sm:inline">{t('editor:acceptAll', '全部接受')}</span>
+            <span className="hidden sm:inline">{t('editor:acceptAll')}</span>
           </button>
 
           {/* Reject All button */}
@@ -151,10 +151,10 @@ export const DiffToolbar = ({
             className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition-all
             text-[hsl(var(--error))] hover:bg-[hsl(var(--error)/0.1)]
             disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-            title={t('editor:rejectAll', 'Reject all')}
+            title={t('editor:rejectAll')}
           >
             <XCircle size={14} />
-            <span className="hidden sm:inline">{t('editor:rejectAll', '全部拒绝')}</span>
+            <span className="hidden sm:inline">{t('editor:rejectAll')}</span>
           </button>
 
           {/* Divider */}
@@ -170,18 +170,18 @@ export const DiffToolbar = ({
                 : 'bg-[hsl(var(--bg-primary)/0.88)] text-[hsl(var(--text-primary))] ring-1 ring-[hsl(var(--border-primary)/0.3)] hover:bg-[hsl(var(--bg-primary))]'
             }`}
             title={allReviewed
-              ? t('editor:applyChanges', 'Apply changes')
-              : t('editor:finishReview', 'Finish review')}
+              ? t('editor:applyChanges')
+              : t('editor:finishReview')}
           >
             {allReviewed ? (
               <>
                 <Sparkles size={14} />
-                {t('editor:applyChanges', '应用更改')}
+                {t('editor:applyChanges')}
               </>
             ) : (
               <>
                 <Check size={14} />
-                {t('editor:finishReview', '完成审阅')}
+                {t('editor:finishReview')}
               </>
             )}
           </button>

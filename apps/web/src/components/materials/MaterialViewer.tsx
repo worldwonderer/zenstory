@@ -2,6 +2,7 @@ import React from 'react';
 import type { MaterialTreeNode } from '../../types';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 import { useTranslation } from 'react-i18next';
+import i18n from '../../lib/i18n';
 
 interface MaterialViewerProps {
   node: MaterialTreeNode | null;
@@ -42,7 +43,7 @@ export const MaterialViewer = ({ node }: MaterialViewerProps) => {
           </div>
           {node.id && (
             <p className="text-sm text-[hsl(var(--text-secondary))]">
-              ID: {node.id}
+              {t('detail.idLabel')}: {node.id}
             </p>
           )}
         </div>
@@ -243,7 +244,7 @@ const CharacterContent = ({ node, t }: { node: MaterialTreeNode; t: (key: string
         {alias && (
           <InfoCard
             label={t('detail.aliases')}
-            value={Array.isArray(alias) ? alias.join('、') : alias}
+            value={Array.isArray(alias) ? alias.join(i18n.language === 'zh' ? '、' : ', ') : alias}
             isMobile={isMobile}
           />
         )}

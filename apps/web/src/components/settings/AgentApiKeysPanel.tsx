@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Key, Plus, Copy, Trash2, RefreshCw, Shield, ShieldOff, Check, Zap, X } from 'lucide-react';
 import { agentApiKeysApi } from '../../lib/api';
+import { getLocaleCode } from '../../lib/i18n-helpers';
 import type {
   AgentApiKey,
   CreateAgentApiKeyRequest,
@@ -26,7 +27,7 @@ const copyToClipboard = async (text: string): Promise<boolean> => {
 
 const formatDate = (dateStr?: string) => {
   if (!dateStr) return '-';
-  return new Date(dateStr).toLocaleDateString();
+  return new Date(dateStr).toLocaleDateString(getLocaleCode());
 };
 
 function ScopeBadge({ label }: { scope: string; label: string }) {

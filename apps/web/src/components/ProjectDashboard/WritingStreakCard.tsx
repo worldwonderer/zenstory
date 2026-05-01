@@ -4,6 +4,7 @@ import { Calendar, Clock, TrendingUp } from 'lucide-react';
 import type { ProjectDashboardStatsResponse, WritingStreakResponse } from '../../types/writingStats';
 import { Card } from '../ui/Card';
 import { IconWrapper } from '../ui/IconWrapper';
+import { getLocaleCode } from '../../lib/i18n-helpers';
 
 interface WritingStreakCardProps {
   /** Dashboard statistics data */
@@ -192,7 +193,7 @@ export function WritingStreakCard({
         {streakData.last_writing_date && (
           <div className="flex items-center justify-between text-xs text-[hsl(var(--text-secondary))] pt-2 border-t border-[hsl(var(--border-color))]">
             <span>{t('statistics.lastWritingDate')}</span>
-            <span>{new Date(streakData.last_writing_date).toLocaleDateString()}</span>
+            <span>{new Date(streakData.last_writing_date).toLocaleDateString(getLocaleCode())}</span>
           </div>
         )}
       </div>

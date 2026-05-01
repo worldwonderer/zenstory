@@ -14,6 +14,7 @@ import type { ProjectDashboardStatsResponse, AIUsagePeriodSummary } from '../../
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { IconWrapper } from '../ui/IconWrapper';
+import { getLocaleCode } from '../../lib/i18n-helpers';
 
 interface AiUsageCardProps {
   /** Dashboard statistics data */
@@ -55,7 +56,7 @@ function getRelativeTime(dateStr: string | null, t: (key: string, opts?: Record<
   if (diffHours < 24) return t('time.hoursAgo', { count: diffHours });
   if (diffDays === 1) return t('time.yesterday');
   if (diffDays < 7) return t('time.daysAgo', { count: diffDays });
-  return date.toLocaleDateString();
+  return date.toLocaleDateString(getLocaleCode());
 }
 
 /**

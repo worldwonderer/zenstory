@@ -1164,7 +1164,7 @@ export const MessageList = React.memo(
                     <div className={`inline-flex items-center rounded-lg bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.2)] ${isMobile ? 'gap-1 px-2 py-0.5' : 'gap-1.5 px-2.5 py-1'}`}>
                       <Bot size={12} className="text-[hsl(var(--success))]" />
                       <span className="text-xs text-[hsl(var(--success))]">
-                        {t('workflow.workflowLabel', { ns: 'chat' })}: {workflowPlan || 'single'}
+                        {t('workflow.workflowLabel', { ns: 'chat' })}: {workflowPlan || t('workflow.singleMode', { ns: 'chat' })}
                       </span>
                       {workflowAgents && workflowAgents.length > 0 && (
                         <span className="text-xs text-[hsl(var(--text-secondary))] truncate max-w-[150px]">

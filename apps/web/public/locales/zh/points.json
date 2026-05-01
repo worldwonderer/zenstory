@@ -54,12 +54,15 @@
     "minutesAgo": "{{count}} 分钟前",
     "minutesAgo_one": "{{count}} 分钟前",
     "minutesAgo_other": "{{count}} 分钟前",
+    "minutesAgo_plural": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
     "hoursAgo_one": "{{count}} 小时前",
     "hoursAgo_other": "{{count}} 小时前",
+    "hoursAgo_plural": "{{count}} 小时前",
     "yesterday": "昨天",
     "daysAgo": "{{count}} 天前",
     "daysAgo_one": "{{count}} 天前",
-    "daysAgo_other": "{{count}} 天前"
+    "daysAgo_other": "{{count}} 天前",
+    "daysAgo_plural": "{{count}} 天前"
   }
 }

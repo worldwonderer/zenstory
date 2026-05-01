@@ -12,6 +12,7 @@
     "build:typecheck": "tsc -b && vite build",
     "lint:tokens": "node ../../scripts/quality/check-web-css-token-vars.mjs",
     "lint:i18n-keys": "node ../../scripts/quality/check-i18n-defaultvalue-keys.mjs",
+    "lint:i18n": "npx tsx scripts/check-i18n-keys.ts",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "NODE_OPTIONS='--max-old-space-size=8192' vitest",

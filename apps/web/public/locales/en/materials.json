@@ -25,6 +25,8 @@
   "noMaterials": "No materials uploaded yet",
   "uploadFirst": "Upload your first novel",
   "chapters": "chapters",
+  "chapters_one": "chapter",
+  "chapters_other": "chapters",
   "uploadError": "Upload failed, please try again",
   "status": {
     "pending": "Pending",
@@ -60,14 +62,15 @@
   },
   "detail": {
     "chapters": "Chapters",
-    "chapter": "Chapter {number}",
+    "chapter": "Chapter {{number}}",
+    "chapterRange": "Chapter {{range}}",
     "characters": "Characters",
-    "stories": "Stories",
-    "worldview": "World View",
-    "cheat": "Golden Fingers",
+    "stories": "Plotlines",
+    "worldview": "Worldbuilding",
+    "cheat": "Cheat Ability",
     "plots": "Plots",
     "storylines": "Story Lines",
-    "goldenfingers": "Golden Fingers",
+    "goldenfingers": "Cheat Abilities",
     "timeline": "Timeline",
     "chapterNumber": "Chapter",
     "wordCount": "Words",
@@ -99,7 +102,7 @@
     "worldStructure": "World Structure",
     "keyFactions": "Key Factions",
     "specialRules": "Special Rules",
-    "worldviewItem": "World View Settings",
+    "worldviewItem": "Worldbuilding Settings",
     "timelineEvent": "Timeline Event",
     "eventDescription": "Event Description",
     "relatedChapter": "Related Chapter",
@@ -113,7 +116,9 @@
     "territory": "Territory",
     "coreObjective": "Core Objective",
     "coreConflict": "Core Conflict",
-    "chapterLabel": "Chapter"
+    "chapterLabel": "Chapter",
+    "idLabel": "ID",
+    "timeLabel": "Time"
   },
   "quota": {
     "uploadTitle": "Upgrade to unlock the Materials Library",
@@ -128,6 +133,8 @@
     "loadListFailed": "Failed to load materials list",
     "importSuccess": "Material imported successfully",
     "importFailed": "Import failed, please try again",
+    "batchImportSuccess_one": "Successfully imported 1 item",
+    "batchImportSuccess_other": "Successfully imported {{count}} items",
     "batchImportSuccess": "Successfully imported {{count}} items",
     "batchImportFailed": "Batch import failed, please try again"
   }

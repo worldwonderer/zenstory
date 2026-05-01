@@ -41,6 +41,8 @@
   "batch": {
     "selectAll": "全选",
     "selected": "已选择 {{count}} 项",
+    "selected_one": "已选择 {{count}} 项",
+    "selected_other": "已选择 {{count}} 项",
     "clearSelection": "取消选择",
     "delete": "批量删除",
     "deleteConfirmTitle": "批量删除技能",

@@ -681,8 +681,8 @@ export const SimpleEditor = ({
     const diff = Math.floor((now.getTime() - date.getTime()) / 1000);
 
     if (diff < 10) return t('editor:savedJustNow');
-    if (diff < 60) return `${diff}${t('editor:secondsAgo')}`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}${t('editor:minutesAgo')}`;
+    if (diff < 60) return t('editor:secondsAgo', { count: diff });
+    if (diff < 3600) return t('editor:minutesAgo', { count: Math.floor(diff / 60) });
     return date.toLocaleTimeString(getLocaleCode(), { hour: "2-digit", minute: "2-digit" });
   };
 

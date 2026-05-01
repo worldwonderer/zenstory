@@ -2,6 +2,7 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Users, Gift, Coins, Loader2, Award } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { getLocaleCode } from '@/lib/i18n-helpers';
 import { referralApi } from '@/lib/referralApi';
 import type { UserReward } from '@/types/referral';
 
@@ -139,7 +140,7 @@ export const ReferralStats: React.FC = () => {
                   </div>
                 </div>
                 <div className="text-xs text-[hsl(var(--text-secondary))] ml-3 shrink-0">
-                  {new Date(reward.created_at).toLocaleDateString('zh-CN')}
+                  {new Date(reward.created_at).toLocaleDateString(getLocaleCode())}
                 </div>
               </div>
             ))}

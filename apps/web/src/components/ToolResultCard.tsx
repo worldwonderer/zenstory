@@ -19,6 +19,7 @@
 
 import React, { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import i18n from '../lib/i18n';
 import {
   CheckCircle2,
   AlertCircle,
@@ -43,6 +44,11 @@ import {
   Settings,
 } from 'lucide-react';
 import type { Conflict, AgentResponse } from '../types';
+
+const quote = (text: string) => {
+  const isZh = i18n.language === 'zh';
+  return `${isZh ? '「' : '"'}${text}${isZh ? '」' : '"'}`;
+};
 
 /**
  * Props for the ToolResultCard component.
@@ -412,7 +418,7 @@ const ToolResultCardComponent: React.FC<ToolResultCardProps> = ({
     let description = '';
     if (toolName === 'create_file' && title) {
       const typeInfo = fileType ? getFileTypeInfo(fileType, t) : null;
-      description = typeInfo ? `${typeInfo.label}「${title}」` : `「${title}」`;
+      description = typeInfo ? `${typeInfo.label}${quote(title)}` : quote(title);
     } else if (toolName === 'query_files') {
       const queryFileType = args.file_type as string | undefined;
       if (queryFileType) {
@@ -424,7 +430,7 @@ const ToolResultCardComponent: React.FC<ToolResultCardProps> = ({
     } else if (toolName === 'update_project') {
       description = t('chat:tool.update_status_description');
     } else if (title) {
-      description = `「${title}」`;
+      description = quote(title);
     }
     
     return (
@@ -514,7 +520,7 @@ const ToolResultCardComponent: React.FC<ToolResultCardProps> = ({
               {t('chat:tool.updated')}
             </span>
             <span className="text-sm text-[hsl(var(--text-primary))]">
-              「{title}」
+              {quote(title)}
             </span>
             {contentLength > 0 && (
               <span className="text-xs text-[hsl(var(--text-secondary))] ml-auto">

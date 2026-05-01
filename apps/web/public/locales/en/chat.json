@@ -55,14 +55,6 @@
       "Start writing Chapter 1"
     ]
   },
-  "suggestions": {
-    "outline": "Write an outline",
-    "character": "Create character sheet",
-    "continue": "Continue writing",
-    "setting": "Add world building",
-    "expand": "Expand plot",
-    "polish": "Polish prose"
-  },
   "actions": {
     "confirm": "Confirm",
     "reject": "Reject",
@@ -132,6 +124,7 @@
       "manual": "I'll manually edit first. Please give me the smallest viable edit suggestions."
     },
     "workflowLabel": "Workflow",
+    "singleMode": "Single",
     "waitingForReply": "Waiting for your reply",
     "needsConfirmation": "AI needs your confirmation to continue",
     "taskCompleted": "Task completed",
@@ -159,6 +152,8 @@
     "deleted": "File deleted",
     "no_files_found": "No relevant files found",
     "files_found": "Found {{count}} files",
+    "files_found_one": "Found 1 file",
+    "files_found_other": "Found {{count}} files",
     "status_updated": "Project status updated",
     "undo_edit": "Undo this edit",
     "completed": "{{label}} completed",
@@ -166,6 +161,8 @@
     "query_files_default": "Find files",
     "update_status_description": "Record project information",
     "edit_success": "Edit successful",
+    "edits_summary_one": "{{editsApplied}} edit · {{size}}",
+    "edits_summary_other": "{{editsApplied}} edits · {{size}}",
     "edits_summary": "{{editsApplied}} edits · {{size}}",
     "complete_suffix": " completed",
     "view_edit_details": "View change details ({{count}})",
@@ -215,6 +212,8 @@
     "generated_result": "Generated Result",
     "used_snippets": "Referenced Materials",
     "reasoning_label": "AI Reasoning Process:",
+    "conflicts_detected_one": "1 potential issue detected",
+    "conflicts_detected_other": "{{count}} potential issues detected",
     "conflicts_detected": "{{count}} potential issues detected"
   },
   "voice": {

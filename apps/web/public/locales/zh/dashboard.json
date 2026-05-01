@@ -245,6 +245,7 @@
   },
   "inspiration": {
     "title": "创作灵感",
+    "dashboardPlaceholder": "输入一句核心冲突，或点下方真实小说灵感开始",
     "novelPlaceholder": "输入你的创作灵感，比如：一个穿越到古代的程序员发现自己会写代码的能力变成了修仙功法...",
     "shortPlaceholder": "描述你的故事创意，比如：深夜的便利店里，一位老人每晚都来买同一款已停产的糖果...",
     "screenplayPlaceholder": "说说你想拍什么，比如：霸道总裁在相亲角被大妈嫌弃收入太低，决定隐藏身份追求真爱...",

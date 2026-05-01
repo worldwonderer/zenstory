@@ -245,6 +245,7 @@
   },
   "inspiration": {
     "title": "Creative Inspiration",
+    "dashboardPlaceholder": "Describe a strong conflict, or tap a real-story inspiration below",
     "novelPlaceholder": "Enter your creative idea, e.g., A programmer travels to ancient times and discovers his coding ability becomes cultivation...",
     "shortPlaceholder": "Describe your story idea, e.g., Late night at a convenience store, an old man comes every night to buy the same discontinued candy...",
     "screenplayPlaceholder": "Tell me what you want to shoot, e.g., A CEO gets rejected at a matchmaking corner for low income, decides to hide identity to pursue true love...",

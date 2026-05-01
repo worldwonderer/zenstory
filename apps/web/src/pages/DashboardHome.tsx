@@ -53,8 +53,6 @@ export default function DashboardHome() {
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
   const showDeleteAction = isMobile || isTablet;
-  const normalizedLanguage = (i18n.resolvedLanguage || i18n.language || "zh").toLowerCase();
-  const isEnglish = normalizedLanguage.startsWith("en");
   const userId = user?.id ?? null;
   const showTodayActionPlanEntry = dashboardOnboardingFlags.todayActionPlanEnabled;
   const showFirstDayActivationGuide = dashboardOnboardingFlags.firstDayActivationGuideEnabled;
@@ -564,21 +562,11 @@ export default function DashboardHome() {
 
   const dashboardInspirations = useDashboardInspirations(activeTab, 2, inspirationRefreshSeed);
   const hasDraftIdea = inspiration.trim().length > 0;
-  const resolvedInspirationPlaceholder = isEnglish
-    ? "Describe a strong conflict, or tap a real-story inspiration below"
-    : "输入一句核心冲突，或点下方真实小说灵感开始";
+  const resolvedInspirationPlaceholder = t('dashboard:inspiration.dashboardPlaceholder');
   const featuredSkeletonCount = isMobile ? 1 : isTablet ? 2 : 3;
-  const featuredEmptyTitle = t('inspirations.emptyTitle', {
-    defaultValue: isEnglish ? 'No featured inspirations yet' : '暂无精选灵感',
-  });
-  const featuredEmptyHint = t('inspirations.emptyHint', {
-    defaultValue: isEnglish
-      ? 'No picks right now. Explore the inspiration library for ideas.'
-      : '当前暂无精选灵感，去灵感库发现更多创作灵感。',
-  });
-  const featuredEmptyCta = t('inspirations.emptyCta', {
-    defaultValue: isEnglish ? 'Browse Inspiration Library' : '查看灵感库',
-  });
+  const featuredEmptyTitle = t('inspirations.emptyTitle');
+  const featuredEmptyHint = t('inspirations.emptyHint');
+  const featuredEmptyCta = t('inspirations.emptyCta');
 
   return (
     <>

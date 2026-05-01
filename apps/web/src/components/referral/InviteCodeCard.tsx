@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { InviteCode } from '@/types/referral';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
+import { getLocaleCode } from '../../lib/i18n-helpers';
 
 interface InviteCodeCardProps {
   inviteCode: InviteCode;
@@ -62,7 +63,7 @@ export const InviteCodeCard: React.FC<InviteCodeCardProps> = ({ inviteCode }) =>
     if (diffDays <= 0) return t('card.expired');
     if (diffDays === 1) return t('card.expiresTomorrow');
     if (diffDays <= 7) return t('card.expiresInDays', { count: diffDays });
-    return date.toLocaleDateString();
+    return date.toLocaleDateString(getLocaleCode());
   };
 
   const usageText = `${inviteCode.current_uses}/${inviteCode.max_uses}`;

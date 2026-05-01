@@ -89,19 +89,10 @@ function DashboardContent() {
   const userPanelRef = useRef<HTMLDivElement | null>(null);
   const userPanelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const currentLanguage: 'zh' | 'en' = normalizeLocale(i18n.language || i18n.resolvedLanguage);
-  const isEnglish = currentLanguage === 'en';
-  const quickSettingsLabel = t('dashboard:userPanel.quickSettings', {
-    defaultValue: isEnglish ? 'Quick Settings' : '快捷设置',
-  });
-  const openUserPanelLabel = t('dashboard:userPanel.openPanel', {
-    defaultValue: isEnglish ? 'Open User Panel' : '打开用户面板',
-  });
-  const adminPanelLabel = t('dashboard:userPanel.adminPanel', {
-    defaultValue: isEnglish ? 'Admin Panel' : '管理后台',
-  });
-  const replayTourLabel = t('dashboard:userPanel.replayTour', {
-    defaultValue: isEnglish ? 'Replay guide' : '重新查看新手引导',
-  });
+  const quickSettingsLabel = t('dashboard:userPanel.quickSettings');
+  const openUserPanelLabel = t('dashboard:userPanel.openPanel');
+  const adminPanelLabel = t('dashboard:userPanel.adminPanel');
+  const replayTourLabel = t('dashboard:userPanel.replayTour');
   const { restartTour, isEnabled: isTourEnabled } = useProductTour();
 
   // Determine active nav based on current route

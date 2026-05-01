@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../lib/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { LazyMarkdown } from "../components/LazyMarkdown";
 import {
@@ -220,7 +221,7 @@ export default function MaterialDetailPage() {
       children: chapters.map((chapter) => ({
         id: chapter.id,
         type: "chapter",
-        title: chapter.title || `${t("materials:detail.chapter")} ${chapter.chapter_number}`,
+        title: chapter.title || t("materials:detail.chapter", { number: chapter.chapter_number }),
         data: chapter,
       })),
     });
@@ -688,7 +689,7 @@ function ContentDetail({ item }: ContentDetailProps) {
           {character.aliases && character.aliases.length > 0 && (
             <div className="flex items-center gap-2 text-sm text-[hsl(var(--text-secondary))]">
               <span>{t("materials:detail.aliases")}:</span>
-              <span>{character.aliases.join(", ")}</span>
+              <span>{character.aliases.join(i18n.language === 'zh' ? '、' : ', ')}</span>
             </div>
           )}
         </div>
@@ -704,7 +705,7 @@ function ContentDetail({ item }: ContentDetailProps) {
 
         {character.first_appearance_chapter && (
           <div className="text-sm text-[hsl(var(--text-secondary))]">
-            {t("materials:detail.firstAppearance")}: {t("materials:detail.chapter")} {character.first_appearance_chapter}
+            {t("materials:detail.firstAppearance")}: {t("materials:detail.chapter", { number: character.first_appearance_chapter })}
           </div>
         )}
       </div>
@@ -795,7 +796,7 @@ function ContentDetail({ item }: ContentDetailProps) {
               <span
                 className="px-3 py-1 rounded-lg bg-[hsl(var(--bg-secondary))] border border-[hsl(var(--border-color))] text-sm text-[hsl(var(--text-primary))]"
               >
-                {t("materials:detail.chapter")} {story.chapter_range}
+                {t("materials:detail.chapterRange", { range: story.chapter_range })}
               </span>
             </div>
           </div>
@@ -1004,7 +1005,7 @@ function ContentDetail({ item }: ContentDetailProps) {
                     )}
                     {item.timestamp && (
                       <span>
-                        <span className="font-medium">Time:</span> {item.timestamp}
+                        <span className="font-medium">{t("materials:detail.timeLabel")}:</span> {item.timestamp}
                       </span>
                     )}
                   </div>

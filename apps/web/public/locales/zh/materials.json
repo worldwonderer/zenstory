@@ -25,6 +25,8 @@
   "noMaterials": "还没有上传任何素材",
   "uploadFirst": "上传第一本小说",
   "chapters": "章",
+  "chapters_one": "章",
+  "chapters_other": "章",
   "uploadError": "上传失败，请重试",
   "status": {
     "pending": "等待处理",
@@ -60,7 +62,8 @@
   },
   "detail": {
     "chapters": "章节",
-    "chapter": "第 {number} 章",
+    "chapter": "第 {{number}} 章",
+    "chapterRange": "第 {{range}} 章",
     "characters": "角色",
     "stories": "剧情",
     "worldview": "世界观",
@@ -113,7 +116,9 @@
     "territory": "领地",
     "coreObjective": "核心目标",
     "coreConflict": "核心冲突",
-    "chapterLabel": "章节"
+    "chapterLabel": "章节",
+    "idLabel": "ID",
+    "timeLabel": "时间"
   },
   "quota": {
     "uploadTitle": "开通会员即可使用素材库",
@@ -129,6 +134,8 @@
     "importSuccess": "素材导入成功",
     "importFailed": "素材导入失败，请重试",
     "batchImportSuccess": "成功导入 {{count}} 个素材",
+    "batchImportSuccess_one": "成功导入 {{count}} 个素材",
+    "batchImportSuccess_other": "成功导入 {{count}} 个素材",
     "batchImportFailed": "批量导入失败，请重试"
   }
 }
