@@ -122,5 +122,9 @@
     "badge": "升级建议"
   },
   "viewUpgrade": "查看升级方案",
-  "viewPlans": "查看套餐对比"
+  "viewPlans": "查看套餐对比",
+  "closeModal": "关闭对话框",
+  "loadingCard": "加载卡片中...",
+  "loadingTable": "加载表格中...",
+  "loadingText": "加载文本中..."
 }

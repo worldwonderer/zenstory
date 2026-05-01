@@ -22,6 +22,7 @@
 
 import React, { lazy, Suspense, useState, useEffect } from 'react';
 import type { Components, Options } from 'react-markdown';
+import { useTranslation } from 'react-i18next';
 import { logger } from "../lib/logger";
 
 type RemarkPlugins = NonNullable<Options['remarkPlugins']>;
@@ -53,9 +54,10 @@ interface LazyMarkdownProps {
  * Loading fallback component displayed while markdown is being loaded.
  */
 function MarkdownFallback({ className }: { className?: string }) {
+  const { t } = useTranslation();
   return (
     <div className={className}>
-      <span className="opacity-50">Loading...</span>
+      <span className="opacity-50">{t('common:loading')}</span>
     </div>
   );
 }

@@ -457,7 +457,7 @@ export const MobileChatInput: React.FC<MobileChatInputProps> = ({
             {renderVoiceContent()}
             {isRecording && (
               <span data-testid="recording-indicator" className="sr-only">
-                Recording
+                {t('chat:voice.recording')}
               </span>
             )}
           </button>

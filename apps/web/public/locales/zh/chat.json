@@ -234,7 +234,8 @@
     "recordingError": "录音出错",
     "micAccessDenied": "无法访问麦克风",
     "micPermissionDenied": "麦克风权限被拒绝，请在浏览器设置中允许访问麦克风",
-    "micNotFound": "未检测到麦克风设备"
+    "micNotFound": "未检测到麦克风设备",
+    "recording": "录音中"
   },
   "stream": {
     "processing": "正在处理...",

@@ -122,5 +122,9 @@
     "badge": "Upgrade suggestion"
   },
   "viewUpgrade": "View upgrade options",
-  "viewPlans": "Compare plans"
+  "viewPlans": "Compare plans",
+  "closeModal": "Close modal",
+  "loadingCard": "Loading card...",
+  "loadingTable": "Loading table...",
+  "loadingText": "Loading text..."
 }

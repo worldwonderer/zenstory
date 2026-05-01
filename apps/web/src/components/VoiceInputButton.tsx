@@ -358,7 +358,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = ({
       >
         {renderContent()}
         {/* data-testid: recording-indicator - Recording state indicator shown during active recording */}
-        {isRecording && <span data-testid="recording-indicator" className="sr-only">Recording</span>}
+        {isRecording && <span data-testid="recording-indicator" className="sr-only">{t('chat:voice.recording')}</span>}
       </button>
     </>
   );

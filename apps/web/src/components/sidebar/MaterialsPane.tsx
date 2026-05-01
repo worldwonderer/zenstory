@@ -98,7 +98,7 @@ export const MaterialsPane: React.FC = () => {
         if (data) {
           const displayName = (data.world_structure && data.world_structure.trim())
             ? data.world_structure.substring(0, 30)
-            : 'World View';
+            : t('materials:detail.worldView');
           items = [{ id: data.id, name: displayName }];
         }
       } else if (entityType === 'goldenfingers') {

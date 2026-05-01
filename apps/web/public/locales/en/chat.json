@@ -234,7 +234,8 @@
     "recordingError": "Recording error",
     "micAccessDenied": "Unable to access microphone",
     "micPermissionDenied": "Microphone permission denied. Please allow access in browser settings",
-    "micNotFound": "No microphone device detected"
+    "micNotFound": "No microphone device detected",
+    "recording": "Recording"
   },
   "stream": {
     "processing": "Processing...",

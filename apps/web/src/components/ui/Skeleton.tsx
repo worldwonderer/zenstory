@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 
 export interface SkeletonProps {
@@ -20,6 +21,7 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   height,
   animation = "pulse",
 }) => {
+  const { t } = useTranslation();
   const baseStyles = "bg-[hsl(var(--bg-tertiary))]";
 
   const variantStyles: Record<string, string> = {
@@ -50,9 +52,9 @@ export const Skeleton: React.FC<SkeletonProps> = ({
       )}
       style={style}
       role="status"
-      aria-label="Loading..."
+      aria-label={t('common:loading')}
     >
-      <span className="sr-only">Loading...</span>
+      <span className="sr-only">{t('common:loading')}</span>
     </div>
   );
 };
@@ -75,6 +77,7 @@ export const CardSkeleton: React.FC<CardSkeletonProps> = ({
   showFooter = false,
   lines = 3,
 }) => {
+  const { t } = useTranslation();
   return (
     <div
       className={cn(
@@ -82,7 +85,7 @@ export const CardSkeleton: React.FC<CardSkeletonProps> = ({
         className
       )}
       role="status"
-      aria-label="Loading card..."
+      aria-label={t('common:loadingCard')}
     >
       {showHeader && (
         <div className="flex items-center gap-3">
@@ -108,7 +111,7 @@ export const CardSkeleton: React.FC<CardSkeletonProps> = ({
           <Skeleton variant="rectangular" width={80} height={32} />
         </div>
       )}
-      <span className="sr-only">Loading card...</span>
+      <span className="sr-only">{t('common:loadingCard')}</span>
     </div>
   );
 };
@@ -149,8 +152,9 @@ export const TableRowSkeleton: React.FC<TableRowSkeletonProps> = ({
   columns = 4,
   rows = 5,
 }) => {
+  const { t } = useTranslation();
   return (
-    <div className={cn("space-y-2", className)} role="status" aria-label="Loading table...">
+    <div className={cn("space-y-2", className)} role="status" aria-label={t('common:loadingTable')}>
       {Array.from({ length: rows }).map((_, rowIndex) => (
         <div
           key={rowIndex}
@@ -166,7 +170,7 @@ export const TableRowSkeleton: React.FC<TableRowSkeletonProps> = ({
           ))}
         </div>
       ))}
-      <span className="sr-only">Loading table...</span>
+      <span className="sr-only">{t('common:loadingTable')}</span>
     </div>
   );
 };
@@ -185,8 +189,9 @@ export const TextSkeleton: React.FC<TextSkeletonProps> = ({
   lines = 3,
   lineHeight = 16,
 }) => {
+  const { t } = useTranslation();
   return (
-    <div className={cn("space-y-2", className)} role="status" aria-label="Loading text...">
+    <div className={cn("space-y-2", className)} role="status" aria-label={t('common:loadingText')}>
       {Array.from({ length: lines }).map((_, i) => (
         <Skeleton
           key={i}
@@ -195,7 +200,7 @@ export const TextSkeleton: React.FC<TextSkeletonProps> = ({
           height={lineHeight}
         />
       ))}
-      <span className="sr-only">Loading text...</span>
+      <span className="sr-only">{t('common:loadingText')}</span>
     </div>
   );
 };

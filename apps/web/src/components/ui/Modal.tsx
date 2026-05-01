@@ -15,6 +15,7 @@
 import React, { createContext, useContext, useEffect, useCallback, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 /**
  * Props for the Modal component.
@@ -244,6 +245,7 @@ export const Modal: React.FC<ModalProps> & {
 }) => {
   const titleId = useId();
   const descriptionId = useId();
+  const { t } = useTranslation();
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -361,7 +363,7 @@ export const Modal: React.FC<ModalProps> & {
                 <button
                   onClick={onClose}
                   className="p-1 -m-1 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-tertiary))] rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary))] ml-auto"
-                  aria-label="Close modal"
+                  aria-label={t('common:closeModal')}
                   type="button"
                 >
                   <X size={20} />
