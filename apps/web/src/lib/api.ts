@@ -1188,7 +1188,7 @@ export const fileApi = {
     const response = await doFetch();
 
     if (!response.ok) {
-      let errorMessage = "上传失败";
+      let errorMessage = getLocale() === 'en' ? "Upload failed" : "上传失败";
       try {
         const errorData = await response.json();
         errorMessage = resolveApiErrorMessage(errorData, errorMessage);

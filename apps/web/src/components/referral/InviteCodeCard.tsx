@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Copy, Share2, Check, Clock } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { InviteCode } from '@/types/referral';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
@@ -12,6 +13,7 @@ interface InviteCodeCardProps {
  * Single invite code card with copy and share functionality
  */
 export const InviteCodeCard: React.FC<InviteCodeCardProps> = ({ inviteCode }) => {
+  const { t } = useTranslation('referral');
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -25,13 +27,13 @@ export const InviteCodeCard: React.FC<InviteCodeCardProps> = ({ inviteCode }) =>
   };
 
   const handleShare = async () => {
-    const shareText = `邀请码: ${inviteCode.code}`;
+    const shareText = t('card.shareText', { code: inviteCode.code });
     const shareUrl = `${window.location.origin}/register?code=${inviteCode.code}`;
 
     if (navigator.share) {
       try {
         await navigator.share({
-          title: 'zenstory写作 - 邀请码',
+          title: t('card.shareTitle'),
           text: shareText,
           url: shareUrl,
         });
@@ -57,23 +59,25 @@ export const InviteCodeCard: React.FC<InviteCodeCardProps> = ({ inviteCode }) =>
     const diffMs = date.getTime() - now.getTime();
     const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
-    if (diffDays <= 0) return '已过期';
-    if (diffDays === 1) return '明天过期';
-    if (diffDays <= 7) return `${diffDays}天后过期`;
-    return date.toLocaleDateString('zh-CN');
+    if (diffDays <= 0) return t('card.expired');
+    if (diffDays === 1) return t('card.expiresTomorrow');
+    if (diffDays <= 7) return t('card.expiresInDays', { count: diffDays });
+    return date.toLocaleDateString();
   };
 
   const usageText = `${inviteCode.current_uses}/${inviteCode.max_uses}`;
   const isExhausted = inviteCode.current_uses >= inviteCode.max_uses;
+  const isExpired = inviteCode.expires_at
+    ? new Date(inviteCode.expires_at).getTime() <= Date.now()
+    : false;
   const expiryText = formatExpiry(inviteCode.expires_at);
-  const isExpired = expiryText === '已过期';
 
   return (
     <Card hoverable className="space-y-3">
       {/* Code display */}
       <div className="flex items-center justify-between">
         <div className="flex-1 min-w-0">
-          <div className="text-xs text-[hsl(var(--text-secondary))] mb-1 font-medium">邀请码</div>
+          <div className="text-xs text-[hsl(var(--text-secondary))] mb-1 font-medium">{t('card.inviteCode')}</div>
           <div className="font-mono text-lg font-bold text-[hsl(var(--text-primary))] tracking-widest">
             {inviteCode.code}
           </div>
@@ -85,8 +89,8 @@ export const InviteCodeCard: React.FC<InviteCodeCardProps> = ({ inviteCode }) =>
             type="button"
             onClick={handleCopy}
             className="min-h-[44px] min-w-[44px] p-2 rounded-lg transition-all bg-[hsl(var(--bg-tertiary))] hover:bg-[hsl(var(--accent-primary)/0.15)] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.6)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-secondary))]"
-            title="复制邀请码"
-            aria-label="复制邀请码"
+            title={t('card.copyInviteCode')}
+            aria-label={t('card.copyInviteCode')}
           >
             {copied ? (
               <Check size={18} className="text-[hsl(var(--success))]" />
@@ -98,8 +102,8 @@ export const InviteCodeCard: React.FC<InviteCodeCardProps> = ({ inviteCode }) =>
             type="button"
             onClick={handleShare}
             className="min-h-[44px] min-w-[44px] p-2 rounded-lg transition-all bg-[hsl(var(--bg-tertiary))] hover:bg-[hsl(var(--accent-primary)/0.15)] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.6)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-secondary))]"
-            title="分享邀请码"
-            aria-label="分享邀请码"
+            title={t('card.shareInviteCode')}
+            aria-label={t('card.shareInviteCode')}
           >
             <Share2 size={18} className="text-[hsl(var(--text-secondary))]" />
           </button>
@@ -110,22 +114,22 @@ export const InviteCodeCard: React.FC<InviteCodeCardProps> = ({ inviteCode }) =>
       <div className="flex items-center gap-3 text-xs flex-wrap">
         {/* Usage counter */}
         <div className={`flex items-center gap-1.5 ${isExhausted ? 'text-[hsl(var(--warning))]' : 'text-[hsl(var(--text-secondary))]'}`}>
-          <span>已使用:</span>
+          <span>{t('card.used')}</span>
           <span className="font-semibold">{usageText}</span>
         </div>
 
         {/* Status badge */}
         {!inviteCode.is_active || isExpired ? (
           <Badge variant="neutral">
-            {isExpired ? '已过期' : '已停用'}
+            {isExpired ? t('card.expired') : t('card.disabled')}
           </Badge>
         ) : isExhausted ? (
           <Badge variant="warning">
-            已用完
+            {t('card.exhausted')}
           </Badge>
         ) : (
           <Badge variant="success">
-            可用
+            {t('card.available')}
           </Badge>
         )}
 

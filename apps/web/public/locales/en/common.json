@@ -27,6 +27,7 @@
   "search": "Search",
   "unlimited": "Unlimited",
   "noData": "No data",
+  "untitled": "Untitled",
   "showing": "Showing {{from}}-{{to}} of {{total}}",
   "confirmDelete": "Are you sure you want to delete?",
   "operationSuccess": "Operation successful",
@@ -77,15 +78,12 @@
     "minutesAgo": "{{count}} min ago",
     "minutesAgo_one": "{{count}} min ago",
     "minutesAgo_other": "{{count}} mins ago",
-    "minutesAgo_plural": "{{count}} mins ago",
     "hoursAgo": "{{count}} hour ago",
     "hoursAgo_one": "{{count}} hour ago",
     "hoursAgo_other": "{{count}} hours ago",
-    "hoursAgo_plural": "{{count}} hours ago",
     "daysAgo": "{{count}} day ago",
     "daysAgo_one": "{{count}} day ago",
-    "daysAgo_other": "{{count}} days ago",
-    "daysAgo_plural": "{{count}} days ago"
+    "daysAgo_other": "{{count}} days ago"
   },
   "nav": {
     "home": "Back to home",

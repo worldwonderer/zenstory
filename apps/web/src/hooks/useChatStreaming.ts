@@ -1008,7 +1008,7 @@ export function useChatStreaming(): UseChatStreamingReturn {
             {
               type: "thinking_status",
               id: generateUniqueId("handoff"),
-              content: `交接给 ${data.target_agent}：${data.reason}`,
+              content: t('chat:workflow.handoffMessage', { agent: data.target_agent, reason: data.reason }),
               timestamp: new Date(),
             },
           ]);
@@ -1276,7 +1276,7 @@ export function useChatStreaming(): UseChatStreamingReturn {
             {
               type: "thinking_status",
               id: generateUniqueId("parallel-start"),
-              content: `开始并行执行 ${taskCount} 个任务`,
+              content: t('chat:workflow.parallelStart', { count: taskCount }),
               timestamp: new Date(),
             },
           ]);
@@ -1307,7 +1307,7 @@ export function useChatStreaming(): UseChatStreamingReturn {
             {
               type: "thinking_status",
               id: generateUniqueId("parallel-end"),
-              content: `并行执行结束：${completed}/${total} 完成，${failed} 失败`,
+              content: t('chat:workflow.parallelEnd', { completed, total, failed }),
               timestamp: new Date(),
             },
           ]);
@@ -1319,7 +1319,7 @@ export function useChatStreaming(): UseChatStreamingReturn {
             {
               type: "thinking_status",
               id: generateUniqueId("steering-received"),
-              content: `已接收补充指令：${preview}`,
+              content: t('chat:workflow.steeringReceived', { preview }),
               timestamp: new Date(),
             },
           ]);
@@ -1331,7 +1331,7 @@ export function useChatStreaming(): UseChatStreamingReturn {
             {
               type: "thinking_status",
               id: generateUniqueId("compaction-start"),
-              content: "对话较长，正在压缩上下文",
+              content: t('chat:workflow.compactionStart'),
               timestamp: new Date(),
             },
           ]);
@@ -1343,7 +1343,7 @@ export function useChatStreaming(): UseChatStreamingReturn {
             {
               type: "thinking_status",
               id: generateUniqueId("compaction-done"),
-              content: `上下文压缩完成，已精简 ${messagesRemoved} 条历史消息`,
+              content: t('chat:workflow.compactionDone', { count: messagesRemoved }),
               timestamp: new Date(),
             },
           ]);

@@ -23,6 +23,7 @@ import { useProject } from "../contexts/ProjectContext";
 import { useMobileLayout } from "../contexts/MobileLayoutContext";
 import { useMaterialAttachment, MAX_ATTACHED_MATERIALS } from "../contexts/MaterialAttachmentContext";
 import { fileApi } from "../lib/api";
+import { FOLDER_TYPE_MAP, MATERIAL_FOLDER_NAMES } from "../lib/folderTypeMap";
 import { toast } from "../lib/toast";
 import { FileSearchInput } from "./FileSearchInput";
 import { useFileSearch, type FileSearchResult } from "../hooks/useFileSearch";
@@ -69,50 +70,6 @@ const FILE_TYPE_ICONS: Record<string, React.ReactNode> = {
   snippet: <FolderOpen size={20} />,
   draft: <BookOpen size={20} />,
 };
-
-/**
- * Folder title to file type mapping for contextual file creation.
- * Supports both Chinese and English folder names to determine what
- * type of file should be created inside each folder.
- *
- * @example
- * // Creating a file in "角色" folder -> creates a "character" file
- * // Creating a file in "Outlines" folder -> creates an "outline" file
- *
- * @constant
- */
-const FOLDER_TYPE_MAP: Record<string, string> = {
-  // Chinese
-  "设定": "lore",
-  "场景": "lore",
-  "角色": "character",
-  "人物": "character",
-  "大纲": "outline",
-  "构思": "outline",
-  "分集大纲": "outline",
-  "素材": "snippet",
-  "正文": "draft",
-  "剧本": "script",
-  // English
-  "Lore": "lore",
-  "World Building": "lore",
-  "Scene": "lore",
-  "Scenes": "lore",
-  "Characters": "character",
-  "Character": "character",
-  "Outline": "outline",
-  "Outlines": "outline",
-  "Ideas": "outline",
-  "Episode Outline": "outline",
-  "Materials": "snippet",
-  "Material": "snippet",
-  "Draft": "draft",
-  "Drafts": "draft",
-  "Script": "script",
-  "Scripts": "script",
-};
-
-const MATERIAL_FOLDER_NAMES = ["素材", "Materials", "Material"] as const;
 
 /**
  * Internal implementation of the MobileFileTree component.

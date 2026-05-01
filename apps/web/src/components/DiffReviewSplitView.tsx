@@ -53,27 +53,27 @@ export const DiffReviewSplitView = ({
   const getOpLabel = useCallback((op: PendingEdit["op"]) => {
     switch (op) {
       case "replace":
-        return t("editor:diffOpReplace", "替换");
+        return t("editor:diffOpReplace");
       case "delete":
-        return t("editor:diffOpDelete", "删除");
+        return t("editor:diffOpDelete");
       case "insert_after":
       case "insert_before":
       case "append":
       case "prepend":
-        return t("editor:diffOpInsert", "插入");
+        return t("editor:diffOpInsert");
       default:
-        return t("editor:diffOpEdit", "编辑");
+        return t("editor:diffOpEdit");
     }
   }, [t]);
 
   const getStatusLabel = useCallback((status: PendingEdit["status"]) => {
     switch (status) {
       case "pending":
-        return t("editor:diffStatusPending", "待审");
+        return t("editor:diffStatusPending");
       case "accepted":
-        return t("editor:diffStatusAccepted", "已接受");
+        return t("editor:diffStatusAccepted");
       case "rejected":
-        return t("editor:diffStatusRejected", "已拒绝");
+        return t("editor:diffStatusRejected");
       default:
         return status;
     }
@@ -267,14 +267,14 @@ export const DiffReviewSplitView = ({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-[hsl(var(--text-primary))]">
-                {t("editor:reviewQueue", "段落审阅")}
+                {t("editor:reviewQueue")}
               </div>
               <div className="mt-1 text-[11px] leading-5 text-[hsl(var(--text-secondary))]">
-                {t("editor:pendingDefaultAcceptedHint", "按段落块审阅，待审内容默认会被应用，除非你选择“拒绝”。")}
+                {t("editor:pendingDefaultAcceptedHint")}
               </div>
             </div>
             <div className="rounded-full bg-[hsl(var(--bg-primary)/0.92)] px-2.5 py-1 text-[11px] font-medium text-[hsl(var(--text-secondary))] shadow-[0_6px_18px_-16px_hsl(var(--text-primary)/0.5)] ring-1 ring-[hsl(var(--border-primary)/0.32)]">
-              {t("editor:reviewQueueCount", "{{pending}} 待审 / {{all}} 总计", {
+              {t("editor:reviewQueueCount", {
                 pending: counts.pending,
                 all: counts.all,
               })}
@@ -284,10 +284,10 @@ export const DiffReviewSplitView = ({
           <div className="mt-3 flex items-center gap-2">
             <div className="grid flex-1 grid-cols-4 gap-1 rounded-full bg-[hsl(var(--bg-primary)/0.92)] p-1 shadow-[0_8px_24px_-20px_hsl(var(--text-primary)/0.45)] ring-1 ring-[hsl(var(--border-primary)/0.32)]">
               {([
-                { key: "all" as const, label: t("editor:filterAll", "全部"), count: counts.all },
-                { key: "pending" as const, label: t("editor:filterPending", "待审"), count: counts.pending },
-                { key: "accepted" as const, label: t("editor:filterAccepted", "已接受"), count: counts.accepted },
-                { key: "rejected" as const, label: t("editor:filterRejected", "已拒绝"), count: counts.rejected },
+                { key: "all" as const, label: t("editor:filterAll"), count: counts.all },
+                { key: "pending" as const, label: t("editor:filterPending"), count: counts.pending },
+                { key: "accepted" as const, label: t("editor:filterAccepted"), count: counts.accepted },
+                { key: "rejected" as const, label: t("editor:filterRejected"), count: counts.rejected },
               ]).map((item) => (
                 <button
                   key={item.key}
@@ -312,18 +312,18 @@ export const DiffReviewSplitView = ({
               <button
                 onClick={goPrev}
                 disabled={filteredEdits.length === 0}
-                aria-label={t("editor:prevChange", "上一个更改 (↑/K)")}
+                aria-label={t("editor:prevChange")}
                 className="h-8 w-8 rounded-full bg-[hsl(var(--bg-secondary))] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--bg-tertiary))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-40"
-                title={t("editor:prevChange", "上一个更改 (↑/K)")}
+                title={t("editor:prevChange")}
               >
                 <ChevronUp size={16} className="mx-auto" />
               </button>
               <button
                 onClick={goNext}
                 disabled={filteredEdits.length === 0}
-                aria-label={t("editor:nextChange", "下一个更改 (↓/J)")}
+                aria-label={t("editor:nextChange")}
                 className="h-8 w-8 rounded-full bg-[hsl(var(--bg-secondary))] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--bg-tertiary))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-40"
-                title={t("editor:nextChange", "下一个更改 (↓/J)")}
+                title={t("editor:nextChange")}
               >
                 <ChevronDown size={16} className="mx-auto" />
               </button>
@@ -334,9 +334,9 @@ export const DiffReviewSplitView = ({
             </div>
 
             <div className="whitespace-nowrap text-[10px] text-[hsl(var(--text-tertiary))]">
-              <span className="mr-2">Y {t("editor:acceptOne", "Accept")}</span>
-              <span className="mr-2">N {t("editor:rejectOne", "Reject")}</span>
-              <span>U {t("editor:resetOne", "Reset")}</span>
+              <span className="mr-2">Y {t("editor:acceptOne")}</span>
+              <span className="mr-2">N {t("editor:rejectOne")}</span>
+              <span>U {t("editor:resetOne")}</span>
             </div>
           </div>
         </div>
@@ -344,7 +344,7 @@ export const DiffReviewSplitView = ({
         <div ref={queueScrollRef} className="min-h-0 flex-1 overflow-auto px-3 pb-3">
           {filteredEdits.length === 0 ? (
             <div className="px-1 py-6 text-center text-xs text-[hsl(var(--text-secondary))]">
-              {t("editor:noChangesInFilter", "当前筛选下没有更改")}
+              {t("editor:noChangesInFilter")}
             </div>
           ) : (
             <div className="w-full">
@@ -370,7 +370,7 @@ export const DiffReviewSplitView = ({
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-full bg-[hsl(var(--bg-secondary))] px-2 py-0.5 text-[10px] font-mono text-[hsl(var(--text-tertiary))]">
-                              {t("editor:reviewParagraphLabel", "段落")} #{getDisplayNumber(edit.id) ?? index + 1}
+                              {t("editor:reviewParagraphLabel")} #{getDisplayNumber(edit.id) ?? index + 1}
                             </span>
                             <span
                               className={cn(
@@ -386,7 +386,7 @@ export const DiffReviewSplitView = ({
                               {getOpLabel(edit.op)}
                             </span>
                             <span className="rounded-full bg-[hsl(var(--bg-secondary))] px-2 py-0.5 text-[10px] text-[hsl(var(--text-tertiary))]">
-                              {t("editor:paragraphLength", "{{count}} 字", { count: getEditSize(edit) })}
+                              {t("editor:paragraphLength", { count: getEditSize(edit) })}
                             </span>
                           </div>
                         </div>
@@ -396,9 +396,9 @@ export const DiffReviewSplitView = ({
                             event.stopPropagation();
                             locateEdit(edit.id);
                           }}
-                          aria-label={t("editor:locateChange", "定位到文档 (L)")}
+                          aria-label={t("editor:locateChange")}
                           className="h-8 w-8 rounded-full bg-[hsl(var(--bg-secondary))] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--bg-tertiary))] hover:text-[hsl(var(--text-primary))]"
-                          title={t("editor:locateChange", "定位到文档 (L)")}
+                          title={t("editor:locateChange")}
                         >
                           <Crosshair size={16} className="mx-auto" />
                         </button>
@@ -416,11 +416,11 @@ export const DiffReviewSplitView = ({
                           }}
                           disabled={edit.status === "accepted"}
                           className="flex-1 rounded-xl bg-[hsl(var(--success)/0.12)] px-2.5 py-2 text-xs font-medium text-[hsl(var(--success))] transition-colors hover:bg-[hsl(var(--success)/0.16)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[hsl(var(--success)/0.12)]"
-                          title={t("editor:acceptChange", "接受 (Y)")}
+                          title={t("editor:acceptChange")}
                         >
                           <span className="flex items-center justify-center gap-1.5">
                             <Check size={14} />
-                            {t("editor:acceptOne", "接受")}
+                            {t("editor:acceptOne")}
                           </span>
                         </button>
                         <button
@@ -430,11 +430,11 @@ export const DiffReviewSplitView = ({
                           }}
                           disabled={edit.status === "rejected"}
                           className="flex-1 rounded-xl bg-[hsl(var(--error)/0.08)] px-2.5 py-2 text-xs font-medium text-[hsl(var(--error))] transition-colors hover:bg-[hsl(var(--error)/0.12)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[hsl(var(--error)/0.08)]"
-                          title={t("editor:rejectChange", "拒绝 (N)")}
+                          title={t("editor:rejectChange")}
                         >
                           <span className="flex items-center justify-center gap-1.5">
                             <X size={14} />
-                            {t("editor:rejectOne", "拒绝")}
+                            {t("editor:rejectOne")}
                           </span>
                         </button>
                         <button
@@ -443,9 +443,9 @@ export const DiffReviewSplitView = ({
                             resetEdit(edit.id);
                           }}
                           disabled={edit.status === "pending"}
-                          aria-label={t("editor:resetChange", "撤销到待审 (U)")}
+                          aria-label={t("editor:resetChange")}
                           className="rounded-xl bg-[hsl(var(--bg-secondary))] px-3 py-2 text-xs text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--bg-tertiary))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[hsl(var(--bg-secondary))]"
-                          title={t("editor:resetChange", "撤销到待审 (U)")}
+                          title={t("editor:resetChange")}
                         >
                           <span className="flex items-center justify-center gap-1.5">
                             <RotateCcw size={14} />

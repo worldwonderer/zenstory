@@ -26,7 +26,7 @@ function capitalize(value: string): string {
 }
 
 // Simple relative time formatting without date-fns
-function formatRelativeTime(dateString: string, locale: string): string {
+function formatRelativeTime(dateString: string, locale: string, t: (key: string, options?: Record<string, unknown>) => string): string {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -35,23 +35,15 @@ function formatRelativeTime(dateString: string, locale: string): string {
   const diffHour = Math.floor(diffMin / 60);
   const diffDay = Math.floor(diffHour / 24);
 
-  if (locale === 'zh') {
-    if (diffMin < 1) return '刚刚';
-    if (diffMin < 60) return `${diffMin} 分钟前`;
-    if (diffHour < 24) return `${diffHour} 小时前`;
-    if (diffDay < 7) return `${diffDay} 天前`;
-    return date.toLocaleDateString('zh-CN');
-  }
-
-  if (diffMin < 1) return 'just now';
-  if (diffMin < 60) return `${diffMin}m ago`;
-  if (diffHour < 24) return `${diffHour}h ago`;
-  if (diffDay < 7) return `${diffDay}d ago`;
-  return date.toLocaleDateString('en-US');
+  if (diffMin < 1) return t('dashboard:time.justNow');
+  if (diffMin < 60) return t('dashboard:time.minutesAgo', { count: diffMin });
+  if (diffHour < 24) return t('dashboard:time.hoursAgo', { count: diffHour });
+  if (diffDay < 7) return t('dashboard:time.daysAgo', { count: diffDay });
+  return date.toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US');
 }
 
 export function RecentActivityList() {
-  const { t, i18n } = useTranslation(['admin', 'common']);
+  const { t, i18n } = useTranslation(['admin', 'common', 'dashboard']);
 
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['admin', 'audit-logs', 'recent'],
@@ -120,7 +112,7 @@ export function RecentActivityList() {
             </p>
           </div>
           <span className="text-xs text-[hsl(var(--text-tertiary))] whitespace-nowrap">
-            {formatRelativeTime(item.created_at, i18n.language)}
+            {formatRelativeTime(item.created_at, i18n.language, t)}
           </span>
         </div>
         );

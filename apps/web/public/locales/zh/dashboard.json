@@ -28,7 +28,9 @@
     "error": {
       "title": "加载数据统计失败",
       "message": "加载统计页面时发生错误。"
-    }
+    },
+    "realInspirationsTitle": "如果你还没想好，可以从这里开始：",
+    "realInspirationsRefresh": "换一批"
   },
   "bottomNav": {
     "projects": "项目",
@@ -220,6 +222,8 @@
     "new": "新建项目",
     "filterAll": "全部",
     "count": "共 {{count}} 个项目",
+    "count_one": "共 {{count}} 个项目",
+    "count_other": "共 {{count}} 个项目",
     "noMatch": "没有匹配的项目",
     "tryDifferent": "尝试调整搜索条件或筛选器",
     "createFirst": "创建第一个项目",
@@ -235,7 +239,9 @@
     "cancel": "取消",
     "cannotDeleteLast": "无法删除最后一个项目",
     "editName": "编辑项目名称",
-    "deleteProject": "删除项目"
+    "deleteProject": "删除项目",
+    "quotaExceededTitle": "项目数量已达上限",
+    "quotaExceededDesc": "当前套餐可创建的项目数量已达上限。可先升级套餐，或查看套餐对比后再决定。"
   },
   "inspiration": {
     "title": "创作灵感",
@@ -256,11 +262,21 @@
   "time": {
     "justNow": "刚刚",
     "minutesAgo": "{{count}} 分钟前",
+    "minutesAgo_one": "{{count}} 分钟前",
+    "minutesAgo_other": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
+    "hoursAgo_one": "{{count}} 小时前",
+    "hoursAgo_other": "{{count}} 小时前",
     "daysAgo": "{{count}} 天前",
+    "daysAgo_one": "{{count}} 天前",
+    "daysAgo_other": "{{count}} 天前",
     "yesterday": "昨天",
     "weeksAgo": "{{count}} 周前",
-    "monthsAgo": "{{count}} 个月前"
+    "weeksAgo_one": "{{count}} 周前",
+    "weeksAgo_other": "{{count}} 周前",
+    "monthsAgo": "{{count}} 个月前",
+    "monthsAgo_one": "{{count}} 个月前",
+    "monthsAgo_other": "{{count}} 个月前"
   },
   "projectType": {
     "novel": {
@@ -371,6 +387,8 @@
       "thisMonth": "本月字数",
       "total": "总字数",
       "words": "{{count}} 字",
+      "words_one": "{{count}} 字",
+      "words_other": "{{count}} 字",
       "trend": {
         "title": "字数趋势",
         "daily": "每日",
@@ -383,6 +401,8 @@
       "title": "章节完成",
       "completed": "已完成",
       "total": "共 {{count}} 章",
+      "total_one": "共 {{count}} 章",
+      "total_other": "共 {{count}} 章",
       "percentage": "{{percent}}% 完成",
       "noChapters": "暂无章节",
       "planned": "计划中",
@@ -394,7 +414,11 @@
       "currentStreak": "当前连续",
       "longestStreak": "最长连续",
       "days": "{{count}} 天",
+      "days_one": "{{count}} 天",
+      "days_other": "{{count}} 天",
       "day": "{{count}} 天",
+      "day_one": "{{count}} 天",
+      "day_other": "{{count}} 天",
       "status": {
         "active": "保持中",
         "atRisk": "即将中断",
@@ -419,10 +443,20 @@
     "aiUsage": {
       "title": "AI 协作",
       "sessions": "{{count}} 次对话",
+      "sessions_one": "{{count}} 次对话",
+      "sessions_other": "{{count}} 次对话",
       "session": "{{count}} 次对话",
+      "session_one": "{{count}} 次对话",
+      "session_other": "{{count}} 次对话",
       "messages": "{{count}} 条消息",
+      "messages_one": "{{count}} 条消息",
+      "messages_other": "{{count}} 条消息",
       "message": "{{count}} 条消息",
+      "message_one": "{{count}} 条消息",
+      "message_other": "{{count}} 条消息",
       "tokens": "{{count}} tokens",
+      "tokens_one": "{{count}} tokens",
+      "tokens_other": "{{count}} tokens",
       "estimatedTokens": "预估 tokens",
       "today": "今日使用",
       "thisWeek": "本周使用",

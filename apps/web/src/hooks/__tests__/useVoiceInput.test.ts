@@ -12,6 +12,7 @@ vi.mock('@/lib/voiceApi', () => ({
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
+    t: (key: string) => key,
     i18n: {
       language: 'zh',
     },
@@ -163,7 +164,7 @@ describe('useVoiceInput', () => {
       })
 
       expect(result.current.status).toBe('error')
-      expect(result.current.error).toContain('麦克风权限被拒绝')
+      expect(result.current.error).toContain('chat:voice.micPermissionDenied')
       expect(onError).toHaveBeenCalled()
     })
 
@@ -180,7 +181,7 @@ describe('useVoiceInput', () => {
       })
 
       expect(result.current.status).toBe('error')
-      expect(result.current.error).toContain('未检测到麦克风设备')
+      expect(result.current.error).toContain('chat:voice.micNotFound')
     })
 
     it('clears previous error on new recording', async () => {

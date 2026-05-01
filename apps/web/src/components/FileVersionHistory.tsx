@@ -415,20 +415,15 @@ export const FileVersionHistory: React.FC<FileVersionHistoryProps> = ({
         source={fileVersionUpgradePrompt.source}
         primaryDestination="billing"
         secondaryDestination="pricing"
-        title={t("quota.limitTitle", {
-          defaultValue: "文件版本额度已达上限",
-        })}
-        description={t("quota.limitDescription", {
-          defaultValue:
-            "当前套餐可保留的文件版本已达上限。可前往订阅页升级，或先查看套餐对比后再决定。",
-        })}
-        primaryLabel={t("quota.upgradePrimary", { defaultValue: "查看升级方案" })}
+        title={t("quota.limitTitle")}
+        description={t("quota.limitDescription")}
+        primaryLabel={t("quota.upgradePrimary")}
         onPrimary={() => {
           window.location.assign(
             buildUpgradeUrl(fileVersionUpgradePrompt.billingPath, fileVersionUpgradePrompt.source)
           );
         }}
-        secondaryLabel={t("quota.upgradeSecondary", { defaultValue: "查看套餐对比" })}
+        secondaryLabel={t("quota.upgradeSecondary")}
         onSecondary={() => {
           window.location.assign(
             buildUpgradeUrl(fileVersionUpgradePrompt.pricingPath, fileVersionUpgradePrompt.source)

@@ -12,11 +12,9 @@
   "totalVersions": "{{count}} version total",
   "totalVersions_one": "{{count}} version total",
   "totalVersions_other": "{{count}} versions total",
-  "totalVersions_plural": "{{count}} versions total",
   "selectedVersions": "{{count}} version selected",
   "selectedVersions_one": "{{count}} version selected",
   "selectedVersions_other": "{{count}} versions selected",
-  "selectedVersions_plural": "{{count}} versions selected",
   "latest": "Latest",
   "wordCount": "{{count}} words",
   "versionTo": "Version {{v1}} → Version {{v2}}",
@@ -28,5 +26,11 @@
     "aiEdited": "AI Edited",
     "rolledBack": "Rolled Back",
     "autoSave": "Auto Save"
+  },
+  "quota": {
+    "limitTitle": "Version quota reached",
+    "limitDescription": "Your current plan's version retention limit has been reached. Upgrade your plan, or compare plans first.",
+    "upgradePrimary": "View upgrade options",
+    "upgradeSecondary": "Compare plans"
   }
 }

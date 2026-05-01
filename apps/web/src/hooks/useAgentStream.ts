@@ -13,6 +13,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { produce } from "immer";
+import i18n from "../lib/i18n";
 import { useImmer } from "use-immer";
 import { sendSteeringRequest, streamAgentRequest } from "../lib/agentApi";
 import type {
@@ -685,7 +686,7 @@ export function useAgentStream(
         ...initialState,
         isStreaming: true,
         isThinking: true,
-        thinkingMessage: "正在处理...",
+        thinkingMessage: i18n.t('chat:stream.processing'),
       });
       updateSegmentsSync(draft => { draft.length = 0; });
       currentSegmentIdRef.current = null;

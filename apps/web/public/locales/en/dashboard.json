@@ -28,7 +28,9 @@
     "error": {
       "title": "Failed to Load Dashboard",
       "message": "An error occurred while loading the dashboard."
-    }
+    },
+    "realInspirationsTitle": "If you haven't decided yet, start here:",
+    "realInspirationsRefresh": "Refresh"
   },
   "bottomNav": {
     "projects": "Projects",
@@ -219,6 +221,7 @@
     "subtitle": "Manage and browse all your projects",
     "new": "New Project",
     "filterAll": "All",
+    "count": "{{count}} projects",
     "count_one": "{{count}} project",
     "count_other": "{{count}} projects",
     "noMatch": "No matching projects",
@@ -236,7 +239,9 @@
     "cancel": "Cancel",
     "cannotDeleteLast": "Cannot delete last project",
     "editName": "Edit project name",
-    "deleteProject": "Delete project"
+    "deleteProject": "Delete project",
+    "quotaExceededTitle": "Project limit reached",
+    "quotaExceededDesc": "Your current plan's project limit has been reached. You can upgrade your plan, or compare plans first."
   },
   "inspiration": {
     "title": "Creative Inspiration",
@@ -256,15 +261,20 @@
   },
   "time": {
     "justNow": "just now",
+    "minutesAgo": "{{count}} minutes ago",
     "minutesAgo_one": "{{count}} minute ago",
     "minutesAgo_other": "{{count}} minutes ago",
+    "hoursAgo": "{{count}} hours ago",
     "hoursAgo_one": "{{count}} hour ago",
     "hoursAgo_other": "{{count}} hours ago",
+    "daysAgo": "{{count}} days ago",
     "daysAgo_one": "{{count}} day ago",
     "daysAgo_other": "{{count}} days ago",
     "yesterday": "yesterday",
+    "weeksAgo": "{{count}} weeks ago",
     "weeksAgo_one": "{{count}} week ago",
     "weeksAgo_other": "{{count}} weeks ago",
+    "monthsAgo": "{{count}} months ago",
     "monthsAgo_one": "{{count}} month ago",
     "monthsAgo_other": "{{count}} months ago"
   },
@@ -376,6 +386,7 @@
       "thisWeek": "This Week",
       "thisMonth": "This Month",
       "total": "Total",
+      "words": "{{count}} words",
       "words_one": "{{count}} word",
       "words_other": "{{count}} words",
       "trend": {
@@ -389,6 +400,7 @@
     "chapterCompletion": {
       "title": "Chapter Completion",
       "completed": "Completed",
+      "total": "{{count}} chapters",
       "total_one": "{{count}} chapter",
       "total_other": "{{count}} chapters",
       "percentage": "{{percent}}% complete",
@@ -401,8 +413,10 @@
       "title": "Writing Streak",
       "currentStreak": "Current Streak",
       "longestStreak": "Longest Streak",
+      "days": "{{count}} days",
       "days_one": "{{count}} day",
       "days_other": "{{count}} days",
+      "day": "{{count}} days",
       "day_one": "{{count}} day",
       "day_other": "{{count}} days",
       "status": {
@@ -428,14 +442,19 @@
     "lastWritingDate": "Last writing",
     "aiUsage": {
       "title": "AI Collaboration",
+      "sessions": "{{count}} sessions",
       "sessions_one": "{{count}} session",
       "sessions_other": "{{count}} sessions",
+      "session": "{{count}} sessions",
       "session_one": "{{count}} session",
       "session_other": "{{count}} sessions",
+      "messages": "{{count}} messages",
       "messages_one": "{{count}} message",
       "messages_other": "{{count}} messages",
+      "message": "{{count}} messages",
       "message_one": "{{count}} message",
       "message_other": "{{count}} messages",
+      "tokens": "{{count}} tokens",
       "tokens_one": "{{count}} token",
       "tokens_other": "{{count}} tokens",
       "estimatedTokens": "Estimated tokens",

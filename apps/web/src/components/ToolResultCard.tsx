@@ -475,7 +475,7 @@ const ToolResultCardComponent: React.FC<ToolResultCardProps> = ({
     
     // create_file success
     if (toolName === 'create_file' && data) {
-      const title = data.title as string || '未命名';
+      const title = data.title as string || t('common:untitled');
       const fileType = data.file_type as string || '';
       const contentLength = typeof data.content === 'string' ? data.content.length : 0;
       const typeInfo = getFileTypeInfo(fileType, t);
@@ -569,7 +569,7 @@ const ToolResultCardComponent: React.FC<ToolResultCardProps> = ({
           {count <= 5 && (
             <div className="mt-2 ml-6 space-y-1">
               {files.map((file: Record<string, unknown>, index: number) => {
-                const fileTitle = file.title as string || '未命名';
+                const fileTitle = file.title as string || t('common:untitled');
                 const fileType = file.file_type as string || '';
                 const typeInfo = getFileTypeInfo(fileType, t);
                 return (
@@ -593,15 +593,15 @@ const ToolResultCardComponent: React.FC<ToolResultCardProps> = ({
         ? rawUpdatedFields.filter((field): field is string => typeof field === 'string')
         : [];
       const fieldLabels: Record<string, string> = {
-        summary: t('chat:project.field.summary', { defaultValue: '摘要' }),
-        current_phase: t('chat:project.field.current_phase', { defaultValue: '当前阶段' }),
-        writing_style: t('chat:project.field.writing_style', { defaultValue: '写作风格' }),
-        notes: t('chat:project.field.notes', { defaultValue: '备注' }),
+        summary: t('chat:project.field.summary'),
+        current_phase: t('chat:project.field.current_phase'),
+        writing_style: t('chat:project.field.writing_style'),
+        notes: t('chat:project.field.notes'),
       };
-      
+
       const updatedLabels = updatedFields
         .map((f) => fieldLabels[f] || f)
-        .join(t('common:separator', { defaultValue: '、' }));
+        .join(t('common:separator'));
       
       return (
         <div className="bg-[hsl(var(--result-bg))] border border-[hsl(var(--result-border))] rounded-lg px-3 py-2">

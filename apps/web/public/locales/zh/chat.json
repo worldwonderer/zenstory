@@ -21,7 +21,9 @@
     "skillMatchedMulti": "技能{{index}}: {{name}}",
     "streamErrorTitle": "这次生成中断了",
     "quotaExceededTitle": "今日 AI 配额已用尽",
-    "quotaExceededHint": "这是账号配额限制，不是本次流程步数限制。"
+    "quotaExceededHint": "这是账号配额限制，不是本次流程步数限制。",
+    "fileVersionLimitTitle": "文件版本额度已达上限",
+    "fileVersionLimitDesc": "当前套餐可保留的文件版本已达上限。可前往订阅页升级，或先查看套餐对比后再决定。"
   },
   "input": {
     "placeholder": "描述你想创作的角色、场景或剧情...",
@@ -132,7 +134,16 @@
     "workflowLabel": "工作流",
     "waitingForReply": "等待您的回复",
     "needsConfirmation": "AI 需要您的确认后才能继续",
-    "taskCompleted": "任务已完成"
+    "taskCompleted": "任务已完成",
+    "stoppedGeneric": "当前工作流已停止，请查看提示后重试。",
+    "stoppedTitle": "工作流已停止",
+    "stopReason": "原因：{{reason}}",
+    "handoffMessage": "交接给 {{agent}}：{{reason}}",
+    "parallelStart": "开始并行执行 {{count}} 个任务",
+    "parallelEnd": "并行执行结束：{{completed}}/{{total}} 完成，{{failed}} 失败",
+    "steeringReceived": "已接收补充指令：{{preview}}",
+    "compactionStart": "对话较长，正在压缩上下文",
+    "compactionDone": "上下文压缩完成，已精简 {{count}} 条历史消息"
   },
   "tool": {
     "create_file": "创建文件",
@@ -214,10 +225,20 @@
     "mobile_stop": "松开停止录音",
     "desktop_stop": "点击停止录音，右键取消",
     "mobile_hold": "长按说话",
-    "input": "语音输入"
+    "input": "语音输入",
+    "noRecordingData": "没有录音数据",
+    "audioTooLarge": "音频文件过大，请缩短录音时长",
+    "recognitionFailed": "识别失败",
+    "recognitionError": "语音识别失败",
+    "browserNotSupported": "您的浏览器不支持录音功能",
+    "recordingError": "录音出错",
+    "micAccessDenied": "无法访问麦克风",
+    "micPermissionDenied": "麦克风权限被拒绝，请在浏览器设置中允许访问麦克风",
+    "micNotFound": "未检测到麦克风设备"
   },
   "stream": {
-    "processing": "正在处理..."
+    "processing": "正在处理...",
+    "connectionInterrupted": "连接中断，请重试"
   },
   "thinking": {
     "title": "AI 思考过程",

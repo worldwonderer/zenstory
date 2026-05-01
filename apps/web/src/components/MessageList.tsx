@@ -233,15 +233,15 @@ export interface MessageListRef {
 const priorityLabel = (p: string | undefined, t: TFunction) => {
   switch (p) {
     case "critical":
-      return t("context.priority.critical", { ns: "chat", defaultValue: "关键" });
+      return t("context.priority.critical", { ns: "chat" });
     case "constraint":
-      return t("context.priority.constraint", { ns: "chat", defaultValue: "约束" });
+      return t("context.priority.constraint", { ns: "chat" });
     case "relevant":
-      return t("context.priority.relevant", { ns: "chat", defaultValue: "相关" });
+      return t("context.priority.relevant", { ns: "chat" });
     case "inspiration":
-      return t("context.priority.inspiration", { ns: "chat", defaultValue: "灵感" });
+      return t("context.priority.inspiration", { ns: "chat" });
     default:
-      return t("context.priority.default", { ns: "chat", defaultValue: "来源" });
+      return t("context.priority.default", { ns: "chat" });
   }
 };
 
@@ -274,7 +274,7 @@ const priorityClassName = (p?: string) => {
  * @returns Localized type label
  */
 const contextTypeLabel = (type: string, t: TFunction) => {
-  return t(`fileType.${type}`, { ns: "chat", defaultValue: type });
+  return t(`fileType.${type}`, { ns: "chat" });
 };
 
 /**
@@ -319,7 +319,7 @@ export const ContextItemsView: React.FC<ContextItemsViewProps> = ({ items, token
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
         <span>
-          {label || t("context.label", { ns: "chat", defaultValue: "来源" })}
+          {label || t("context.label", { ns: "chat" })}
           <span className="ml-1">({items.length})</span>
         </span>
         {typeof tokenCount === "number" && (
@@ -371,7 +371,6 @@ export const ContextItemsView: React.FC<ContextItemsViewProps> = ({ items, token
                       {t("context.relevanceScore", {
                         ns: "chat",
                         score,
-                        defaultValue: "相关 {{score}}%",
                       })}
                     </span>
                   )}
@@ -569,9 +568,9 @@ function Row({
               }}
               disabled={isFeedbackDisabled}
               aria-pressed={selectedFeedbackVote === 'up'}
-              aria-label={t('feedback.like', { ns: 'chat', defaultValue: '点赞' })}
+              aria-label={t('feedback.like', { ns: 'chat' })}
               title={!canSubmitFeedback
-                ? t('feedback.pendingSave', { ns: 'chat', defaultValue: '消息保存中，稍后可反馈' })
+                ? t('feedback.pendingSave', { ns: 'chat' })
                 : undefined}
               className={`inline-flex items-center justify-center rounded-md border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.6)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-primary))] w-10 h-10 sm:w-8 sm:h-8 ${
                 selectedFeedbackVote === 'up'
@@ -589,9 +588,9 @@ function Row({
               }}
               disabled={isFeedbackDisabled}
               aria-pressed={selectedFeedbackVote === 'down'}
-              aria-label={t('feedback.dislike', { ns: 'chat', defaultValue: '点踩' })}
+              aria-label={t('feedback.dislike', { ns: 'chat' })}
               title={!canSubmitFeedback
-                ? t('feedback.pendingSave', { ns: 'chat', defaultValue: '消息保存中，稍后可反馈' })
+                ? t('feedback.pendingSave', { ns: 'chat' })
                 : undefined}
               className={`inline-flex items-center justify-center rounded-md border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.6)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-primary))] w-10 h-10 sm:w-8 sm:h-8 ${
                 selectedFeedbackVote === 'down'
@@ -603,7 +602,7 @@ function Row({
             </button>
             {!canSubmitFeedback && (
               <span className="text-xs text-[hsl(var(--text-secondary))]">
-                {t('feedback.pendingSave', { ns: 'chat', defaultValue: '消息保存中，稍后可反馈' })}
+                {t('feedback.pendingSave', { ns: 'chat' })}
               </span>
             )}
           </div>
@@ -678,20 +677,14 @@ function Row({
                 if (!isClarificationStop) {
                   const stopMessage =
                     workflowQuestion
-                    || t('workflow.stoppedGeneric', {
-                      ns: 'chat',
-                      defaultValue: '当前工作流已停止，请查看提示后重试。',
-                    });
+                    || t('workflow.stoppedGeneric', { ns: 'chat' });
                   return (
                     <div key={`status-${idx}`} className="max-w-full">
                       <div className={`inline-flex items-start gap-2 rounded-lg bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.2)] ${isMobile ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
                         <AlertTriangle size={14} className="text-[hsl(var(--warning))] mt-0.5 shrink-0" />
                         <div className="flex flex-col gap-0.5 min-w-0">
                           <span className="text-xs font-medium text-[hsl(var(--warning))]">
-                            {t('workflow.stoppedTitle', {
-                              ns: 'chat',
-                              defaultValue: '工作流已停止',
-                            })}
+                            {t('workflow.stoppedTitle', { ns: 'chat' })}
                           </span>
                           <span className="text-xs text-[hsl(var(--text-primary))] break-words">
                             {stopMessage}
@@ -700,7 +693,6 @@ function Row({
                             <span className="text-[11px] text-[hsl(var(--text-secondary))] break-words">
                               {t('workflow.stopReason', {
                                 ns: 'chat',
-                                defaultValue: '原因：{{reason}}',
                                 reason: card.reason,
                               })}
                             </span>
@@ -1200,20 +1192,14 @@ export const MessageList = React.memo(
                 if (!isClarificationStop) {
                   const stopMessage =
                     workflowQuestion
-                    || t('workflow.stoppedGeneric', {
-                      ns: 'chat',
-                      defaultValue: '当前工作流已停止，请查看提示后重试。',
-                    });
+                    || t('workflow.stoppedGeneric', { ns: 'chat' });
                   return (
                     <div key={item.id} className={isMobile ? 'mb-2' : 'mb-3'}>
                       <div className={`inline-flex items-start gap-2 rounded-lg bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.2)] ${isMobile ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
                         <AlertTriangle size={14} className="text-[hsl(var(--warning))] mt-0.5 shrink-0" />
                         <div className="flex flex-col gap-0.5 min-w-0">
                           <span className="text-xs font-medium text-[hsl(var(--warning))]">
-                            {t('workflow.stoppedTitle', {
-                              ns: 'chat',
-                              defaultValue: '工作流已停止',
-                            })}
+                            {t('workflow.stoppedTitle', { ns: 'chat' })}
                           </span>
                           <span className="text-xs text-[hsl(var(--text-primary))] break-words">
                             {stopMessage}
@@ -1222,7 +1208,6 @@ export const MessageList = React.memo(
                             <span className="text-[11px] text-[hsl(var(--text-secondary))] break-words">
                               {t('workflow.stopReason', {
                                 ns: 'chat',
-                                defaultValue: '原因：{{reason}}',
                                 reason: workflowReason,
                               })}
                             </span>

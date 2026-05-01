@@ -267,20 +267,15 @@ const EditorComponent: React.FC<EditorProps> = () => {
         source={fileVersionUpgradePrompt.source}
         primaryDestination="billing"
         secondaryDestination="pricing"
-        title={t("editor:versionHistory.fileVersionLimitTitle", {
-          defaultValue: "文件版本额度已达上限",
-        })}
-        description={t("editor:versionHistory.fileVersionLimitUpgrade", {
-          defaultValue:
-            "当前套餐可保留的文件版本已达上限。可前往订阅页升级，或先查看套餐对比后再决定。",
-        })}
-        primaryLabel={t("common:viewUpgrade", { defaultValue: "查看升级方案" })}
+        title={t("editor:versionHistory.fileVersionLimitTitle")}
+        description={t("editor:versionHistory.fileVersionLimitUpgrade")}
+        primaryLabel={t("common:viewUpgrade")}
         onPrimary={() => {
           window.location.assign(
             buildUpgradeUrl(fileVersionUpgradePrompt.billingPath, fileVersionUpgradePrompt.source)
           );
         }}
-        secondaryLabel={t("common:viewPlans", { defaultValue: "查看套餐对比" })}
+        secondaryLabel={t("common:viewPlans")}
         onSecondary={() => {
           window.location.assign(
             buildUpgradeUrl(fileVersionUpgradePrompt.pricingPath, fileVersionUpgradePrompt.source)
@@ -395,7 +390,7 @@ const EditorComponent: React.FC<EditorProps> = () => {
    */
   const handleCreateFromEmptyState = useCallback(async (fileType: 'draft' | 'outline' | 'character' | 'lore') => {
     if (!currentProjectId) {
-      toast.error(t('editor:error.noProject', { defaultValue: 'No project selected' }));
+      toast.error(t('editor:error.noProject'));
       return;
     }
 
@@ -426,9 +421,9 @@ const EditorComponent: React.FC<EditorProps> = () => {
         title: newFile.title,
       });
 
-      toast.success(t('editor:success.fileCreated', { defaultValue: 'File created successfully' }));
+      toast.success(t('editor:success.fileCreated'));
     } catch (error) {
-      toast.error(t('editor:error.createFailed', { defaultValue: 'Failed to create file' }));
+      toast.error(t('editor:error.createFailed'));
       logger.error('Failed to create file:', error);
     } finally {
       setIsCreating(null);
@@ -540,7 +535,7 @@ const EditorComponent: React.FC<EditorProps> = () => {
               onClick={() => setShowMore(!showMore)}
               className="w-full flex items-center justify-center gap-1.5 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--accent-primary))] transition-colors py-2 group"
             >
-              <span>{showMore ? t('editor:showLess', { defaultValue: '收起' }) : t('editor:showMore', { defaultValue: '更多选项' })}</span>
+              <span>{showMore ? t('editor:showLess') : t('editor:showMore')}</span>
               <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${showMore ? 'rotate-180' : ''}`} />
             </button>
 

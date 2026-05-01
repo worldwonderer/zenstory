@@ -24,5 +24,19 @@
     "createFirst": "Create First Invite Code",
     "loadError": "Failed to load invite codes, please try again",
     "createError": "Failed to create invite code, please try again"
+  },
+  "card": {
+    "inviteCode": "Invite Code",
+    "copyInviteCode": "Copy invite code",
+    "shareInviteCode": "Share invite code",
+    "used": "Used:",
+    "expired": "Expired",
+    "expiresTomorrow": "Expires tomorrow",
+    "expiresInDays": "Expires in {{count}} days",
+    "disabled": "Disabled",
+    "exhausted": "Used up",
+    "available": "Available",
+    "shareTitle": "zenstory - Invite Code",
+    "shareText": "Invite code: {{code}}"
   }
 }

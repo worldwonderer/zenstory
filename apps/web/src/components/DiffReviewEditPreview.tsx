@@ -11,8 +11,8 @@ import type { PendingEdit } from "../types";
  */
 export const DiffReviewEditPreview = ({ edit }: { edit: PendingEdit }) => {
   const { t } = useTranslation(["editor"]);
-  const deleteLabel = t("editor:editLabelDelete", "原段落");
-  const addLabel = t("editor:editLabelAdd", "建议段落");
+  const deleteLabel = t("editor:editLabelDelete");
+  const addLabel = t("editor:editLabelAdd");
   const previewBodyClass =
     "max-h-36 overflow-y-auto overscroll-contain pr-1 whitespace-pre-wrap break-words text-sm leading-6 text-[hsl(var(--text-primary))] sm:max-h-40";
 

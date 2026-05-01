@@ -31,6 +31,7 @@ import { tryRefreshToken, getAccessToken, clearAuthStorage, getApiBase } from ".
 import { debugContext } from "./debugContext";
 import { resolveApiErrorMessage, toUserErrorMessage, translateError } from "./errorHandler";
 import { logger } from "./logger";
+import i18n from "./i18n";
 
 const TRACE_ID_HEADER = "X-Trace-ID";
 
@@ -722,9 +723,7 @@ export function streamAgentRequest(
       // If the stream ends without a terminal event, treat it as a retryable error.
       // This commonly happens when upstream proxies close idle SSE connections.
       if (!receivedTerminalEvent && !abortController.signal.aborted) {
-        const fallbackMessage = language?.toLowerCase().startsWith("en")
-          ? "Connection interrupted. Please retry."
-          : "连接中断，请重试";
+        const fallbackMessage = i18n.t('chat:stream.connectionInterrupted');
         callbacks.onError?.(fallbackMessage, "STREAM_CLOSED", true);
       }
     } catch (error: unknown) {

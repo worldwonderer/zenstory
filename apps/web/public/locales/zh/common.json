@@ -27,6 +27,7 @@
   "search": "搜索",
   "unlimited": "不限",
   "noData": "暂无数据",
+  "untitled": "未命名",
   "showing": "显示 {{from}}-{{to}} 条,共 {{total}} 条",
   "confirmDelete": "确定要删除吗？",
   "operationSuccess": "操作成功",
@@ -75,8 +76,14 @@
   "relativeTime": {
     "justNow": "刚刚",
     "minutesAgo": "{{count}} 分钟前",
+    "minutesAgo_one": "{{count}} 分钟前",
+    "minutesAgo_other": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
-    "daysAgo": "{{count}} 天前"
+    "hoursAgo_one": "{{count}} 小时前",
+    "hoursAgo_other": "{{count}} 小时前",
+    "daysAgo": "{{count}} 天前",
+    "daysAgo_one": "{{count}} 天前",
+    "daysAgo_other": "{{count}} 天前"
   },
   "nav": {
     "home": "返回首页",

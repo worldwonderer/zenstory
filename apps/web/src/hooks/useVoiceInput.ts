@@ -108,7 +108,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
   const [volume, setVolume] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const getAsrLanguage = useCallback((): 'zh' | 'en' => {
     const lang = (i18n.language || '').toLowerCase();
     if (lang.startsWith('en')) return 'en';
@@ -173,9 +173,9 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
   // 处理录音数据
   const processRecording = useCallback(async () => {
     if (chunksRef.current.length === 0) {
-      setError('没有录音数据');
+      setError(t('chat:voice.noRecordingData'));
       setStatus('error');
-      onError?.('没有录音数据');
+      onError?.(t('chat:voice.noRecordingData'));
       return;
     }
 
@@ -188,7 +188,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
       
       // 检查文件大小（腾讯云限制）
       if (audioBlob.size > 5 * 1024 * 1024) {
-        throw new Error('音频文件过大，请缩短录音时长');
+        throw new Error(t('chat:voice.audioTooLarge'));
       }
       
       // 转换为 Base64
@@ -206,10 +206,10 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
         setStatus('idle');
         onResult?.(response.text);
       } else {
-        throw new Error(response.error || '识别失败');
+        throw new Error(response.error || t('chat:voice.recognitionFailed'));
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '语音识别失败';
+      const errorMessage = err instanceof Error ? err.message : t('chat:voice.recognitionError');
       setError(errorMessage);
       setStatus('error');
       onError?.(errorMessage);
@@ -220,7 +220,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
         setError(null);
       }, 3000);
     }
-  }, [onResult, onError, sampleRate, getAsrLanguage]);
+  }, [onResult, onError, sampleRate, getAsrLanguage, t]);
 
   // Stop recording and trigger recognition
   const stopRecording = useCallback(() => {
@@ -245,7 +245,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
   // 开始录音
   const startRecording = useCallback(async () => {
     if (!isSupported) {
-      const msg = '您的浏览器不支持录音功能';
+      const msg = t('chat:voice.browserNotSupported');
       setError(msg);
       setStatus('error');
       onError?.(msg);
@@ -324,9 +324,9 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
       mediaRecorder.onerror = (event) => {
         logger.error('MediaRecorder error:', event);
         cleanup();
-        setError('录音出错');
+        setError(t('chat:voice.recordingError'));
         setStatus('error');
-        onError?.('录音出错');
+        onError?.(t('chat:voice.recordingError'));
       };
       
       // 开始录音
@@ -348,12 +348,12 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     } catch (err) {
       cleanup();
       
-      let errorMessage = '无法访问麦克风';
+      let errorMessage = t('chat:voice.micAccessDenied');
       if (err instanceof Error) {
         if (err.name === 'NotAllowedError') {
-          errorMessage = '麦克风权限被拒绝，请在浏览器设置中允许访问麦克风';
+          errorMessage = t('chat:voice.micPermissionDenied');
         } else if (err.name === 'NotFoundError') {
-          errorMessage = '未检测到麦克风设备';
+          errorMessage = t('chat:voice.micNotFound');
         } else {
           errorMessage = err.message;
         }
@@ -369,7 +369,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
         setError(null);
       }, 3000);
     }
-  }, [isSupported, cleanup, maxDuration, onError, processRecording, sampleRate, stopRecording]);
+  }, [isSupported, cleanup, maxDuration, onError, processRecording, sampleRate, stopRecording, t]);
 
 
   // 取消录音

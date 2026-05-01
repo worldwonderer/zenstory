@@ -151,18 +151,18 @@ export const Header: React.FC<HeaderProps> = () => {
     ...(currentProjectId
       ? [{
           icon: BarChart3,
-          label: t('editor:header.projectDashboard', '项目统计'),
+          label: t('editor:header.projectDashboard'),
           onClick: () => handleOpenProjectDashboard(),
         }]
       : []),
     {
       icon: BookOpen,
-      label: t('editor:header.helpDocs', '帮助文档'),
+      label: t('editor:header.helpDocs'),
       onClick: () => handleOpenDocs(),
     },
     {
       icon: Bug,
-      label: t('common:feedback.entry', '问题反馈'),
+      label: t('common:feedback.entry'),
       onClick: () => handleOpenFeedback(),
     },
   ];
@@ -193,8 +193,8 @@ export const Header: React.FC<HeaderProps> = () => {
             type="button"
             className="flex min-h-[44px] min-w-[44px] items-center justify-start hover:bg-[hsl(var(--bg-tertiary))] rounded-lg px-1.5 py-1 md:px-0 md:py-0 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.6)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-secondary))]"
             onClick={() => navigate("/dashboard")}
-            aria-label={t('editor:header.goDashboard', '返回仪表盘')}
-            title={t('editor:header.goDashboard', '返回仪表盘')}
+            aria-label={t('editor:header.goDashboard')}
+            title={t('editor:header.goDashboard')}
             data-testid="header-logo-button"
           >
             {/* 优先展示带文字的品牌 Logo，超窄屏回退为图标 */}
@@ -219,8 +219,8 @@ export const Header: React.FC<HeaderProps> = () => {
             onClick={() => handleOpenBilling()}
             data-testid="header-subscription-entry"
             className={desktopIconButtonClass}
-            title={t('editor:header.manageSubscription', '订阅中心')}
-            aria-label={t('editor:header.manageSubscription', '订阅中心')}
+            title={t('editor:header.manageSubscription')}
+            aria-label={t('editor:header.manageSubscription')}
           >
             <CreditCard size={18} />
           </button>
@@ -254,7 +254,7 @@ export const Header: React.FC<HeaderProps> = () => {
           {/* Secondary actions (non-primary) */}
           <DropdownMenu
             items={secondaryActionItems}
-            triggerTitle={t('editor:header.moreActions', '更多功能')}
+            triggerTitle={t('editor:header.moreActions')}
             triggerTestId="header-more-actions"
             menuTestId="header-more-actions-menu"
           />
@@ -282,7 +282,7 @@ export const Header: React.FC<HeaderProps> = () => {
             type="button"
             onClick={() => setShowMobileMenu((prev) => !prev)}
             className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center hover:bg-[hsl(var(--bg-tertiary))] rounded text-[hsl(var(--text-primary))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.6)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-secondary))]"
-            aria-label={showMobileMenu ? t('common:close', '关闭菜单') : t('common:menu', '打开菜单')}
+            aria-label={showMobileMenu ? t('common:close') : t('common:menu')}
             aria-expanded={showMobileMenu}
             aria-controls={mobileMenuId}
             aria-haspopup="menu"
@@ -299,7 +299,7 @@ export const Header: React.FC<HeaderProps> = () => {
             id={mobileMenuId}
             className="flex flex-col p-2 gap-1"
             role="menu"
-            aria-label={t('editor:header.mobileMenu', '移动端菜单')}
+            aria-label={t('editor:header.mobileMenu')}
           >
             <button
               type="button"
@@ -309,7 +309,7 @@ export const Header: React.FC<HeaderProps> = () => {
               role="menuitem"
             >
               <CreditCard size={18} />
-              {t('editor:header.manageSubscription', '订阅中心')}
+              {t('editor:header.manageSubscription')}
             </button>
             {currentProjectId && (
               <button
@@ -358,7 +358,7 @@ export const Header: React.FC<HeaderProps> = () => {
               role="menuitem"
             >
               <BookOpen size={18} />
-              {t('editor:header.helpDocs', '帮助文档')}
+              {t('editor:header.helpDocs')}
             </button>
             <button
               type="button"
@@ -367,7 +367,7 @@ export const Header: React.FC<HeaderProps> = () => {
               role="menuitem"
             >
               <Bug size={18} />
-              {t('common:feedback.entry', '问题反馈')}
+              {t('common:feedback.entry')}
             </button>
             <button
               type="button"
@@ -426,19 +426,15 @@ export const Header: React.FC<HeaderProps> = () => {
         source={exportUpgradePrompt.source}
         primaryDestination="billing"
         secondaryDestination="pricing"
-        title={t('editor:header.exportQuotaBlockedTitle', {
-          defaultValue: '当前套餐暂不支持该导出',
-        })}
-        description={t('editor:header.exportQuotaBlockedDesc', {
-          defaultValue: '可先升级套餐解锁更多导出能力，或去套餐页对比后再决定。',
-        })}
-        primaryLabel={t('dashboard:billing.ctaUpgradePro', '升级专业版')}
+        title={t('editor:header.exportQuotaBlockedTitle')}
+        description={t('editor:header.exportQuotaBlockedDesc')}
+        primaryLabel={t('dashboard:billing.ctaUpgradePro')}
         onPrimary={() => {
           window.location.assign(
             buildUpgradeUrl(exportUpgradePrompt.billingPath, exportUpgradePrompt.source)
           );
         }}
-        secondaryLabel={t('home:pricingTeaser.viewPricing', '查看套餐权益')}
+        secondaryLabel={t('home:pricingTeaser.viewPricing')}
         onSecondary={() => {
           window.location.assign(
             buildUpgradeUrl(exportUpgradePrompt.pricingPath, exportUpgradePrompt.source)

@@ -32,9 +32,9 @@ export function InspirationCard({
     screenplay: "from-amber-500/18 via-[hsl(var(--bg-tertiary))] to-rose-500/14",
   };
   const mediaHintByType: Record<string, string> = {
-    novel: t("heroHints.novel", { defaultValue: "长篇叙事模板" }),
-    short: t("heroHints.short", { defaultValue: "短篇灵感模板" }),
-    screenplay: t("heroHints.screenplay", { defaultValue: "剧本结构模板" }),
+    novel: t("heroHints.novel"),
+    short: t("heroHints.short"),
+    screenplay: t("heroHints.screenplay"),
   };
   const projectTypeLabel = projectTypeLabels[inspiration.project_type] || inspiration.project_type;
   const fallbackPreview = inspiration.description?.trim() || mediaHintByType[inspiration.project_type] || mediaHintByType.novel;
@@ -60,7 +60,7 @@ export function InspirationCard({
                    bg-[hsl(var(--bg-tertiary))] text-left focus-visible:outline-none focus-visible:ring-2
                    focus-visible:ring-[hsl(var(--accent-primary)/0.6)] focus-visible:ring-inset"
         onClick={() => onView?.(inspiration.id)}
-        aria-label={t("view", { defaultValue: "查看" }) + `：${inspiration.name}`}
+        aria-label={t("view") + `：${inspiration.name}`}
       >
         {hasCoverImage ? (
           <>
@@ -116,7 +116,7 @@ export function InspirationCard({
                 className="line-clamp-1 text-[hsl(var(--text-primary))] transition-colors hover:text-[hsl(var(--accent-primary))]
                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary)/0.6)]
                            focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-secondary))] rounded"
-                aria-label={t("view", { defaultValue: "查看" }) + `：${inspiration.name}`}
+                aria-label={t("view") + `：${inspiration.name}`}
               >
                 {inspiration.name}
               </button>
@@ -169,7 +169,7 @@ export function InspirationCard({
                           hover:text-[hsl(var(--text-primary))] focus-visible:outline-none focus-visible:ring-2
                           focus-visible:ring-[hsl(var(--accent-primary)/0.6)] focus-visible:ring-offset-2
                           focus-visible:ring-offset-[hsl(var(--bg-secondary))]"
-                aria-label={t("view", { defaultValue: "查看" }) + `：${inspiration.name}`}
+                aria-label={t("view") + `：${inspiration.name}`}
               >
                 {t("view")}
               </button>

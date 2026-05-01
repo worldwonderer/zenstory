@@ -17,11 +17,10 @@ export const GuidePopover = forwardRef<HTMLDivElement, {
   const title = step.titleKey ? t(step.titleKey, { defaultValue: step.defaultTitle }) : step.defaultTitle;
   const description = step.descriptionKey ? t(step.descriptionKey, { defaultValue: step.defaultDescription }) : step.defaultDescription;
   const ctaLabel = step.ctaLabelKey ? t(step.ctaLabelKey, { defaultValue: step.defaultCtaLabel }) : step.defaultCtaLabel;
-  const skipLabel = t('dashboardTour.common.skip', { defaultValue: '跳过引导' });
+  const skipLabel = t('dashboardTour.common.skip');
   const progressLabel = t('dashboardTour.common.progress', {
     current: currentStepIndex + 1,
     total: totalSteps,
-    defaultValue: `${currentStepIndex + 1} / ${totalSteps}`,
   });
 
   return (

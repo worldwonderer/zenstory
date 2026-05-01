@@ -891,7 +891,7 @@ describe('useChatStreaming', () => {
         expect(result.current.streamRenderItems).toHaveLength(1)
         const item = result.current.streamRenderItems[0]
         expect(item.type).toBe('thinking_status')
-        expect(item.content).toContain('交接给 quality_reviewer')
+        expect(item.content).toContain('chat:workflow.handoffMessage')
       })
 
       it('does not add stream node for session_started (noise reduction)', () => {
@@ -925,7 +925,7 @@ describe('useChatStreaming', () => {
 
         expect(result.current.streamRenderItems).toHaveLength(1)
         expect(result.current.streamRenderItems[0].type).toBe('thinking_status')
-        expect(result.current.streamRenderItems[0].content).toContain('开始并行执行 3 个任务')
+        expect(result.current.streamRenderItems[0].content).toContain('chat:workflow.parallelStart')
       })
 
       it('does not add stream nodes for parallel task start/end (noise reduction)', () => {
@@ -960,7 +960,7 @@ describe('useChatStreaming', () => {
 
         expect(result.current.streamRenderItems).toHaveLength(1)
         expect(result.current.streamRenderItems[0].type).toBe('thinking_status')
-        expect(result.current.streamRenderItems[0].content).toContain('已接收补充指令')
+        expect(result.current.streamRenderItems[0].content).toContain('chat:workflow.steeringReceived')
       })
 
       it('adds thinking_status item for compaction_done', () => {
@@ -978,7 +978,7 @@ describe('useChatStreaming', () => {
 
         expect(result.current.streamRenderItems).toHaveLength(1)
         expect(result.current.streamRenderItems[0].type).toBe('thinking_status')
-        expect(result.current.streamRenderItems[0].content).toContain('已精简 12 条历史消息')
+        expect(result.current.streamRenderItems[0].content).toContain('chat:workflow.compactionDone')
       })
     })
 

@@ -13,11 +13,11 @@ interface ShareSkillModalProps {
 }
 
 const CATEGORIES = [
-  { value: "writing", label: "写作技巧" },
-  { value: "character", label: "角色塑造" },
-  { value: "worldbuilding", label: "世界观构建" },
-  { value: "plot", label: "情节设计" },
-  { value: "style", label: "文风润色" },
+  "writing",
+  "character",
+  "worldbuilding",
+  "plot",
+  "style",
 ];
 
 export function ShareSkillModal({
@@ -94,8 +94,8 @@ export function ShareSkillModal({
             className="input w-full"
           >
             {CATEGORIES.map((cat) => (
-              <option key={cat.value} value={cat.value}>
-                {cat.label}
+              <option key={cat} value={cat}>
+                {t(`skills:categories.${cat}`)}
               </option>
             ))}
           </select>

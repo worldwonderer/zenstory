@@ -34,3 +34,9 @@ export const FOLDER_TYPE_MAP: Record<string, string> = {
   "Script": "script",
   "Scripts": "script",
 };
+
+/**
+ * Folder names that represent material/attachment folders (both zh and en).
+ * Used to determine which folders should show upload UI instead of create-file UI.
+ */
+export const MATERIAL_FOLDER_NAMES = ["素材", "Materials", "Material"] as const;

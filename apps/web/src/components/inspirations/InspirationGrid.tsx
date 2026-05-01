@@ -274,7 +274,7 @@ export function InspirationGrid({
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page === 1}
-                aria-label={t("pagination.previous", { defaultValue: "上一页" })}
+                aria-label={t("pagination.previous")}
                 className="h-9 w-9 rounded-lg border border-[hsl(var(--border-color))]
                           bg-[hsl(var(--bg-secondary))] hover:bg-[hsl(var(--bg-tertiary))]
                           disabled:opacity-50 disabled:cursor-not-allowed transition-colors
@@ -288,7 +288,7 @@ export function InspirationGrid({
               <button
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page === totalPages}
-                aria-label={t("pagination.next", { defaultValue: "下一页" })}
+                aria-label={t("pagination.next")}
                 className="h-9 w-9 rounded-lg border border-[hsl(var(--border-color))]
                           bg-[hsl(var(--bg-secondary))] hover:bg-[hsl(var(--bg-tertiary))]
                           disabled:opacity-50 disabled:cursor-not-allowed transition-colors
@@ -317,18 +317,12 @@ export function InspirationGrid({
         const modalCopy =
           upgradeModalVariant === "project_quota"
             ? {
-                title: t("projectQuotaExceededTitle", { defaultValue: "项目数量已达上限" }),
-                description: t("projectQuotaExceededModalDesc", {
-                  defaultValue:
-                    "当前套餐可创建的项目数量已达上限。可先去订阅页升级，或到套餐页快速对比后再决定。",
-                }),
+                title: t("projectQuotaExceededTitle"),
+                description: t("projectQuotaExceededModalDesc"),
               }
             : {
-                title: t("copyQuotaExceededTitle", { defaultValue: "灵感复制额度已用尽" }),
-                description: t("copyQuotaExceededModalDesc", {
-                  defaultValue:
-                    "你已用完本月灵感复制额度。可先去订阅页提升额度，或到套餐页快速对比后再决定。",
-                }),
+                title: t("copyQuotaExceededTitle"),
+                description: t("copyQuotaExceededModalDesc"),
               };
 
         return (
@@ -340,13 +334,13 @@ export function InspirationGrid({
         secondaryDestination="pricing"
         title={modalCopy.title}
         description={modalCopy.description}
-        primaryLabel={t("copyQuotaUpgradePrimary", { defaultValue: "查看升级方案" })}
+        primaryLabel={t("copyQuotaUpgradePrimary")}
         onPrimary={() => {
           window.location.assign(
             buildUpgradeUrl(prompt.billingPath, prompt.source)
           );
         }}
-        secondaryLabel={t("copyQuotaUpgradeSecondary", { defaultValue: "查看套餐对比" })}
+        secondaryLabel={t("copyQuotaUpgradeSecondary")}
         onSecondary={() => {
           window.location.assign(
             buildUpgradeUrl(prompt.pricingPath, prompt.source)

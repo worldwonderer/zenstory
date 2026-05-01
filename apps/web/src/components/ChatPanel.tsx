@@ -437,15 +437,7 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
     const key = `${GENERATION_MODE_STORAGE_KEY_PREFIX}${currentProjectId}`;
     localStorage.setItem(key, mode);
     toast.success(
-      t(
-        mode === "fast" ? "chat:input.mode.switchedFast" : "chat:input.mode.switchedQuality",
-        {
-          defaultValue:
-            mode === "fast"
-              ? "已切换到快速模式：更快出结果（可能更简略）"
-              : "已切换到高质量模式：更稳更全面（可能更慢）",
-        },
-      ),
+      t(mode === "fast" ? "chat:input.mode.switchedFast" : "chat:input.mode.switchedQuality"),
     );
   }, [currentProjectId, generationMode, t]);
 
@@ -979,10 +971,7 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
   const handleSubmitFeedback = useCallback(async (message: Message, vote: MessageFeedbackVote) => {
     const backendMessageId = message.backendMessageId ?? null;
     if (!backendMessageId) {
-      toast.error(t("feedback.unsupported", {
-        ns: "chat",
-        defaultValue: "当前消息暂不支持反馈",
-      }));
+      toast.error(t("chat:feedback.unsupported"));
       return;
     }
 
@@ -1004,10 +993,7 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
       );
     } catch (error) {
       logger.error("Failed to submit message feedback:", error);
-      toast.error(t("feedback.submitFailed", {
-        ns: "chat",
-        defaultValue: "反馈提交失败，请稍后重试",
-      }));
+      toast.error(t("chat:feedback.submitFailed"));
     } finally {
       setFeedbackPendingMessageId(null);
     }
@@ -1666,7 +1652,7 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
                             onClick={() => setShowQuotaUpgradeModal(true)}
                             className="inline-flex h-8 items-center rounded-md border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] px-3 text-xs font-medium text-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.16)] transition-colors"
                           >
-                            {t('dashboard:billing.ctaUpgradePro', '升级专业版')}
+                            {t('dashboard:billing.ctaUpgradePro')}
                           </button>
                         </div>
                       )}
@@ -1682,11 +1668,11 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
                     type="button"
                     onClick={handleJumpToLatest}
                     className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-[hsl(var(--bg-secondary))] border border-[hsl(var(--border-color))] px-3 py-1.5 text-xs text-[hsl(var(--text-primary))] shadow-md hover:bg-[hsl(var(--bg-tertiary))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent-primary))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg-primary))]"
-                    aria-label={t('chat:panel.jumpToLatest', { defaultValue: '跳到最新内容' })}
-                    title={t('chat:panel.jumpToLatest', { defaultValue: '跳到最新内容' })}
+                    aria-label={t('chat:panel.jumpToLatest')}
+                    title={t('chat:panel.jumpToLatest')}
                   >
                     <ArrowDown size={14} />
-                    {t('chat:panel.jumpToLatest', { defaultValue: '跳到最新内容' })}
+                    {t('chat:panel.jumpToLatest')}
                   </button>
                 </div>
               )}
@@ -1716,8 +1702,8 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
             onPointerUp={handleInputPanelResizeEnd}
             onPointerCancel={handleInputPanelResizeEnd}
             onDoubleClick={resetInputPanelHeight}
-            title="拖动调整输入区域高度（双击重置）"
-            aria-label="拖动调整输入区域高度（双击重置）"
+            title={t('chat:panel.resizeHandle')}
+            aria-label={t('chat:panel.resizeHandle')}
           >
             <div className="w-10 h-1 rounded-full bg-[hsl(var(--border-color))] opacity-40 group-hover:opacity-70 group-active:opacity-80 transition-opacity" />
           </div>
@@ -1738,9 +1724,7 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
             onCancel={isStreaming ? handleCancel : undefined}
             placeholder={
               isStreaming || isThinking
-                ? t("chat:input.placeholderWhileProcessing", {
-                    defaultValue: "AI 正在生成，你可以先输入，结束后再发送…",
-                  })
+                ? t("chat:input.placeholderWhileProcessing")
                 : undefined
             }
             aiSuggestions={aiSuggestions}
@@ -1766,18 +1750,15 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
         source={chatQuotaUpgradePrompt.source}
         primaryDestination="billing"
         secondaryDestination="pricing"
-        title={t('chat:panel.quotaExceededTitle', '今日额度已用尽')}
-        description={t(
-          'chat:panel.quotaExceededHint',
-          '你已达到当前套餐的今日 AI 对话上限。可先查看升级方案，或去套餐页对比后再决定。'
-        )}
-        primaryLabel={t('dashboard:billing.ctaUpgradePro', '升级专业版')}
+        title={t('chat:panel.quotaExceededTitle')}
+        description={t('chat:panel.quotaExceededHint')}
+        primaryLabel={t('dashboard:billing.ctaUpgradePro')}
         onPrimary={() => {
           window.location.assign(
             buildUpgradeUrl(chatQuotaUpgradePrompt.billingPath, chatQuotaUpgradePrompt.source)
           );
         }}
-        secondaryLabel={t('home:pricingTeaser.viewPricing', '查看套餐权益')}
+        secondaryLabel={t('home:pricingTeaser.viewPricing')}
         onSecondary={() => {
           window.location.assign(
             buildUpgradeUrl(chatQuotaUpgradePrompt.pricingPath, chatQuotaUpgradePrompt.source)
@@ -1791,19 +1772,15 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
         source={fileVersionUpgradePrompt.source}
         primaryDestination="billing"
         secondaryDestination="pricing"
-        title={t('editor:versionHistory.fileVersionLimitTitle', {
-          defaultValue: '文件版本额度已达上限',
-        })}
-        description={t('editor:versionHistory.fileVersionLimitUpgrade', {
-          defaultValue: '当前套餐可保留的文件版本已达上限。可前往订阅页升级，或先查看套餐对比后再决定。',
-        })}
-        primaryLabel={t('common:viewUpgrade', { defaultValue: '查看升级方案' })}
+        title={t('editor:versionHistory.fileVersionLimitTitle')}
+        description={t('editor:versionHistory.fileVersionLimitUpgrade')}
+        primaryLabel={t('common:viewUpgrade')}
         onPrimary={() => {
           window.location.assign(
             buildUpgradeUrl(fileVersionUpgradePrompt.billingPath, fileVersionUpgradePrompt.source)
           );
         }}
-        secondaryLabel={t('common:viewPlans', { defaultValue: '查看套餐对比' })}
+        secondaryLabel={t('common:viewPlans')}
         onSecondary={() => {
           window.location.assign(
             buildUpgradeUrl(fileVersionUpgradePrompt.pricingPath, fileVersionUpgradePrompt.source)
