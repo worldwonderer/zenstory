@@ -234,8 +234,15 @@ export const pageSEOConfig: Record<string, SEOPageConfig> = {
  * console.log(config.noindex); // false (index by default)
  * ```
  */
-export const defaultSEOConfig: SEOConfig = {
-  title: 'zenstory - 创作让人难忘的故事',
-  description: 'AI-powered writing assistant',
-  noindex: false,
+export const defaultSEOConfig: SEOPageConfig = {
+  zh: {
+    title: 'zenstory - 创作让人难忘的故事',
+    description: '专业的AI小说写作助手，提供智能大纲生成、角色管理、世界观构建等功能',
+    noindex: false,
+  },
+  en: {
+    title: 'zenstory - Create Unforgettable Stories',
+    description: 'Professional AI novel writing assistant featuring intelligent outline generation, character management, and world-building',
+    noindex: false,
+  }
 };

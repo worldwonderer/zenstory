@@ -123,5 +123,12 @@
     "upgradePrimary": "View upgrade options",
     "upgradeSecondary": "Compare plans"
   },
-  "retrySuccess": "Decomposition has been resubmitted. Please check back shortly for status updates."
+  "retrySuccess": "Decomposition has been resubmitted. Please check back shortly for status updates.",
+  "toast": {
+    "loadListFailed": "Failed to load materials list",
+    "importSuccess": "Material imported successfully",
+    "importFailed": "Import failed, please try again",
+    "batchImportSuccess": "Successfully imported {{count}} items",
+    "batchImportFailed": "Batch import failed, please try again"
+  }
 }

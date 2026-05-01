@@ -123,5 +123,12 @@
     "upgradePrimary": "查看升级方案",
     "upgradeSecondary": "查看套餐对比"
   },
-  "retrySuccess": "已重新提交分解任务，请稍候查看处理状态。"
+  "retrySuccess": "已重新提交分解任务，请稍候查看处理状态。",
+  "toast": {
+    "loadListFailed": "加载素材列表失败",
+    "importSuccess": "素材导入成功",
+    "importFailed": "素材导入失败，请重试",
+    "batchImportSuccess": "成功导入 {{count}} 个素材",
+    "batchImportFailed": "批量导入失败，请重试"
+  }
 }

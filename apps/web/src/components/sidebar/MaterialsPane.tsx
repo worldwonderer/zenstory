@@ -48,7 +48,7 @@ type MaterialCountKey =
  * Displays AI-extracted material libraries with search, batch selection, and import.
  */
 export const MaterialsPane: React.FC = () => {
-  const { t } = useTranslation(['editor', 'common']);
+  const { t } = useTranslation(['editor', 'common', 'materials']);
   const { currentProjectId } = useProject();
   const { addMaterial } = useMaterialAttachment();
   const materialLib = useMaterialLibraryContext();
@@ -118,7 +118,7 @@ export const MaterialsPane: React.FC = () => {
       setEntityLists(prev => ({ ...prev, [key]: items }));
     } catch (err) {
       logger.error('Failed to load entity list:', err);
-      toast.error('加载素材列表失败');
+      toast.error(t('materials:toast.loadListFailed'));
     } finally {
       entityListLoadingRef.current[key] = false;
       setEntityListLoading(prev => ({ ...prev, [key]: false }));
@@ -146,10 +146,10 @@ export const MaterialsPane: React.FC = () => {
         entity_type: entityType,
         entity_id: entityId,
       });
-      toast.success('素材导入成功');
+      toast.success(t('materials:toast.importSuccess'));
     } catch (err) {
       logger.error('Failed to quick import material:', err);
-      toast.error('素材导入失败，请重试');
+      toast.error(t('materials:toast.importFailed'));
     }
   }, [currentProjectId]);
 
@@ -229,12 +229,12 @@ export const MaterialsPane: React.FC = () => {
         };
       });
       await materialsApi.batchImport(currentProjectId, items);
-      toast.success(`成功导入 ${items.length} 个素材`);
+      toast.success(t('materials:toast.batchImportSuccess', { count: items.length }));
       setBatchMode(false);
       setSelectedItems(new Set());
     } catch (err) {
       logger.error('Failed to batch import:', err);
-      toast.error('批量导入失败，请重试');
+      toast.error(t('materials:toast.batchImportFailed'));
     } finally {
       setIsBatchImporting(false);
     }
