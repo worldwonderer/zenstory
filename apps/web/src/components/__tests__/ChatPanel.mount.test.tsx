@@ -14,10 +14,19 @@ const capturedUseAgentStream = vi.hoisted(() => ({
   options: null as Record<string, unknown> | null,
 }))
 
+const chatPanelTranslations: Record<string, string> = {
+  'chat:panel.quotaExceededTitle': '今日 AI 配额已用尽',
+  'chat:panel.quotaExceededHint': '这是账号配额限制，不是本次流程步数限制。',
+  'chat:input.mode.switchedFast': '已切换到快速模式：更快出结果（可能更简略）',
+  'chat:input.mode.switchedQuality': '已切换到高质量模式：更稳更全面（可能更慢）',
+  'dashboard:billing.ctaUpgradePro': '升级专业版',
+  'home:pricingTeaser.viewPricing': '查看套餐权益',
+}
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: { defaultValue?: string } | string) =>
-      typeof options === 'string' ? options : options?.defaultValue ?? key,
+      chatPanelTranslations[key] ?? (typeof options === 'string' ? options : options?.defaultValue ?? key),
   }),
 }))
 
@@ -305,7 +314,7 @@ describe('ChatPanel mount smoke', () => {
     render(<ChatPanel />)
 
     await waitFor(() => {
-      expect(screen.getByText('今日额度已用尽')).toBeInTheDocument()
+      expect(screen.getByText('今日 AI 配额已用尽')).toBeInTheDocument()
     })
   })
 

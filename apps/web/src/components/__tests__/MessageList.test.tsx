@@ -78,6 +78,10 @@ vi.mock('../../hooks/useThinkingVisibility', () => ({
 }))
 
 vi.mock('react-i18next', () => ({
+  initReactI18next: {
+    type: '3rdParty',
+    init: vi.fn(),
+  },
   useTranslation: () => ({
     // Return the key as-is to match actual component behavior
     t: (key: string) => key,
