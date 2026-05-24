@@ -719,6 +719,69 @@ async def test_share_skill_success(client: AsyncClient, db_session):
 
 
 @pytest.mark.integration
+async def test_share_skill_preserves_triggers_for_public_added_copy(client: AsyncClient, db_session):
+    """Shared community skills should keep triggers when another user adds them."""
+    author_setup = await create_user_and_login(
+        client,
+        db_session,
+        "skilluser22b_author",
+        "skilluser22b_author@example.com",
+    )
+    author = author_setup["user"]
+    author_token = author_setup["token"]
+
+    skill = UserSkill(
+        user_id=author.id,
+        name="Shareable Trigger Skill",
+        description="A skill with explicit triggers",
+        triggers=json.dumps(["/share-trigger", "共享触发"]),
+        instructions="Use the shared trigger instructions.",
+        is_shared=False,
+    )
+    db_session.add(skill)
+    db_session.commit()
+
+    share_response = await client.post(
+        f"/api/v1/skills/{skill.id}/share",
+        json={"category": "writing"},
+        headers={"Authorization": f"Bearer {author_token}"},
+    )
+    assert share_response.status_code == 200
+    public_skill_id = share_response.json()["public_skill_id"]
+
+    public_skill = db_session.get(PublicSkill, public_skill_id)
+    assert public_skill is not None
+    assert json.loads(public_skill.tags) == ["/share-trigger", "共享触发"]
+
+    public_skill.status = "approved"
+    db_session.add(public_skill)
+    db_session.commit()
+
+    reader_setup = await create_user_and_login(
+        client,
+        db_session,
+        "skilluser22b_reader",
+        "skilluser22b_reader@example.com",
+    )
+    reader_token = reader_setup["token"]
+
+    add_response = await client.post(
+        f"/api/v1/public-skills/{public_skill_id}/add",
+        headers={"Authorization": f"Bearer {reader_token}"},
+    )
+    assert add_response.status_code == 200
+
+    list_response = await client.get(
+        "/api/v1/skills?search=Shareable",
+        headers={"Authorization": f"Bearer {reader_token}"},
+    )
+    assert list_response.status_code == 200
+    listed_skill = list_response.json()["skills"][0]
+    assert listed_skill["source"] == "added"
+    assert listed_skill["triggers"] == ["/share-trigger", "共享触发"]
+
+
+@pytest.mark.integration
 async def test_share_skill_already_shared(client: AsyncClient, db_session):
     """Test sharing an already shared skill returns appropriate message."""
     setup = await create_user_and_login(client, db_session, "skilluser23", "skilluser23@example.com")

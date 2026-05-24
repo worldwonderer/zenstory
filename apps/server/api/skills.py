@@ -525,7 +525,11 @@ async def share_skill(
         description=user_skill.description,
         instructions=user_skill.instructions,
         category=request.category,
-        tags="[]",
+        tags=json.dumps(_safe_json_array(
+            user_skill.triggers,
+            field_name="user_skill.triggers",
+            record_id=user_skill.id,
+        )),
         source="community",
         author_id=current_user.id,
         status="pending",
