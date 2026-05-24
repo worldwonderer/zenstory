@@ -9,6 +9,10 @@ vi.mock('../../../hooks/useMediaQuery', () => ({
 }))
 
 vi.mock('react-i18next', () => ({
+  initReactI18next: {
+    type: '3rdParty',
+    init: vi.fn(),
+  },
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) =>
       (
