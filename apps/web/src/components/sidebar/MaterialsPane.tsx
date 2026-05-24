@@ -191,6 +191,9 @@ export const MaterialsPane: React.FC = () => {
         }
       } catch (err) {
         logger.error('Failed to search materials:', err);
+        if (searchRequestSeqRef.current === requestSeq) {
+          setSearchResults([]);
+        }
       } finally {
         if (searchRequestSeqRef.current === requestSeq) {
           setIsSearching(false);

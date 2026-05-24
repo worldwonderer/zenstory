@@ -158,6 +158,39 @@ describe('MaterialsPane', () => {
     }
   })
 
+  it('clears stale material search results when the latest search fails', async () => {
+    vi.useFakeTimers()
+    try {
+      mockSearchMaterials
+        .mockResolvedValueOnce([
+          { novel_id: 1, novel_title: 'Novel One', entity_type: 'characters', entity_id: 1, name: 'Previous Hero' },
+        ])
+        .mockRejectedValueOnce(new Error('network failed'))
+
+      render(<MaterialsPane />)
+
+      const input = screen.getByPlaceholderText('editor:fileTree.searchMaterials')
+
+      fireEvent.change(input, { target: { value: 'hero' } })
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Previous Hero')).toBeInTheDocument()
+
+      fireEvent.change(input, { target: { value: 'missing' } })
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+        await Promise.resolve()
+      })
+
+      expect(screen.queryByText('Previous Hero')).not.toBeInTheDocument()
+      expect(screen.getByText('editor:fileTree.noSearchResults')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not report full success when batch import partially fails', async () => {
     const user = userEvent.setup()
     render(<MaterialsPane />)
