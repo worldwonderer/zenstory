@@ -918,6 +918,45 @@ async def test_search_materials_includes_completed_with_errors(client: AsyncClie
 
 
 @pytest.mark.integration
+async def test_search_materials_stories(client: AsyncClient, db_session):
+    """Search should return story entities shown in the reference library summary."""
+    user, token = await create_test_user(client, db_session, "searchuser_stories")
+
+    novel = create_test_novel(db_session, user.id, "Story Search Novel")
+    create_test_job(db_session, novel.id, "completed")
+
+    storyline = StoryLine(novel_id=novel.id, title="Main Arc")
+    db_session.add(storyline)
+    db_session.commit()
+    db_session.refresh(storyline)
+
+    story = Story(
+        story_line_id=storyline.id,
+        title="Moonlit Betrayal",
+        synopsis="A secret betrayal changes the hero's route.",
+    )
+    db_session.add(story)
+    db_session.commit()
+    db_session.refresh(story)
+
+    response = await client.get(
+        "/api/v1/materials/search",
+        params={"q": "Moonlit"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert any(
+        item["novel_title"] == "Story Search Novel"
+        and item["entity_type"] == "stories"
+        and item["entity_id"] == story.id
+        and item["name"] == "Moonlit Betrayal"
+        for item in data
+    )
+
+
+@pytest.mark.integration
 async def test_search_materials_only_completed(client: AsyncClient, db_session):
     """Test that search only includes completed novels."""
     user, token = await create_test_user(client, db_session, "searchuser3")

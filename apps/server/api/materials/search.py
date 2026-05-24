@@ -251,6 +251,30 @@ def search_materials(
                 entity_type="storylines", entity_id=s.id, name=s.title
             ))
 
+    # Search stories in database
+    remaining = _remaining()
+    if remaining > 0:
+        stories = session.exec(
+            select(Story, StoryLine.novel_id)
+            .join(StoryLine, Story.story_line_id == StoryLine.id)
+            .where(StoryLine.novel_id.in_(novel_ids))
+            .where(
+                or_(
+                    func.lower(func.coalesce(Story.title, "")).contains(query),
+                    func.lower(func.coalesce(Story.synopsis, "")).contains(query),
+                    func.lower(func.coalesce(Story.core_objective, "")).contains(query),
+                    func.lower(func.coalesce(Story.core_conflict, "")).contains(query),
+                )
+            )
+            .limit(remaining)
+        ).all()
+        for story, story_novel_id in stories:
+            novel = novel_map[story_novel_id][0]
+            results.append(MaterialSearchResult(
+                novel_id=novel.id, novel_title=novel.title,
+                entity_type="stories", entity_id=story.id, name=story.title
+            ))
+
     # Search worldview in database
     remaining = _remaining()
     if remaining > 0:
