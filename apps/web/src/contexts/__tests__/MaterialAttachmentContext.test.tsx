@@ -91,6 +91,34 @@ describe('MaterialAttachmentContext', () => {
     expect(result.current.attachedMaterials).toHaveLength(MAX_ATTACHED_MATERIALS)
   })
 
+  it('prevents duplicate library materials even when callers use different display IDs', () => {
+    const { result } = renderHook(() => useMaterialAttachment(), {
+      wrapper: ({ children }) => <MaterialAttachmentProvider>{children}</MaterialAttachmentProvider>,
+    })
+
+    const librarySource = {
+      novelId: 9,
+      entityType: 'stories',
+      entityId: 12,
+    }
+
+    act(() => {
+      expect(result.current.addMaterial('material-1000', 'Story arc', librarySource)).toBe(true)
+    })
+    act(() => {
+      expect(result.current.addMaterial('material-2000', 'Story arc', librarySource)).toBe(false)
+    })
+
+    expect(result.current.attachedMaterials).toHaveLength(1)
+    expect(result.current.attachedLibraryMaterials).toEqual([
+      {
+        novel_id: 9,
+        entity_type: 'stories',
+        entity_id: 12,
+      },
+    ])
+  })
+
   it('removes and clears attached materials', () => {
     render(
       <MaterialAttachmentProvider>

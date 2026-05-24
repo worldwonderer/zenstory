@@ -47,6 +47,16 @@ export interface MaterialAttachmentContextType {
 
 const MaterialAttachmentContext = createContext<MaterialAttachmentContextType | undefined>(undefined);
 
+const isSameLibrarySource = (
+  a?: AttachedMaterial['librarySource'],
+  b?: AttachedMaterial['librarySource'],
+): boolean => {
+  if (!a || !b) return false;
+  return a.novelId === b.novelId
+    && a.entityType === b.entityType
+    && a.entityId === b.entityId;
+};
+
 export const MaterialAttachmentProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [attachedMaterials, setAttachedMaterials] = useState<AttachedMaterial[]>([]);
   const attachedMaterialsRef = useRef<AttachedMaterial[]>(attachedMaterials);
@@ -77,6 +87,7 @@ export const MaterialAttachmentProvider: React.FC<{ children: ReactNode }> = ({ 
   const addMaterial = useCallback((id: string, title: string, librarySource?: AttachedMaterial['librarySource']): boolean => {
     const current = attachedMaterialsRef.current;
     if (current.some(m => m.id === id)) return false;
+    if (librarySource && current.some(m => isSameLibrarySource(m.librarySource, librarySource))) return false;
     if (current.length >= MAX_ATTACHED_MATERIALS) return false;
 
     const next = [...current, { id, title, librarySource }];
