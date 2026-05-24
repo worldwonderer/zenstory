@@ -6,8 +6,9 @@ Handles importing material library entities into project files:
 - Batch import multiple materials
 """
 import json
+from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from services.auth import get_current_active_user
 from sqlmodel import Session, select
 
@@ -82,6 +83,7 @@ def import_material(
     request: MaterialImportRequest,
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
+    accept_language: Annotated[str | None, Header(alias="Accept-Language")] = None,
 ):
     """
     Import material entity as a project file.
@@ -110,7 +112,7 @@ def import_material(
         novel_id=request.novel_id,
         entity_type=request.entity_type,
         entity_id=request.entity_id,
-        accept_language=None,
+        accept_language=accept_language,
         current_user=current_user,
         session=session,
     )
@@ -194,6 +196,7 @@ def batch_import_materials(
     request: BatchImportRequest,
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
+    accept_language: Annotated[str | None, Header(alias="Accept-Language")] = None,
 ):
     """Batch import multiple materials to a project."""
     from models import Project
@@ -219,7 +222,12 @@ def batch_import_materials(
                 entity_type=item.entity_type,
                 entity_id=item.entity_id,
             )
-            result = import_material(single_request, current_user, session)
+            result = import_material(
+                single_request,
+                current_user,
+                session,
+                accept_language=accept_language,
+            )
             results.append(BatchImportResult(
                 file_id=result.file_id,
                 title=result.title,

@@ -1272,6 +1272,98 @@ async def test_import_material_skips_soft_deleted_auto_folder(client: AsyncClien
     assert new_folder.is_deleted is False
 
 
+@pytest.mark.integration
+async def test_import_material_uses_accept_language_for_auto_folder(client: AsyncClient, db_session):
+    """Import should create the same localized auto-folder that preview recommended."""
+    from models.file_model import File as ProjectFile
+
+    user, token = await create_test_user(client, db_session, "importuser_locale_single")
+    novel = create_test_novel(db_session, user.id, "Localized Import Novel")
+    create_test_job(db_session, novel.id, "completed")
+
+    character = Character(novel_id=novel.id, name="Locale Hero")
+    db_session.add(character)
+
+    project = Project(name="Localized Import Project", owner_id=user.id)
+    db_session.add(project)
+    db_session.commit()
+    db_session.refresh(character)
+    db_session.refresh(project)
+
+    preview_response = await client.get(
+        f"/api/v1/materials/{novel.id}/characters/{character.id}/preview",
+        headers={"Authorization": f"Bearer {token}", "Accept-Language": "en"},
+    )
+    assert preview_response.status_code == 200
+    assert preview_response.json()["suggested_folder_name"] == "Characters"
+
+    response = await client.post(
+        "/api/v1/materials/import",
+        headers={"Authorization": f"Bearer {token}", "Accept-Language": "en"},
+        json={
+            "project_id": project.id,
+            "novel_id": novel.id,
+            "entity_type": "characters",
+            "entity_id": character.id,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["folder_name"] == "Characters"
+
+    imported_file = db_session.get(ProjectFile, payload["file_id"])
+    assert imported_file is not None
+    folder = db_session.get(ProjectFile, imported_file.parent_id)
+    assert folder is not None
+    assert folder.title == "Characters"
+
+
+@pytest.mark.integration
+async def test_batch_import_uses_accept_language_for_auto_folder(client: AsyncClient, db_session):
+    """Batch import should preserve localized auto-folder hints for each imported item."""
+    from models.file_model import File as ProjectFile
+
+    user, token = await create_test_user(client, db_session, "importuser_locale_batch")
+    novel = create_test_novel(db_session, user.id, "Localized Batch Novel")
+    create_test_job(db_session, novel.id, "completed")
+
+    character = Character(novel_id=novel.id, name="Batch Locale Hero")
+    db_session.add(character)
+
+    project = Project(name="Localized Batch Project", owner_id=user.id)
+    db_session.add(project)
+    db_session.commit()
+    db_session.refresh(character)
+    db_session.refresh(project)
+
+    response = await client.post(
+        "/api/v1/materials/batch-import",
+        headers={"Authorization": f"Bearer {token}", "Accept-Language": "en"},
+        json={
+            "project_id": project.id,
+            "items": [
+                {
+                    "novel_id": novel.id,
+                    "entity_type": "characters",
+                    "entity_id": character.id,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["failed_count"] == 0
+    assert payload["results"][0]["folder_name"] == "Characters"
+
+    imported_file = db_session.get(ProjectFile, payload["results"][0]["file_id"])
+    assert imported_file is not None
+    folder = db_session.get(ProjectFile, imported_file.parent_id)
+    assert folder is not None
+    assert folder.title == "Characters"
+
+
 # ==================== Delete Tests ====================
 
 
