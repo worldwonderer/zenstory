@@ -94,12 +94,17 @@ export function UploadNovelModal({
     setUploadProgress(0);
     setError(null);
 
+    let progressInterval: ReturnType<typeof setInterval> | null = null;
+
     try {
       // Simulate progress (since we don't have real progress tracking)
-      const progressInterval = setInterval(() => {
+      progressInterval = setInterval(() => {
         setUploadProgress((prev) => {
           if (prev >= 90) {
-            clearInterval(progressInterval);
+            if (progressInterval) {
+              clearInterval(progressInterval);
+              progressInterval = null;
+            }
             return 90;
           }
           return prev + 10;
@@ -108,7 +113,10 @@ export function UploadNovelModal({
 
       const response = await materialsApi.upload(file, title || undefined);
 
-      clearInterval(progressInterval);
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
       setUploadProgress(100);
 
       // Wait a moment to show 100% before closing
@@ -117,6 +125,10 @@ export function UploadNovelModal({
         onClose();
       }, 500);
     } catch (err) {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
       setError(
         resolveMaterialUploadErrorMessage(
           err,
@@ -126,6 +138,9 @@ export function UploadNovelModal({
       );
       setUploadProgress(0);
     } finally {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+      }
       setUploading(false);
     }
   };

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { UploadNovelModal } from '../UploadNovelModal'
 
@@ -94,6 +94,36 @@ describe('UploadNovelModal', () => {
       expect(onSuccess).toHaveBeenCalledWith({ id: 'material-1', title: 'Uploaded Novel' })
       expect(onClose).toHaveBeenCalled()
     }, { timeout: 2000 })
+  })
+
+
+  it('stops simulated progress after an upload failure', async () => {
+    vi.useFakeTimers()
+    try {
+      mockUpload.mockRejectedValueOnce(new Error('dispatch failed'))
+
+      render(<UploadNovelModal open={true} onClose={vi.fn()} onSuccess={vi.fn()} />)
+
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      const file = new File(['draft'], 'broken-upload.txt', { type: 'text/plain' })
+      await act(async () => {
+        fireEvent.change(input, { target: { files: [file] } })
+        await Promise.resolve()
+      })
+
+      expect(screen.getByDisplayValue('broken-upload')).toBeInTheDocument()
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Upload' }))
+        await Promise.resolve()
+      })
+
+      expect(screen.getByText('Upload failed')).toBeInTheDocument()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
   })
 
   it('supports drag and drop plus removing the selected file', async () => {
