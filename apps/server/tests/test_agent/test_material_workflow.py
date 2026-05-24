@@ -15,7 +15,7 @@ from agent.context.assembler import ContextAssembler, get_context_assembler
 from agent.schemas.context import (
     ContextPriority,
 )
-from models import File, Project, User
+from models import File, Project, Story, StoryLine, User
 
 
 @pytest.fixture
@@ -740,6 +740,76 @@ class TestMaterialCombinationWorkflow:
         assert len(attached_items) == 2
         for item in attached_items:
             assert item["priority"] == ContextPriority.CRITICAL.value
+
+    def test_attached_library_story_in_context(
+        self,
+        db_session,
+        test_user,
+        test_project,
+    ):
+        """
+        Test that directly attached library stories are included in context.
+
+        Scenario:
+        - Create a material library story under a storyline
+        - Attach that specific story to chat
+        - Verify its markdown appears with CRITICAL priority
+        """
+        from models import Novel
+
+        test_project.owner_id = test_user.id
+        db_session.add(test_project)
+        db_session.commit()
+
+        novel = Novel(user_id=test_user.id, title="素材原著")
+        db_session.add(novel)
+        db_session.commit()
+        db_session.refresh(novel)
+
+        storyline = StoryLine(novel_id=novel.id, title="主线")
+        db_session.add(storyline)
+        db_session.commit()
+        db_session.refresh(storyline)
+
+        story = Story(
+            story_line_id=storyline.id,
+            title="夺回灵脉",
+            synopsis="主角潜入矿脉，揭开宗门暗线。",
+            core_objective="夺回被占据的灵脉",
+            core_conflict="主角与叛徒长老正面对抗",
+            story_type="主线剧情",
+            chapter_range="第3章 - 第5章",
+        )
+        db_session.add(story)
+        db_session.commit()
+        db_session.refresh(story)
+
+        assembler = ContextAssembler()
+        result = assembler.assemble(
+            session=db_session,
+            project_id=test_project.id,
+            user_id=test_user.id,
+            attached_library_materials=[
+                {
+                    "novel_id": novel.id,
+                    "entity_type": "stories",
+                    "entity_id": story.id,
+                }
+            ],
+            max_tokens=2000,
+            include_characters=False,
+            include_lores=False,
+        )
+
+        assert "夺回灵脉" in result.context
+        assert "主角潜入矿脉，揭开宗门暗线。" in result.context
+
+        attached_items = [
+            item for item in result.items
+            if item.get("metadata", {}).get("library_material")
+        ]
+        assert len(attached_items) == 1
+        assert attached_items[0]["priority"] == ContextPriority.CRITICAL.value
 
     def test_material_with_text_quotes(
         self,

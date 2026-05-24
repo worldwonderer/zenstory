@@ -438,6 +438,7 @@ class ContextAssembler:
             format_character_to_markdown,
             format_goldenfinger_to_markdown,
             format_relationship_to_markdown,
+            format_story_to_markdown,
             format_storyline_to_markdown,
             format_worldview_to_markdown,
         )
@@ -445,6 +446,7 @@ class ContextAssembler:
             Character,
             GoldenFinger,
             Novel,
+            Story,
             StoryLine,
             WorldView,
         )
@@ -505,6 +507,20 @@ class ContextAssembler:
             ).all()
             storylines_map = {sl.id: sl for sl in storylines}
 
+        # Optimization: Batch fetch all stories
+        story_ids = {
+            (m.get("novel_id"), m.get("entity_id"))
+            for m in library_materials
+            if m.get("entity_type") == "stories" and m.get("entity_id") and m.get("novel_id")
+        }
+        stories_map: dict[int, Story] = {}
+        if story_ids:
+            story_entity_ids = [eid for _, eid in story_ids]
+            stories = session.exec(
+                select(Story).where(Story.id.in_(story_entity_ids))
+            ).all()
+            stories_map = {story.id: story for story in stories}
+
         # Optimization: Batch fetch worldviews (one per novel_id)
         worldview_novel_ids = {
             m.get("novel_id")
@@ -563,6 +579,17 @@ class ContextAssembler:
                         continue
 
                     title, markdown = format_storyline_to_markdown(story_line, session, novel.title)
+
+                elif entity_type == "stories":
+                    story = stories_map.get(entity_id)
+                    if not story or not story.story_line_id:
+                        continue
+
+                    story_line = session.get(StoryLine, story.story_line_id)
+                    if not story_line or story_line.novel_id != novel_id:
+                        continue
+
+                    title, markdown = format_story_to_markdown(story, novel.title)
 
                 elif entity_type == "relationships":
                     title, markdown = format_relationship_to_markdown(novel_id, session, novel.title)
