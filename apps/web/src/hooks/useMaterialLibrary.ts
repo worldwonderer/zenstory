@@ -98,6 +98,8 @@ export function useMaterialLibrary(): MaterialLibraryState {
       setPreview(data);
       setPreviewEntityInfo({ novelId, entityType, entityId });
     } catch (err) {
+      setPreview(null);
+      setPreviewEntityInfo(null);
       logger.error('Failed to load material preview:', err);
     } finally {
       setIsPreviewLoading(false);

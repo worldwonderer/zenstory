@@ -340,6 +340,36 @@ describe('useMaterialLibrary', () => {
 
       consoleErrorSpy.mockRestore()
     })
+
+    it('clears stale preview when loading a different entity fails', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      vi.mocked(materialsApi.materialsApi.getPreview)
+        .mockResolvedValueOnce(mockPreview)
+        .mockRejectedValueOnce(new Error('Next preview failed'))
+
+      const { result } = renderHook(() => useMaterialLibrary())
+
+      await act(async () => {
+        await result.current.loadPreview(1, 'characters', 123)
+      })
+      expect(result.current.preview).toEqual(mockPreview)
+      expect(result.current.previewEntityInfo).toEqual({
+        novelId: 1,
+        entityType: 'characters',
+        entityId: 123,
+      })
+
+      await act(async () => {
+        await result.current.loadPreview(1, 'stories', 456)
+      })
+
+      expect(result.current.isPreviewLoading).toBe(false)
+      expect(result.current.preview).toBe(null)
+      expect(result.current.previewEntityInfo).toBe(null)
+      expect(consoleErrorSpy).toHaveBeenCalled()
+
+      consoleErrorSpy.mockRestore()
+    })
   })
 
   describe('clearPreview', () => {
