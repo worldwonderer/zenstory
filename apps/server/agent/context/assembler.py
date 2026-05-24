@@ -592,7 +592,12 @@ class ContextAssembler:
                     title, markdown = format_story_to_markdown(story, novel.title)
 
                 elif entity_type == "relationships":
-                    title, markdown = format_relationship_to_markdown(novel_id, session, novel.title)
+                    title, markdown = format_relationship_to_markdown(
+                        novel_id,
+                        session,
+                        novel.title,
+                        relationship_id=entity_id,
+                    )
 
                 else:
                     continue

@@ -15,7 +15,7 @@ from agent.context.assembler import ContextAssembler, get_context_assembler
 from agent.schemas.context import (
     ContextPriority,
 )
-from models import File, Project, Story, StoryLine, User
+from models import Character, CharacterRelationship, File, Novel, Project, Story, StoryLine, User
 
 
 @pytest.fixture
@@ -810,6 +810,81 @@ class TestMaterialCombinationWorkflow:
         ]
         assert len(attached_items) == 1
         assert attached_items[0]["priority"] == ContextPriority.CRITICAL.value
+
+    def test_attached_library_relationship_uses_selected_entity_only(
+        self,
+        db_session,
+        test_user,
+        test_project,
+    ):
+        """
+        Test that directly attached library relationships stay scoped to the selected relation.
+
+        Scenario:
+        - Create two relationships in the same material library
+        - Attach only one relationship to chat
+        - Verify the context includes the selected relationship and not unrelated relations
+        """
+        test_project.owner_id = test_user.id
+        db_session.add(test_project)
+        db_session.commit()
+
+        novel = Novel(user_id=test_user.id, title="关系素材原著")
+        db_session.add(novel)
+        db_session.commit()
+        db_session.refresh(novel)
+
+        protagonist = Character(novel_id=novel.id, name="林逸风")
+        mentor = Character(novel_id=novel.id, name="玄清真人")
+        antagonist = Character(novel_id=novel.id, name="黑煞老祖")
+        db_session.add_all([protagonist, mentor, antagonist])
+        db_session.commit()
+        db_session.refresh(protagonist)
+        db_session.refresh(mentor)
+        db_session.refresh(antagonist)
+
+        selected_relationship = CharacterRelationship(
+            novel_id=novel.id,
+            character_a_id=protagonist.id,
+            character_b_id=mentor.id,
+            relationship_type="师徒",
+            sentiment="friendly",
+            description="玄清真人暗中护持林逸风。",
+        )
+        unrelated_relationship = CharacterRelationship(
+            novel_id=novel.id,
+            character_a_id=protagonist.id,
+            character_b_id=antagonist.id,
+            relationship_type="宿敌",
+            sentiment="hostile",
+            description="黑煞老祖追杀林逸风。",
+        )
+        db_session.add_all([selected_relationship, unrelated_relationship])
+        db_session.commit()
+        db_session.refresh(selected_relationship)
+        db_session.refresh(unrelated_relationship)
+
+        assembler = ContextAssembler()
+        result = assembler.assemble(
+            session=db_session,
+            project_id=test_project.id,
+            user_id=test_user.id,
+            attached_library_materials=[
+                {
+                    "novel_id": novel.id,
+                    "entity_type": "relationships",
+                    "entity_id": selected_relationship.id,
+                }
+            ],
+            max_tokens=2000,
+            include_characters=False,
+            include_lores=False,
+        )
+
+        assert "林逸风 ↔ 玄清真人" in result.context
+        assert "玄清真人暗中护持林逸风。" in result.context
+        assert "黑煞老祖" not in result.context
+        assert "黑煞老祖追杀林逸风。" not in result.context
 
     def test_material_with_text_quotes(
         self,
