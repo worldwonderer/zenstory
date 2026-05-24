@@ -50,6 +50,7 @@ ENCODING_CONFIDENCE_THRESHOLD = 0.7
 UTF8_BOM = b"\xef\xbb\xbf"
 UTF16_LE_BOM = b"\xff\xfe"
 UTF16_BE_BOM = b"\xfe\xff"
+DISPATCH_FAILURE_MESSAGE = "Failed to dispatch ingestion flow"
 
 
 def _sanitize_original_filename(filename: str) -> str:
@@ -147,6 +148,33 @@ def _is_compensatory_retry(job: IngestionJob) -> bool:
             return True
 
     return False
+
+
+def _mark_job_dispatch_failed(
+    session: Session,
+    job_id: int,
+    message: str = DISPATCH_FAILURE_MESSAGE,
+) -> None:
+    """Persist deployment-start failure state for a just-created ingestion job."""
+    job = session.get(IngestionJob, job_id)
+    if job is None:
+        return
+
+    job.status = "failed"
+    job.error_message = message
+    job.error_details = json.dumps(
+        {
+            "stage": "deployment_start",
+            "message": message,
+        },
+        ensure_ascii=False,
+    )
+    job.update_stage_progress("queue", "failed", message=message)
+    job.completed_at = utcnow()
+    job.updated_at = utcnow()
+    session.add(job)
+    session.commit()
+    session.refresh(job)
 
 
 # ==================== Internal Endpoints ====================
@@ -321,10 +349,11 @@ async def upload_material(
     )
 
     if flow_run_id is None:
+        _mark_job_dispatch_failed(session, job.id)
         raise APIException(
             error_code=ErrorCode.SERVICE_UNAVAILABLE,
             status_code=503,
-            detail="Failed to dispatch ingestion flow",
+            detail=DISPATCH_FAILURE_MESSAGE,
         )
 
     logger.info(
@@ -443,28 +472,12 @@ async def retry_material_job(
                 session, current_user.id, "material_decompose"
             )
 
-        latest_retry_job = session.get(IngestionJob, new_job.id)
-        if latest_retry_job is not None:
-            latest_retry_job.status = "failed"
-            latest_retry_job.error_message = "Failed to dispatch ingestion flow"
-            latest_retry_job.error_details = json.dumps(
-                {
-                    "stage": "deployment_start",
-                    "message": "Failed to dispatch ingestion flow",
-                },
-                ensure_ascii=False,
-            )
-            latest_retry_job.update_stage_progress(
-                "queue", "failed", message="Failed to dispatch ingestion flow"
-            )
-            latest_retry_job.completed_at = utcnow()
-            session.add(latest_retry_job)
-            session.commit()
+        _mark_job_dispatch_failed(session, new_job.id)
 
         raise APIException(
             error_code=ErrorCode.SERVICE_UNAVAILABLE,
             status_code=503,
-            detail="Failed to dispatch ingestion flow",
+            detail=DISPATCH_FAILURE_MESSAGE,
         )
 
     logger.info(

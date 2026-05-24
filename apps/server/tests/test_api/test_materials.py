@@ -34,7 +34,7 @@ from models.material_models import (
     StoryLine,
     WorldView,
 )
-from models.subscription import SubscriptionPlan, UserSubscription
+from models.subscription import SubscriptionPlan, UsageQuota, UserSubscription
 
 # ==================== Helper Functions ====================
 
@@ -283,9 +283,17 @@ async def test_upload_material_rejects_content_over_character_limit(
 
 
 @pytest.mark.integration
-async def test_upload_material_returns_503_when_flow_dispatch_fails(client: AsyncClient, db_session, monkeypatch):
-    """Upload should not claim success if flow dispatch fails."""
-    _, token = await create_test_user(client, db_session, "upload_dispatch_fail")
+async def test_upload_material_returns_503_when_flow_dispatch_fails(
+    client: AsyncClient,
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    """Upload should fail visibly and leave a retryable failed material when dispatch fails."""
+    from config.material_settings import material_settings
+
+    user, token = await create_test_user(client, db_session, "upload_dispatch_fail")
+    monkeypatch.setattr(material_settings, "UPLOAD_FOLDER", str(tmp_path))
 
     async def _failed_start_flow_deployment(*args, **kwargs):
         return None
@@ -302,10 +310,53 @@ async def test_upload_material_returns_503_when_flow_dispatch_fails(client: Asyn
     response = await client.post(
         "/api/v1/materials/upload",
         files={"file": file},
+        params={"title": "Dispatch Failure Novel"},
         headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 503
+
+    quota = db_session.exec(
+        select(UsageQuota).where(UsageQuota.user_id == user.id)
+    ).first()
+    assert quota is not None
+    assert quota.material_decompositions_used == 0
+
+    novel = db_session.exec(
+        select(Novel).where(Novel.user_id == user.id)
+    ).first()
+    assert novel is not None
+    assert novel.title == "Dispatch Failure Novel"
+
+    latest_job = db_session.exec(
+        select(IngestionJob)
+        .where(IngestionJob.novel_id == novel.id)
+        .order_by(IngestionJob.created_at.desc())
+    ).first()
+    assert latest_job is not None
+    assert latest_job.status == "failed"
+    assert latest_job.error_message == "Failed to dispatch ingestion flow"
+    assert latest_job.completed_at is not None
+
+    list_response = await client.get(
+        "/api/v1/materials",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_response.status_code == 200
+    assert list_response.json() == [
+        {
+            "id": novel.id,
+            "title": "Dispatch Failure Novel",
+            "author": None,
+            "synopsis": None,
+            "original_filename": "test_novel.txt",
+            "created_at": novel.created_at.isoformat(),
+            "updated_at": novel.updated_at.isoformat(),
+            "status": "failed",
+            "error_message": "Failed to dispatch ingestion flow",
+            "chapters_count": 0,
+        }
+    ]
 
 
 @pytest.mark.integration
