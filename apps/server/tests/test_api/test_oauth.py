@@ -76,6 +76,33 @@ async def test_google_oauth_login_drops_redirect_with_userinfo(client: AsyncClie
 
 
 @pytest.mark.integration
+async def test_google_oauth_login_not_configured_redirects_to_frontend_error(
+    client: AsyncClient,
+    monkeypatch,
+):
+    """Browser OAuth initiation failures should return users to the frontend, not JSON."""
+    monkeypatch.setattr("api.oauth.GOOGLE_CLIENT_ID", "")
+    monkeypatch.setattr("api.oauth.GOOGLE_REDIRECT_URI", "")
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:5173")
+    monkeypatch.setattr("api.oauth.SSO_ALLOWED_REDIRECT_DOMAINS", ["localhost"])
+
+    redirect_target = "http://localhost:5173/dashboard"
+    response = await client.get(
+        "/api/auth/google",
+        params={"redirect": redirect_target},
+    )
+
+    assert response.status_code in [302, 307]
+    parsed = urllib.parse.urlparse(response.headers.get("location", ""))
+    params = urllib.parse.parse_qs(parsed.query)
+
+    assert f"{parsed.scheme}://{parsed.netloc}{parsed.path}" == "http://localhost:5173/auth/callback"
+    assert params["error_code"] == ["ERR_INTERNAL_SERVER_ERROR"]
+    assert params["redirect"] == [redirect_target]
+    assert response.headers.get("content-type") != "application/json"
+
+
+@pytest.mark.integration
 async def test_google_oauth_callback_missing_state_redirects_to_frontend_error(
     client: AsyncClient,
     monkeypatch,

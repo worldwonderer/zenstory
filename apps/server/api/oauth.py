@@ -222,9 +222,14 @@ async def google_oauth_login(
     Redirects user to Google's OAuth consent page.
     """
     if not GOOGLE_CLIENT_ID or not GOOGLE_REDIRECT_URI:
-        raise APIException(
+        log_with_context(
+            logger,
+            logging.ERROR,
+            "Google OAuth login failed: not configured",
+        )
+        return _redirect_to_frontend_auth_callback(
             error_code=ErrorCode.INTERNAL_SERVER_ERROR,
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            redirect=redirect,
         )
 
     # Construct authorization URL
