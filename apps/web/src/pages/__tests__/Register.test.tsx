@@ -294,6 +294,15 @@ describe("Register", () => {
 
     await user.click(screen.getByRole("checkbox"));
 
+    await waitFor(() => {
+      expect(mockGetRegistrationPolicy).toHaveBeenCalledWith({
+        email: "gray_user@example.com",
+        username: "gray_user",
+      });
+      expect(screen.getByTestId("invite-code-input")).toHaveAttribute("data-required", "false");
+      expect(screen.getByRole("button", { name: "auth:register.submit" })).toBeEnabled();
+    });
+
     await act(async () => {
       fireEvent.submit(screen.getByTestId("register-form"));
     });

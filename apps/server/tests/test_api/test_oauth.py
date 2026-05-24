@@ -254,6 +254,82 @@ async def test_google_oauth_callback_bootstraps_subscription_and_quota(
 
 
 @pytest.mark.integration
+async def test_google_oauth_callback_matches_existing_user_email_case_insensitively(
+    client: AsyncClient, db_session, monkeypatch
+):
+    """OAuth login must not create a duplicate account when Google returns mixed-case email."""
+    from sqlmodel import select
+
+    from api.oauth import OAUTH_STATE_COOKIE_NAME, _encode_oauth_state
+    from models import User
+    from services.core.auth_service import hash_password
+
+    class _DummyResponse:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class _DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return _DummyResponse(200, {"access_token": "google-access-token"})
+
+        async def get(self, *args, **kwargs):
+            return _DummyResponse(
+                200,
+                {
+                    "email": "OAuthExisting@Example.COM",
+                    "name": "OAuth Existing User",
+                    "picture": "https://example.com/avatar.png",
+                },
+            )
+
+    existing_user = User(
+        username="oauth_existing_user",
+        email="oauthexisting@example.com",
+        hashed_password=hash_password("password123"),
+        email_verified=True,
+        is_active=True,
+    )
+    db_session.add(existing_user)
+    db_session.commit()
+    db_session.refresh(existing_user)
+
+    monkeypatch.setattr("api.oauth.httpx.AsyncClient", _DummyAsyncClient)
+    monkeypatch.setattr("api.oauth.GOOGLE_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr("api.oauth.GOOGLE_CLIENT_SECRET", "test-client-secret")
+    monkeypatch.setattr("api.oauth.GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
+
+    nonce = "oauth-existing-case-nonce"
+    state = _encode_oauth_state({"nonce": nonce})
+
+    response = await client.get(
+        "/api/auth/google/callback",
+        params={"code": "dummy-code", "state": state},
+        headers={"Cookie": f"{OAUTH_STATE_COOKIE_NAME}={nonce}"},
+    )
+
+    assert response.status_code in [302, 307]
+
+    users = db_session.exec(select(User)).all()
+    assert len(users) == 1
+    db_session.refresh(existing_user)
+    assert existing_user.email == "oauthexisting@example.com"
+    assert existing_user.avatar_url == "https://example.com/avatar.png"
+
+
+@pytest.mark.integration
 async def test_google_oauth_callback_requires_invite_code_for_new_user(
     client: AsyncClient, monkeypatch
 ):

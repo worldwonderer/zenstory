@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { authApi } from '../lib/api';
 import type { UserSubscription, UsageQuota } from '../types/subscription';
 import { logger } from '../lib/logger';
-import { tryRefreshToken as tryRefreshTokenSingleFlight } from '../lib/apiClient';
+import { getApiBase, tryRefreshToken as tryRefreshTokenSingleFlight } from '../lib/apiClient';
 import { identifyUser, resetAnalytics, trackEvent } from '../lib/analytics';
 
 export interface User {
@@ -36,8 +36,6 @@ export interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 // Cache TTL: 5 minutes (conservative to balance performance and security)
 const AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -120,7 +118,7 @@ const validateTokenInBackground = async (
   setUser: (user: User | null) => void
 ): Promise<void> => {
   try {
-    const response = await fetch(`${API_BASE}/api/auth/me`, {
+    const response = await fetch(`${getApiBase()}/api/auth/me`, {
       headers: { 'Authorization': `Bearer ${accessToken}` },
     });
 
@@ -177,7 +175,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Cache miss or expired - normal validation flow
         logger.log('[Auth] Cache miss or expired, validating token...');
         try {
-          const response = await fetch(`${API_BASE}/api/auth/me`, {
+          const response = await fetch(`${getApiBase()}/api/auth/me`, {
             headers: { 'Authorization': `Bearer ${accessToken}` },
           });
 
@@ -325,7 +323,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const handleOAuthCallback = async (accessToken: string, refreshToken: string) => {
     // After OAuth callback, we need to fetch user info using the access token
-    const response = await fetch(`${API_BASE}/api/auth/me`, {
+    const response = await fetch(`${getApiBase()}/api/auth/me`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
       },
@@ -354,7 +352,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const inviteCode = options?.inviteCode?.trim();
 
     // Redirect to backend Google OAuth endpoint
-    const googleAuthUrl = `${API_BASE}/api/auth/google`;
+    const googleAuthUrl = `${getApiBase()}/api/auth/google`;
     const url = new URL(googleAuthUrl);
 
     if (redirectUrl) {

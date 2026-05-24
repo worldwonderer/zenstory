@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, Link, Navigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { LogoMark } from "../components/Logo";
@@ -57,6 +57,7 @@ export const Register: React.FC = () => {
   const navigate = useNavigate();
   const { t } = useTranslation(['auth', 'common', 'home']);
   const [searchParams] = useSearchParams();
+  const policyRequestSeqRef = useRef(0);
 
   // Read invite code and plan intent from URL parameters
   useEffect(() => {
@@ -129,6 +130,33 @@ export const Register: React.FC = () => {
     isPasswordMatched &&
     isInviteCodeValid &&
     acceptTerms;
+
+  useEffect(() => {
+    if (!isUsernameValid || !isEmailValid) {
+      setInviteCodeOptional(authConfig.inviteCodeOptional);
+      return;
+    }
+
+    const requestSeq = ++policyRequestSeqRef.current;
+    let cancelled = false;
+
+    void authApi.getRegistrationPolicy({
+      email: trimmedEmail,
+      username: trimmedUsername,
+    }).then((policy) => {
+      if (!cancelled && requestSeq === policyRequestSeqRef.current) {
+        setInviteCodeOptional(Boolean(policy.invite_code_optional));
+      }
+    }).catch(() => {
+      if (!cancelled && requestSeq === policyRequestSeqRef.current) {
+        setInviteCodeOptional(authConfig.inviteCodeOptional);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isEmailValid, isUsernameValid, trimmedEmail, trimmedUsername]);
 
   const resetSubmitStateOnInput = () => {
     if (loading) {

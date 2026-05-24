@@ -25,6 +25,7 @@ from core.messages import get_message
 from database import get_session
 from models import RefreshTokenRecord, User
 from services.features.referral_service import complete_pending_referral_for_invitee
+from utils.email_identity import email_identity_matches, normalize_email_identity
 from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
@@ -57,16 +58,18 @@ async def verify_email(
     - Returns access and refresh tokens on success
     - Distributes referral rewards if applicable
     """
+    normalized_email = normalize_email_identity(str(request.email))
+
     log_with_context(
         logger,
         logging.INFO,
         "Email verification attempt",
-        email=request.email,
+        email=normalized_email,
     )
 
     # Find user by email
     user = session.exec(
-        select(User).where(User.email == request.email)
+        select(User).where(email_identity_matches(User.email, normalized_email))
     ).first()
 
     if not user:
@@ -74,7 +77,7 @@ async def verify_email(
             logger,
             logging.WARNING,
             "Email verification failed: user not found (masked as invalid code)",
-            email=request.email,
+            email=normalized_email,
         )
         raise APIException(
             error_code=ErrorCode.AUTH_INVALID_VERIFICATION_CODE,
@@ -87,7 +90,7 @@ async def verify_email(
             logging.INFO,
             "Email verification attempt: already verified",
             user_id=user.id,
-            email=request.email,
+            email=normalized_email,
         )
         raise APIException(
             error_code=ErrorCode.AUTH_EMAIL_ALREADY_VERIFIED,
@@ -96,7 +99,7 @@ async def verify_email(
 
     # Verify code
     language = request.language or "zh"
-    success, error = await verify_code(request.email, request.code, language=language)
+    success, error = await verify_code(normalized_email, request.code, language=language)
 
     if not success:
         log_with_context(
@@ -104,7 +107,7 @@ async def verify_email(
             logging.WARNING,
             "Email verification failed: invalid code",
             user_id=user.id,
-            email=request.email,
+            email=normalized_email,
             error=error,
         )
         raise APIException(
@@ -113,6 +116,7 @@ async def verify_email(
         )
 
     # Update user verification status
+    user.email = normalized_email
     user.email_verified = True
     user.updated_at = utcnow()
     session.add(user)
@@ -132,7 +136,7 @@ async def verify_email(
         logging.INFO,
         "Email verified successfully",
         user_id=user.id,
-        email=request.email,
+        email=normalized_email,
     )
 
     # Generate tokens
@@ -182,28 +186,30 @@ async def resend_verification(
     - Checks cooldown (60 seconds between resends)
     - Sends new verification code
     """
+    normalized_email = normalize_email_identity(str(request.email))
+
     # Find user by email
     user = session.exec(
-        select(User).where(User.email == request.email)
+        select(User).where(email_identity_matches(User.email, normalized_email))
     ).first()
 
     if not user:
         # Return generic success to avoid user/email enumeration.
         return {
             "message": get_message("auth_verification_resent", accept_language),
-            "email": request.email
+            "email": normalized_email
         }
 
     if user.email_verified:
         # Return generic success to avoid user/email enumeration.
         return {
             "message": get_message("auth_verification_resent", accept_language),
-            "email": request.email
+            "email": normalized_email
         }
 
     # Send verification code
     language = request.language or "zh"
-    success, error = await send_verification_code(request.email, language=language)
+    success, error = await send_verification_code(normalized_email, language=language)
 
     if not success:
         # Log the actual error for debugging
@@ -211,7 +217,7 @@ async def resend_verification(
             logger,
             40,  # ERROR
             "Resend verification failed",
-            email=request.email,
+            email=normalized_email,
             error=error,
         )
         # Return generic user-friendly error message
@@ -222,7 +228,7 @@ async def resend_verification(
 
     return {
         "message": get_message("auth_verification_resent", accept_language),
-        "email": request.email
+        "email": normalized_email
     }
 
 
@@ -238,26 +244,28 @@ async def check_verification(
     - Returns remaining cooldown time if code was recently sent
     - Returns verification code TTL if code exists
     """
+    normalized_email = normalize_email_identity(str(email))
+
     # Find user by email
     user = session.exec(
-        select(User).where(User.email == email)
+        select(User).where(email_identity_matches(User.email, normalized_email))
     ).first()
 
     if not user:
         # Return generic state to avoid user/email enumeration.
         return {
-            "email": email,
+            "email": normalized_email,
             "email_verified": False,
             "resend_cooldown_seconds": 0,
             "verification_code_ttl_seconds": 0
         }
 
     # Get cooldown and TTL
-    cooldown = get_remaining_cooldown(email)
-    code_ttl = get_code_ttl(email)
+    cooldown = get_remaining_cooldown(normalized_email)
+    code_ttl = get_code_ttl(normalized_email)
 
     return {
-        "email": email,
+        "email": normalized_email,
         "email_verified": user.email_verified,
         "resend_cooldown_seconds": cooldown,
         "verification_code_ttl_seconds": code_ttl

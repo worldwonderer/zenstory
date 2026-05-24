@@ -34,6 +34,7 @@ from models import RefreshTokenRecord, User
 from models.referral import InviteCode
 from services.features.referral_service import create_referral as create_referral_service
 from services.subscription.subscription_service import subscription_service
+from utils.email_identity import email_identity_matches, normalize_email_identity
 from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
@@ -417,10 +418,11 @@ async def google_oauth_callback(
                 error_code=ErrorCode.AUTH_TOKEN_INVALID,
                 status_code=status.HTTP_400_BAD_REQUEST
             )
+        google_email = normalize_email_identity(str(google_email))
 
     # Check if user exists by email
     existing_user = session.exec(
-        select(User).where(User.email == google_email)
+        select(User).where(email_identity_matches(User.email, google_email))
     ).first()
 
     redirect_from_state = state_payload.get("redirect")
@@ -437,6 +439,8 @@ async def google_oauth_callback(
             email=google_email,
         )
         # Update user info
+        if existing_user.email != google_email:
+            existing_user.email = google_email
         if google_name and existing_user.username == google_email.split("@")[0]:
             # Only update username if it's still the default email prefix
             existing_user.username = google_name
@@ -507,7 +511,7 @@ async def google_oauth_callback(
 
             # SECURITY: Prevent self-referral (check if owner has same email)
             owner = session.get(User, invite_code_obj.owner_id)
-            if owner and owner.email == google_email:
+            if owner and normalize_email_identity(owner.email) == google_email:
                 log_with_context(
                     logger,
                     logging.WARNING,

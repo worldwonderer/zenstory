@@ -485,6 +485,46 @@ describe('AuthContext', () => {
       expect(localStorage.getItem('refresh_token')).toBe('oauth-refresh-token')
     })
 
+    it('uses HTTPS API base while completing OAuth callback on HTTPS pages', async () => {
+      Object.defineProperty(window, 'location', {
+        value: {
+          href: '',
+          search: '',
+          origin: 'https://zenstory.ai',
+          pathname: '/',
+          protocol: 'https:',
+        },
+        writable: true,
+      })
+      const mockUser = createMockUser()
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockUser),
+      })
+
+      const { result } = renderHook(() => useAuth(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false)
+      })
+
+      await act(async () => {
+        await result.current.handleOAuthCallback('oauth-access-token', 'oauth-refresh-token')
+      })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://localhost:8000/api/auth/me',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer oauth-access-token',
+          }),
+        }),
+      )
+      expect(result.current.user).toEqual(mockUser)
+    })
+
     it('logs out on OAuth callback failure', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
@@ -595,6 +635,33 @@ describe('AuthContext', () => {
 
       // The redirect parameter should be URL-encoded in the URL
       expect(window.location.href).toContain('redirect=http%3A%2F%2Fexample.com%2Fcallback')
+    })
+
+    it('upgrades Google OAuth endpoint to HTTPS on HTTPS pages', async () => {
+      Object.defineProperty(window, 'location', {
+        value: {
+          href: '',
+          search: '',
+          origin: 'https://zenstory.ai',
+          pathname: '/',
+          protocol: 'https:',
+        },
+        writable: true,
+      })
+
+      const { result } = renderHook(() => useAuth(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false)
+      })
+
+      act(() => {
+        result.current.googleLogin()
+      })
+
+      expect(window.location.href).toMatch(/^https:\/\/localhost:8000\/api\/auth\/google/)
     })
   })
 

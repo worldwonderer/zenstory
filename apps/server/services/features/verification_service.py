@@ -7,6 +7,7 @@ import os
 import secrets
 
 from core.messages import get_message
+from utils.email_identity import normalize_email_identity
 from utils.logger import get_logger, log_with_context
 
 from ..infra.email_client import send_verification_email
@@ -58,6 +59,8 @@ async def send_verification_code(email: str, language: str = "zh") -> tuple[bool
     Returns:
         Tuple[bool, Optional[str]]: (success, error_message)
     """
+    email = normalize_email_identity(email)
+
     try:
         # Check resend cooldown
         if check_resend_cooldown(email, RESEND_COOLDOWN):
@@ -113,6 +116,8 @@ async def verify_code(email: str, code: str, language: str = "zh") -> tuple[bool
     Returns:
         Tuple[bool, Optional[str]]: (success, error_message)
     """
+    email = normalize_email_identity(email)
+
     try:
         # Check attempts limit
         attempts = get_verification_attempts(email)
@@ -161,6 +166,8 @@ def get_remaining_cooldown(email: str) -> int:
     Returns:
         int: Remaining cooldown seconds (0 if no cooldown)
     """
+    email = normalize_email_identity(email)
+
     try:
         from ..infra.redis_client import get_redis_client
 
@@ -191,6 +198,8 @@ def get_code_ttl(email: str) -> int:
     Returns:
         int: Remaining TTL in seconds (0 if no code exists)
     """
+    email = normalize_email_identity(email)
+
     try:
         from ..infra.redis_client import get_redis_client
 

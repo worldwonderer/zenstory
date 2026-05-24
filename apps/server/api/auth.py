@@ -41,6 +41,7 @@ from models.referral import InviteCode
 from services.features.activation_event_service import activation_event_service
 from services.features.referral_service import create_referral as create_referral_service
 from services.subscription.subscription_service import subscription_service
+from utils.email_identity import email_identity_matches, normalize_email_identity
 from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
@@ -401,6 +402,8 @@ async def register(
     - User must verify email before logging in
     - Supports invitation codes for referral rewards
     """
+    normalized_email = normalize_email_identity(str(request.email))
+
     # Check if username already exists
     existing_user = session.exec(
         select(User).where(User.username == request.username)
@@ -413,7 +416,7 @@ async def register(
 
     # Check if email already exists
     existing_email = session.exec(
-        select(User).where(User.email == request.email)
+        select(User).where(email_identity_matches(User.email, normalized_email))
     ).first()
     if existing_email:
         raise APIException(
@@ -423,7 +426,7 @@ async def register(
 
     invite_code_optional, invite_policy_variant, invite_policy_rollout_percent = (
         _resolve_registration_invite_policy(
-            email=str(request.email),
+            email=normalized_email,
             username=request.username,
         )
     )
@@ -475,12 +478,12 @@ async def register(
 
         # SECURITY: Prevent self-referral (check if owner has same email)
         owner = session.get(User, invite_code_obj.owner_id)
-        if owner and owner.email == request.email:
+        if owner and normalize_email_identity(owner.email) == normalized_email:
             log_with_context(
                 logger,
                 logging.WARNING,
                 "Self-referral attempt blocked",
-                email=request.email,
+                email=normalized_email,
                 invite_code=normalized_invite_code,
             )
             raise APIException(
@@ -495,7 +498,7 @@ async def register(
     hashed_password = hash_password(request.password)
     new_user = User(
         username=request.username,
-        email=request.email,
+        email=normalized_email,
         hashed_password=hashed_password,
         email_verified=False
     )
@@ -572,7 +575,7 @@ async def register(
 
     # Send verification code
     language = request.language or "zh"
-    success, error = await send_verification_code(request.email, language=language)
+    success, error = await send_verification_code(normalized_email, language=language)
 
     if not success:
         # Keep registration successful to avoid "account created but API failed" inconsistency.
@@ -581,7 +584,7 @@ async def register(
             logger,
             logging.WARNING,
             "Verification code send failed after successful registration",
-            email=request.email,
+            email=normalized_email,
             user_id=new_user.id,
             error=error,
         )
@@ -611,7 +614,7 @@ async def register(
 
     return {
         "message": get_message("auth_register_success", _accept_language),
-        "email": request.email,
+        "email": normalized_email,
         "email_verified": False,
         "verification_sent": success,
     }
@@ -675,7 +678,7 @@ async def login(
 
     user = session.exec(
         select(User).where(
-            (User.username == identifier) | (User.email == identifier)
+            (User.username == identifier) | email_identity_matches(User.email, identifier)
         )
     ).first()
 
@@ -996,17 +999,22 @@ async def update_current_user(
         current_user.username = request.username
 
     # Check if email is being changed and is unique
-    if request.email and request.email != current_user.email:
-        existing_email = session.exec(
-            select(User).where(User.email == request.email)
-        ).first()
-        if existing_email:
-            raise APIException(
-                error_code=ErrorCode.AUTH_EMAIL_EXISTS,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-        current_user.email = request.email
-        current_user.email_verified = False
+    if request.email:
+        normalized_email = normalize_email_identity(str(request.email))
+        current_normalized_email = normalize_email_identity(current_user.email)
+        if normalized_email != current_normalized_email:
+            existing_email = session.exec(
+                select(User).where(email_identity_matches(User.email, normalized_email))
+            ).first()
+            if existing_email:
+                raise APIException(
+                    error_code=ErrorCode.AUTH_EMAIL_EXISTS,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            current_user.email = normalized_email
+            current_user.email_verified = False
+        elif current_user.email != normalized_email:
+            current_user.email = normalized_email
 
     # Update avatar URL
     if request.avatar_url is not None:

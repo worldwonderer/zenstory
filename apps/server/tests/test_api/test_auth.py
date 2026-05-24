@@ -123,6 +123,99 @@ async def test_register_duplicate_email(client: AsyncClient):
     assert "detail" in data or "error" in data or "message" in data
 
 
+
+
+@pytest.mark.integration
+async def test_register_rejects_duplicate_email_case_insensitively(client: AsyncClient, monkeypatch):
+    """Email identity should not allow duplicate accounts by local-part case."""
+    async def _mock_send_verification_code(_email: str, language: str = "zh"):
+        return True, None
+
+    monkeypatch.setattr("api.auth.send_verification_code", _mock_send_verification_code)
+
+    first_response = await client.post(
+        "/api/auth/register",
+        json={
+            "username": "case_email_user_1",
+            "email": "CaseEmail@example.com",
+            "password": "password123",
+        },
+    )
+    assert first_response.status_code == 200
+    assert first_response.json()["email"] == "caseemail@example.com"
+
+    duplicate_response = await client.post(
+        "/api/auth/register",
+        json={
+            "username": "case_email_user_2",
+            "email": "caseemail@example.com",
+            "password": "password456",
+        },
+    )
+
+    assert duplicate_response.status_code == 400
+    assert duplicate_response.json().get("error_code") == "ERR_AUTH_EMAIL_EXISTS"
+
+
+@pytest.mark.integration
+async def test_login_with_email_is_case_insensitive(client: AsyncClient, db_session):
+    """Users should be able to login by email regardless of typed case."""
+    from models import User
+    from services.core.auth_service import hash_password
+
+    user = User(
+        username="case_login_user",
+        email="case-login@example.com",
+        hashed_password=hash_password("testpassword123"),
+        email_verified=True,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    response = await client.post(
+        "/api/auth/login",
+        data={
+            "username": "Case-Login@Example.COM",
+            "password": "testpassword123",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["email"] == "case-login@example.com"
+
+
+@pytest.mark.integration
+async def test_verify_email_uses_case_insensitive_email_identity(client: AsyncClient, db_session, monkeypatch):
+    """Verification should find the registered user even if email case differs."""
+    from models import User
+    from services.core.auth_service import hash_password
+
+    async def _mock_verify_code(email: str, code: str, language: str = "zh"):
+        assert email == "case-verify@example.com"
+        return True, None
+
+    monkeypatch.setattr("api.verification.verify_code", _mock_verify_code)
+
+    user = User(
+        username="case_verify_user",
+        email="case-verify@example.com",
+        hashed_password=hash_password("testpassword123"),
+        email_verified=False,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    response = await client.post(
+        "/api/auth/verify-email",
+        json={"email": "Case-Verify@Example.COM", "code": "123456"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["email"] == "case-verify@example.com"
+
+
 @pytest.mark.integration
 async def test_register_duplicate_username(client: AsyncClient):
     """Test registration with duplicate username returns 400."""
