@@ -389,6 +389,62 @@ async def test_upload_material_sanitizes_filename(client: AsyncClient, db_sessio
 
 
 @pytest.mark.integration
+async def test_upload_material_keeps_same_second_same_name_files_separate(
+    client: AsyncClient,
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    """Same-user uploads with the same original filename must not overwrite each other."""
+    from config.material_settings import material_settings
+
+    user, token = await create_test_user(client, db_session, "uploaduser_same_second")
+    monkeypatch.setattr(material_settings, "UPLOAD_FOLDER", str(tmp_path))
+    monkeypatch.setattr(
+        materials_upload_api,
+        "utcnow",
+        lambda: datetime(2026, 1, 2, 3, 4, 5),
+    )
+
+    first_content = b"Chapter 1\n\nFirst source content"
+    second_content = b"Chapter 1\n\nSecond source content"
+
+    first_response = await client.post(
+        "/api/v1/materials/upload",
+        files={"file": ("same-name.txt", io.BytesIO(first_content), "text/plain")},
+        params={"title": "First Same Name Upload"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    second_response = await client.post(
+        "/api/v1/materials/upload",
+        files={"file": ("same-name.txt", io.BytesIO(second_content), "text/plain")},
+        params={"title": "Second Same Name Upload"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+
+    first_novel = db_session.get(Novel, first_response.json()["novel_id"])
+    second_novel = db_session.get(Novel, second_response.json()["novel_id"])
+    assert first_novel is not None
+    assert second_novel is not None
+    assert first_novel.user_id == user.id
+    assert second_novel.user_id == user.id
+
+    first_path = json.loads(first_novel.source_meta or "{}")["file_path"]
+    second_path = json.loads(second_novel.source_meta or "{}")["file_path"]
+    assert first_path != second_path
+    assert os.path.basename(first_path).endswith("_same-name.txt")
+    assert os.path.basename(second_path).endswith("_same-name.txt")
+
+    with open(first_path, "rb") as f:
+        assert f.read() == first_content
+    with open(second_path, "rb") as f:
+        assert f.read() == second_content
+
+
+@pytest.mark.integration
 async def test_upload_material_invalid_extension(client: AsyncClient, db_session):
     """Test upload with invalid file extension returns 400."""
     user, token = await create_test_user(client, db_session, "uploaduser2")

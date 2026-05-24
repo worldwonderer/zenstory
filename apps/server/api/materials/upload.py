@@ -51,6 +51,8 @@ UTF8_BOM = b"\xef\xbb\xbf"
 UTF16_LE_BOM = b"\xff\xfe"
 UTF16_BE_BOM = b"\xfe\xff"
 DISPATCH_FAILURE_MESSAGE = "Failed to dispatch ingestion flow"
+UPLOAD_FILENAME_TOKEN_BYTES = 8
+MAX_UPLOAD_FILENAME_ATTEMPTS = 10
 
 
 def _sanitize_original_filename(filename: str) -> str:
@@ -85,6 +87,46 @@ def _build_safe_upload_path(upload_dir: str, filename: str) -> str:
     if os.path.commonpath([upload_dir_real, file_path]) != upload_dir_real:
         raise APIException(error_code=ErrorCode.VALIDATION_ERROR, status_code=400)
     return file_path
+
+
+def _build_unique_upload_filename(
+    user_id: str,
+    timestamp: str,
+    sanitized_original_filename: str,
+) -> str:
+    """Build a collision-resistant upload filename while preserving readable suffix."""
+    unique_token = secrets.token_hex(UPLOAD_FILENAME_TOKEN_BYTES)
+    return f"{user_id}_{timestamp}_{unique_token}_{sanitized_original_filename}"
+
+
+def _write_upload_file_without_overwrite(
+    upload_dir: str,
+    user_id: str,
+    timestamp: str,
+    sanitized_original_filename: str,
+    content_bytes: bytes,
+) -> tuple[str, str]:
+    """Write uploaded bytes to a newly-created path and never overwrite existing files."""
+    for _ in range(MAX_UPLOAD_FILENAME_ATTEMPTS):
+        safe_filename = _build_unique_upload_filename(
+            user_id,
+            timestamp,
+            sanitized_original_filename,
+        )
+        file_path = _build_safe_upload_path(upload_dir, safe_filename)
+
+        try:
+            with open(file_path, "xb") as f:
+                f.write(content_bytes)
+            return safe_filename, file_path
+        except FileExistsError:
+            continue
+
+    raise APIException(
+        error_code=ErrorCode.SERVICE_UNAVAILABLE,
+        status_code=503,
+        detail="Failed to allocate unique upload filename",
+    )
 
 
 def _decode_upload_text(content_bytes: bytes) -> str:
@@ -187,11 +229,12 @@ async def download_upload_file(
     """
     Internal endpoint for Prefect worker to download uploaded files.
 
-    Verifies file ownership based on filename format: {user_id}_{timestamp}_{original_filename}
+    Verifies file ownership based on filename format:
+    {user_id}_{timestamp}_{unique_token}_{original_filename}
     """
     from config.material_settings import material_settings
 
-    # Verify file ownership (filename format: {user_id}_{timestamp}_{original_filename})
+    # Verify file ownership based on the user-id prefix.
     if not filename.startswith(f"{current_user.id}_"):
         raise APIException(
             error_code=ErrorCode.NOT_AUTHORIZED,
@@ -293,15 +336,17 @@ async def upload_material(
     upload_dir = material_settings.UPLOAD_FOLDER
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Generate unique filename with timestamp and sanitized original filename
+    # Generate unique filename with timestamp, random token, and sanitized original filename
     timestamp = utcnow().strftime("%Y%m%d_%H%M%S")
     original_filename = file.filename
     sanitized_original_filename = _sanitize_original_filename(original_filename)
-    safe_filename = f"{current_user.id}_{timestamp}_{sanitized_original_filename}"
-    file_path = _build_safe_upload_path(upload_dir, safe_filename)
-
-    with open(file_path, "wb") as f:
-        f.write(content_bytes)
+    _, file_path = _write_upload_file_without_overwrite(
+        upload_dir=upload_dir,
+        user_id=current_user.id,
+        timestamp=timestamp,
+        sanitized_original_filename=sanitized_original_filename,
+        content_bytes=content_bytes,
+    )
 
     logger.info(f"File saved: {file_path} ({len(content_bytes)} bytes)")
 
