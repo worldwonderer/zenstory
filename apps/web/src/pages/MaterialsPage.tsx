@@ -122,6 +122,9 @@ export default function MaterialsPage() {
       queryClient.invalidateQueries({ queryKey: ["materials"] });
       setDeletingId(null);
     },
+    onError: (err) => {
+      toast.error(handleApiError(err));
+    },
   });
 
   useEffect(() => {

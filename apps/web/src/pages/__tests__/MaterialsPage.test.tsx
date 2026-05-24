@@ -16,6 +16,7 @@ const mockRetry = vi.fn();
 const mockGetStatus = vi.fn();
 const mockGetQuota = vi.fn();
 const trackEventMock = vi.fn();
+const mockToastError = vi.fn();
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
@@ -88,6 +89,14 @@ vi.mock("../../lib/subscriptionApi", () => ({
 
 vi.mock("../../lib/analytics", () => ({
   trackEvent: (...args: unknown[]) => trackEventMock(...args),
+}));
+
+vi.mock("../../lib/toast", () => ({
+  toast: {
+    error: (...args: unknown[]) => mockToastError(...args),
+    success: vi.fn(),
+    info: vi.fn(),
+  },
 }));
 
 vi.mock("../../config/materials", () => ({
@@ -263,6 +272,35 @@ describe("MaterialsPage", () => {
 
     expect(mockNavigate).toHaveBeenNthCalledWith(1, "/materials/novel-2");
     expect(mockNavigate).toHaveBeenNthCalledWith(2, "/materials/novel-2");
+  });
+
+
+  it("surfaces material delete failures to the user", async () => {
+    mockList.mockResolvedValueOnce([
+      {
+        id: "novel-delete-fail",
+        title: "Delete Fails",
+        original_filename: "delete-fails.txt",
+        status: "completed",
+        chapters_count: 3,
+        error_message: null,
+      },
+    ]);
+    mockDelete.mockRejectedValueOnce(new ApiError(500, "delete failed"));
+
+    render(<MaterialsPage />, { wrapper: createWrapper() });
+
+    await screen.findByRole("button", { name: /Delete Fails/ });
+    const deleteButton = document.querySelector("button.absolute") as HTMLButtonElement;
+    expect(deleteButton).toBeTruthy();
+
+    fireEvent.click(deleteButton);
+    fireEvent.click(screen.getByRole("button", { name: "common:delete" }));
+
+    await waitFor(() => {
+      expect(mockDelete).toHaveBeenCalledWith("novel-delete-fail");
+      expect(mockToastError).toHaveBeenCalledWith("delete failed");
+    });
   });
 
   it("shows an inline error before upload when the selected file exceeds 300k characters", async () => {
