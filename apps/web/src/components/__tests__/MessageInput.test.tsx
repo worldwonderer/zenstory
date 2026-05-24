@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vites
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MessageInput } from '../MessageInput'
+import { skillsApi } from '../../lib/api'
 
 const { mockUseMaterialAttachment, mockUseTextQuote, mockUseSkillTrigger } = vi.hoisted(() => ({
   mockUseMaterialAttachment: vi.fn(() => ({
@@ -329,6 +330,35 @@ describe('MessageInput', () => {
     // Skill menu should open (but may be empty if skills not loaded)
     // We just check that the input accepts the slash
     expect(textarea).toHaveValue('/')
+  })
+
+  it('keeps a delimiter after slash-menu skill selection before sending follow-up text', async () => {
+    const user = userEvent.setup({ delay: null })
+    const onSend = vi.fn()
+    vi.mocked(skillsApi.list).mockResolvedValueOnce({
+      skills: [
+        {
+          id: 'skill-menu-1',
+          name: '场景节奏',
+          description: '压缩拖沓段落',
+          triggers: ['/pace'],
+          instructions: '收紧节奏。',
+          source: 'user',
+          is_active: true,
+        },
+      ],
+      total: 1,
+    })
+
+    render(<MessageInput {...defaultProps} onSend={onSend} />)
+
+    const textarea = screen.getByPlaceholderText('chat:input.placeholder')
+    await user.type(textarea, '/')
+    await user.click(await screen.findByRole('button', { name: /场景节奏/i }))
+    await user.type(textarea, '继续写这一章')
+    await user.click(screen.getByRole('button', { name: /common:send/i }))
+
+    expect(onSend).toHaveBeenCalledWith('/pace 继续写这一章')
   })
 
   it('renders selected skill triggers as a compact rail in fill layout', async () => {

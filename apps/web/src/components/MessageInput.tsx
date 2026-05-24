@@ -391,9 +391,10 @@ export const MessageInput: React.FC<MessageInputProps> = ({
 
   // Handle skill selection
   const selectSkill = useCallback((skill: Skill) => {
-    // Use the first trigger word as the input
+    // Use the first trigger word as the input and keep a delimiter so follow-up
+    // typing remains a backend-recognizable explicit skill prefix.
     const triggerWord = skill.triggers[0] || skill.name;
-    setInput(triggerWord);
+    setInput(`${triggerWord} `);
     setShowSkillMenu(false);
     setSkillSearchQuery("");
     setSelectedSkillIndex(0);
