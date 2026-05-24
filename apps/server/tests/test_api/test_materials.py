@@ -620,6 +620,31 @@ async def test_get_library_summary_only_completed(client: AsyncClient, db_sessio
 
 
 @pytest.mark.integration
+async def test_get_library_summary_includes_completed_with_errors(client: AsyncClient, db_session):
+    """Partially completed materials should remain available in reference library."""
+    user, token = await create_test_user(client, db_session, "summaryuser_partial")
+
+    novel = create_test_novel(db_session, user.id, "Partial Novel")
+    create_test_job(db_session, novel.id, "completed_with_errors")
+
+    character = Character(novel_id=novel.id, name="Partial Hero")
+    db_session.add(character)
+    db_session.commit()
+
+    response = await client.get(
+        "/api/v1/materials/library-summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["title"] == "Partial Novel"
+    assert data[0]["status"] == "completed_with_errors"
+    assert data[0]["counts"]["characters"] == 1
+
+
+@pytest.mark.integration
 async def test_get_library_summary_with_counts(client: AsyncClient, db_session):
     """Test library summary returns correct entity counts."""
     user, token = await create_test_user(client, db_session, "summaryuser3")
@@ -755,6 +780,34 @@ async def test_search_materials_characters(client: AsyncClient, db_session):
     data = response.json()
     assert len(data) >= 1
     assert any(item["entity_type"] == "characters" for item in data)
+
+
+@pytest.mark.integration
+async def test_search_materials_includes_completed_with_errors(client: AsyncClient, db_session):
+    """Search should include partially completed materials with usable entities."""
+    user, token = await create_test_user(client, db_session, "searchuser_partial")
+
+    novel = create_test_novel(db_session, user.id, "Partial Search Novel")
+    create_test_job(db_session, novel.id, "completed_with_errors")
+
+    character = Character(novel_id=novel.id, name="Partial Hero")
+    db_session.add(character)
+    db_session.commit()
+
+    response = await client.get(
+        "/api/v1/materials/search",
+        params={"q": "Partial"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert any(
+        item["novel_title"] == "Partial Search Novel"
+        and item["entity_type"] == "characters"
+        and item["name"] == "Partial Hero"
+        for item in data
+    )
 
 
 @pytest.mark.integration

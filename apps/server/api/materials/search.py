@@ -33,6 +33,8 @@ from .schemas import (
 
 logger = get_logger(__name__)
 
+SEARCHABLE_MATERIAL_STATUSES = {"completed", "completed_with_errors"}
+
 # Router without prefix/tags - will be set by parent router
 router = APIRouter()
 
@@ -73,7 +75,7 @@ def get_library_summary(
     # Filter completed novels
     for novel_id, (_novel, job) in novel_map.items():
         status = job.status if job else None
-        if status == "completed":
+        if status in SEARCHABLE_MATERIAL_STATUSES:
             novel_ids.append(novel_id)
 
     # Batch query for all entity counts
@@ -176,8 +178,8 @@ def search_materials(
             novel_map[novel.id] = (novel, job)
 
     novel_ids = [
-        nid for nid, (novel, job) in novel_map.items()
-        if job and job.status == "completed"
+        nid for nid, (_novel, job) in novel_map.items()
+        if job and job.status in SEARCHABLE_MATERIAL_STATUSES
     ]
 
     if not novel_ids:
