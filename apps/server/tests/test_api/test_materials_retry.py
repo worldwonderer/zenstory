@@ -206,6 +206,70 @@ async def test_retry_material_job_consumes_quota_for_regular_failed_jobs(client:
 
 
 @pytest.mark.integration
+async def test_retry_material_job_does_not_consume_quota_when_dispatch_fails(
+    client: AsyncClient, db_session, monkeypatch
+):
+    async def _failed_start_flow_deployment(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        materials_upload_api,
+        "_start_flow_deployment",
+        _failed_start_flow_deployment,
+    )
+
+    user, token = await _create_test_user_and_token(client, db_session, "retrydispatchfail")
+
+    now = datetime.utcnow()
+    quota = UsageQuota(
+        user_id=user.id,
+        period_start=now,
+        period_end=now + timedelta(days=30),
+        ai_conversations_used=0,
+        material_decompositions_used=4,
+        monthly_period_start=now - timedelta(days=1),
+        monthly_period_end=now + timedelta(days=30),
+        last_reset_at=now,
+    )
+    db_session.add(quota)
+    db_session.commit()
+
+    novel = Novel(user_id=user.id, title="Retry Dispatch Failure Novel", author="Tester")
+    db_session.add(novel)
+    db_session.commit()
+    db_session.refresh(novel)
+
+    failed_job = IngestionJob(
+        novel_id=novel.id,
+        source_path="/tmp/test.txt",
+        status="failed",
+        total_chapters=10,
+        processed_chapters=0,
+        error_message="flow failed",
+        error_details='{"stage":"flow","message":"flow failed"}',
+    )
+    db_session.add(failed_job)
+    db_session.commit()
+
+    response = await client.post(
+        f"/api/v1/materials/{novel.id}/retry",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 503
+    db_session.refresh(quota)
+    assert quota.material_decompositions_used == 4
+
+    latest_job = db_session.exec(
+        select(IngestionJob)
+        .where(IngestionJob.novel_id == novel.id)
+        .order_by(IngestionJob.created_at.desc())
+    ).first()
+    assert latest_job is not None
+    assert latest_job.status == "failed"
+
+
+@pytest.mark.integration
 async def test_retry_material_job_does_not_consume_quota_for_compensatory_failures(
     client: AsyncClient, db_session
 ):

@@ -772,6 +772,67 @@ class TestConsumeFeatureQuota:
 
 
 @pytest.mark.unit
+class TestReleaseFeatureQuota:
+    """Tests for release_feature_quota compensation method."""
+
+    def test_release_feature_decrements_monthly_usage(
+        self, db_session: Session, test_user
+    ):
+        now = datetime.utcnow()
+        quota = UsageQuota(
+            user_id=test_user.id,
+            period_start=now,
+            period_end=now + timedelta(days=30),
+            material_decompositions_used=3,
+            last_reset_at=now,
+            monthly_period_start=now - timedelta(days=1),
+            monthly_period_end=now + timedelta(days=1),
+        )
+        db_session.add(quota)
+        db_session.commit()
+
+        released = quota_service.release_feature_quota(
+            db_session, test_user.id, "material_decompose"
+        )
+
+        assert released is True
+        db_session.refresh(quota)
+        assert quota.material_decompositions_used == 2
+
+    def test_release_feature_noop_when_usage_zero(
+        self, db_session: Session, test_user
+    ):
+        now = datetime.utcnow()
+        quota = UsageQuota(
+            user_id=test_user.id,
+            period_start=now,
+            period_end=now + timedelta(days=30),
+            material_decompositions_used=0,
+            last_reset_at=now,
+            monthly_period_start=now - timedelta(days=1),
+            monthly_period_end=now + timedelta(days=1),
+        )
+        db_session.add(quota)
+        db_session.commit()
+
+        released = quota_service.release_feature_quota(
+            db_session, test_user.id, "material_decompose"
+        )
+
+        assert released is False
+        db_session.refresh(quota)
+        assert quota.material_decompositions_used == 0
+
+    def test_release_feature_invalid_type(
+        self, db_session: Session, test_user
+    ):
+        with pytest.raises(ValueError):
+            quota_service.release_feature_quota(
+                db_session, test_user.id, "invalid_feature"
+            )
+
+
+@pytest.mark.unit
 class TestQuotaReset:
     """Tests for quota reset logic."""
 

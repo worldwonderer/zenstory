@@ -475,6 +475,40 @@ class QuotaService:
         session.commit()
         return True
 
+    def release_feature_quota(
+        self, session: Session, user_id: str, feature_type: str
+    ) -> bool:
+        """
+        Decrement a monthly feature quota atomically as a compensation action.
+
+        Returns True if one unit was refunded, False when there is nothing to
+        refund or the target row does not exist.
+        """
+        if feature_type not in FEATURE_QUOTA_MAP:
+            raise ValueError(f"Unknown feature type: {feature_type}")
+
+        _, used_field = FEATURE_QUOTA_MAP[feature_type]
+        used_column = getattr(UsageQuota, used_field)
+
+        quota = self._get_or_create_quota(session, user_id)
+        self._reset_monthly_quota_if_needed(session, quota)
+        session.refresh(quota)
+
+        query = (
+            update(UsageQuota)
+            .where(UsageQuota.user_id == user_id)
+            .where(used_column > 0)
+            .values(**{used_field: used_column - 1})
+        )
+
+        result = session.exec(query)
+        if result.rowcount == 0:
+            session.rollback()
+            return False
+
+        session.commit()
+        return True
+
     def _reset_monthly_quota_if_needed(
         self, session: Session, quota: UsageQuota
     ) -> bool:

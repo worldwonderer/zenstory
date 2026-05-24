@@ -438,6 +438,29 @@ async def retry_material_job(
     )
 
     if flow_run_id is None:
+        if not compensatory_retry:
+            quota_service.release_feature_quota(
+                session, current_user.id, "material_decompose"
+            )
+
+        latest_retry_job = session.get(IngestionJob, new_job.id)
+        if latest_retry_job is not None:
+            latest_retry_job.status = "failed"
+            latest_retry_job.error_message = "Failed to dispatch ingestion flow"
+            latest_retry_job.error_details = json.dumps(
+                {
+                    "stage": "deployment_start",
+                    "message": "Failed to dispatch ingestion flow",
+                },
+                ensure_ascii=False,
+            )
+            latest_retry_job.update_stage_progress(
+                "queue", "failed", message="Failed to dispatch ingestion flow"
+            )
+            latest_retry_job.completed_at = utcnow()
+            session.add(latest_retry_job)
+            session.commit()
+
         raise APIException(
             error_code=ErrorCode.SERVICE_UNAVAILABLE,
             status_code=503,
