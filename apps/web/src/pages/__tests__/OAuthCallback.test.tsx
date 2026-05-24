@@ -58,6 +58,11 @@ vi.mock("../../lib/analytics", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
+vi.mock("../../lib/errorHandler", () => ({
+  toUserErrorMessage: (message: string) =>
+    message === "ERR_AUTH_TOKEN_INVALID" ? "Invalid authentication token" : message,
+}));
+
 import OAuthCallback from "../OAuthCallback";
 
 describe("OAuthCallback", () => {
@@ -143,5 +148,30 @@ describe("OAuthCallback", () => {
     });
     expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
     expect(mockCaptureException).not.toHaveBeenCalled();
+  });
+
+  it("displays a user-facing message for backend OAuth error codes", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        ...originalLocation,
+        pathname: "/auth/callback",
+        search: "?error_code=ERR_AUTH_TOKEN_INVALID",
+        hash: "",
+        href: "http://localhost:5173/auth/callback?error_code=ERR_AUTH_TOKEN_INVALID",
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <OAuthCallback />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("Invalid authentication token")).toBeInTheDocument();
+    expect(screen.queryByText("ERR_AUTH_TOKEN_INVALID")).not.toBeInTheDocument();
+    expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockCaptureException).toHaveBeenCalled();
   });
 });

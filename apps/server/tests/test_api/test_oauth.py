@@ -76,6 +76,82 @@ async def test_google_oauth_login_drops_redirect_with_userinfo(client: AsyncClie
 
 
 @pytest.mark.integration
+async def test_google_oauth_callback_missing_state_redirects_to_frontend_error(
+    client: AsyncClient,
+    monkeypatch,
+):
+    """Browser OAuth callback failures should return users to the frontend, not JSON."""
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:5173")
+
+    response = await client.get(
+        "/api/auth/google/callback",
+        params={"code": "dummy-code"},
+    )
+
+    assert response.status_code in [302, 307]
+    parsed = urllib.parse.urlparse(response.headers.get("location", ""))
+    params = urllib.parse.parse_qs(parsed.query)
+
+    assert f"{parsed.scheme}://{parsed.netloc}{parsed.path}" == "http://localhost:5173/auth/callback"
+    assert params["error_code"] == ["ERR_AUTH_TOKEN_INVALID"]
+    assert response.headers.get("content-type") != "application/json"
+
+
+@pytest.mark.integration
+async def test_google_oauth_callback_token_exchange_failure_redirects_to_frontend_error(
+    client: AsyncClient,
+    monkeypatch,
+):
+    """Post-nonce Google failures should also redirect to the frontend callback error UI."""
+    from api.oauth import OAUTH_STATE_COOKIE_NAME, _encode_oauth_state
+
+    class _DummyResponse:
+        status_code = 500
+
+        def json(self):
+            return {"error": "temporarily_unavailable"}
+
+    class _DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return _DummyResponse()
+
+    monkeypatch.setattr("api.oauth.httpx.AsyncClient", _DummyAsyncClient)
+    monkeypatch.setattr("api.oauth.GOOGLE_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr("api.oauth.GOOGLE_CLIENT_SECRET", "test-client-secret")
+    monkeypatch.setattr("api.oauth.GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:5173")
+    monkeypatch.setattr("api.oauth.SSO_ALLOWED_REDIRECT_DOMAINS", ["localhost"])
+
+    nonce = "oauth-token-failure-nonce"
+    redirect_target = "http://localhost:5173/dashboard"
+    state = _encode_oauth_state({"nonce": nonce, "redirect": redirect_target})
+
+    response = await client.get(
+        "/api/auth/google/callback",
+        params={"code": "dummy-code", "state": state},
+        headers={"Cookie": f"{OAUTH_STATE_COOKIE_NAME}={nonce}"},
+    )
+
+    assert response.status_code in [302, 307]
+    parsed = urllib.parse.urlparse(response.headers.get("location", ""))
+    params = urllib.parse.parse_qs(parsed.query)
+
+    assert f"{parsed.scheme}://{parsed.netloc}{parsed.path}" == "http://localhost:5173/auth/callback"
+    assert params["error_code"] == ["ERR_AUTH_TOKEN_INVALID"]
+    assert params["redirect"] == [redirect_target]
+    assert "oauth_google_state=" in response.headers.get("set-cookie", "")
+
+
+@pytest.mark.integration
 async def test_validate_token_rejects_refresh_token(client: AsyncClient, db_session):
     """validate-token endpoint should accept access token and reject refresh token."""
     from models import User

@@ -118,6 +118,28 @@ def _redirect_to_frontend_register(
     return response
 
 
+def _redirect_to_frontend_auth_callback(
+    *,
+    error_code: str,
+    redirect: str | None = None,
+) -> RedirectResponse:
+    """Redirect OAuth callback failures to the frontend error UI."""
+    frontend_url = os.getenv("FRONTEND_URL", "https://zenstory.ai")
+    params: dict[str, str] = {"error_code": error_code}
+    if redirect and _is_allowed_redirect_url(redirect):
+        params["redirect"] = redirect
+
+    url = f"{frontend_url}/auth/callback?{urllib.parse.urlencode(params)}"
+    response = RedirectResponse(url)
+    response.delete_cookie(
+        key=OAUTH_STATE_COOKIE_NAME,
+        path="/",
+        secure=_should_use_secure_cookie(),
+        samesite="lax",
+    )
+    return response
+
+
 def _ensure_user_free_subscription_and_quota(
     session: Session,
     user_id: str,
@@ -315,24 +337,24 @@ async def google_oauth_callback(
     )
 
     if not state:
-        raise APIException(
+        return _redirect_to_frontend_auth_callback(
             error_code=ErrorCode.AUTH_TOKEN_INVALID,
-            status_code=status.HTTP_400_BAD_REQUEST,
         )
 
     state_payload = _decode_oauth_state(state)
     if state_payload is None:
-        raise APIException(
+        return _redirect_to_frontend_auth_callback(
             error_code=ErrorCode.AUTH_TOKEN_INVALID,
-            status_code=status.HTTP_400_BAD_REQUEST,
         )
+
+    redirect_from_state = state_payload.get("redirect")
 
     state_nonce = state_payload.get("nonce")
     cookie_nonce = request.cookies.get(OAUTH_STATE_COOKIE_NAME) if request else None
     if not state_nonce or not cookie_nonce or state_nonce != cookie_nonce:
-        raise APIException(
+        return _redirect_to_frontend_auth_callback(
             error_code=ErrorCode.AUTH_TOKEN_INVALID,
-            status_code=status.HTTP_400_BAD_REQUEST,
+            redirect=redirect_from_state,
         )
 
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
@@ -341,9 +363,9 @@ async def google_oauth_callback(
             logging.ERROR,
             "Google OAuth callback failed: not configured",
         )
-        raise APIException(
+        return _redirect_to_frontend_auth_callback(
             error_code=ErrorCode.INTERNAL_SERVER_ERROR,
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            redirect=redirect_from_state,
         )
 
     # Exchange code for access token
@@ -366,9 +388,9 @@ async def google_oauth_callback(
                 "Google OAuth token exchange failed",
                 status_code=token_response.status_code,
             )
-            raise APIException(
+            return _redirect_to_frontend_auth_callback(
                 error_code=ErrorCode.AUTH_TOKEN_INVALID,
-                status_code=status.HTTP_400_BAD_REQUEST
+                redirect=redirect_from_state,
             )
 
         token_data = token_response.json()
@@ -380,9 +402,9 @@ async def google_oauth_callback(
                 logging.ERROR,
                 "Google OAuth token response missing access token",
             )
-            raise APIException(
+            return _redirect_to_frontend_auth_callback(
                 error_code=ErrorCode.AUTH_TOKEN_INVALID,
-                status_code=status.HTTP_400_BAD_REQUEST
+                redirect=redirect_from_state,
             )
 
         # Fetch user info from Google
@@ -398,9 +420,9 @@ async def google_oauth_callback(
                 "Google OAuth user info fetch failed",
                 status_code=user_response.status_code,
             )
-            raise APIException(
+            return _redirect_to_frontend_auth_callback(
                 error_code=ErrorCode.AUTH_TOKEN_INVALID,
-                status_code=status.HTTP_400_BAD_REQUEST
+                redirect=redirect_from_state,
             )
 
         google_user = user_response.json()
@@ -414,9 +436,9 @@ async def google_oauth_callback(
                 logging.ERROR,
                 "Google OAuth user info missing email",
             )
-            raise APIException(
+            return _redirect_to_frontend_auth_callback(
                 error_code=ErrorCode.AUTH_TOKEN_INVALID,
-                status_code=status.HTTP_400_BAD_REQUEST
+                redirect=redirect_from_state,
             )
         google_email = normalize_email_identity(str(google_email))
 
@@ -424,8 +446,6 @@ async def google_oauth_callback(
     existing_user = session.exec(
         select(User).where(email_identity_matches(User.email, google_email))
     ).first()
-
-    redirect_from_state = state_payload.get("redirect")
 
     raw_state_invite = state_payload.get(OAUTH_STATE_INVITE_CODE_KEY)
     normalized_invite_code = _sanitize_invite_code(raw_state_invite)

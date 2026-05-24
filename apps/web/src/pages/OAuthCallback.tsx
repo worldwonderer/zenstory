@@ -8,6 +8,7 @@ import { LoadingSpinner } from "../components/LoadingSpinner";
 import { isValidRedirectUrl } from "../lib/ssoRedirect";
 import { logger } from "../lib/logger";
 import { captureException } from "../lib/analytics";
+import { toUserErrorMessage } from "../lib/errorHandler";
 
 export default function OAuthCallback() {
   const [error, setError] = useState("");
@@ -89,7 +90,9 @@ export default function OAuthCallback() {
           feature_area: "auth",
           action: "oauth_callback",
         });
-        const errorMessage = err instanceof Error ? err.message : t('auth:errors.oauthFailed');
+        const errorMessage = err instanceof Error
+          ? toUserErrorMessage(err.message)
+          : t('auth:errors.oauthFailed');
         setError(errorMessage);
       } finally {
         setLoading(false);
