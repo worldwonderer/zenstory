@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -328,6 +328,74 @@ describe("MaterialDetailPage", () => {
     });
 
     expect(screen.getByText("materials:detail.relationships")).toBeInTheDocument();
+  });
+
+  it("shows pending materials as active instead of an empty detail", async () => {
+    mockGet.mockResolvedValueOnce({
+      id: "novel-1",
+      title: "Queued Novel",
+      original_filename: "queued.txt",
+      file_size: 123,
+      status: "pending",
+      chapters_count: 0,
+      characters_count: 0,
+      story_lines_count: 0,
+      golden_fingers_count: 0,
+      has_world_view: false,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+
+    render(<MaterialDetailPage />, { wrapper: createWrapper() });
+
+    expect(await screen.findByText("Queued Novel")).toBeInTheDocument();
+    expect(screen.getByText("materials:status.pending")).toBeInTheDocument();
+  });
+
+  it("polls active material details until processing finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      mockGet
+        .mockResolvedValueOnce({
+          id: "novel-1",
+          title: "Queued Novel",
+          original_filename: "queued.txt",
+          file_size: 123,
+          status: "pending",
+          chapters_count: 0,
+          characters_count: 0,
+          story_lines_count: 0,
+          golden_fingers_count: 0,
+          has_world_view: false,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        })
+        .mockResolvedValueOnce({
+          id: "novel-1",
+          title: "Ready Novel",
+          original_filename: "queued.txt",
+          file_size: 123,
+          status: "completed",
+          chapters_count: 1,
+          characters_count: 0,
+          story_lines_count: 0,
+          golden_fingers_count: 0,
+          has_world_view: false,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:03Z",
+        });
+
+      render(<MaterialDetailPage />, { wrapper: createWrapper() });
+
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync();
+      });
+
+      expect(screen.getByText("Ready Novel")).toBeInTheDocument();
+      expect(mockGet).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders loading and not-found states", async () => {

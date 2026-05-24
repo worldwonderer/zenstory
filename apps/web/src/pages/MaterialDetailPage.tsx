@@ -38,6 +38,13 @@ import type {
 import { useIsMobile } from "../hooks/useMediaQuery";
 import { materialsConfig } from "../config/materials";
 
+
+const ACTIVE_MATERIAL_STATUSES = new Set<MaterialNovel["status"]>(["pending", "processing"]);
+
+function isActiveMaterialStatus(status: MaterialNovel["status"]) {
+  return ACTIVE_MATERIAL_STATUSES.has(status);
+}
+
 type TreeItemType =
   | "folder"
   | "chapter"
@@ -78,6 +85,10 @@ export default function MaterialDetailPage() {
     queryFn: () => materialsApi.get(novelId!),
     enabled: !!novelId,
     staleTime: 30 * 1000,
+    refetchInterval: (query) => {
+      const data = query.state.data as MaterialNovel | undefined;
+      return data && isActiveMaterialStatus(data.status) ? 3000 : false;
+    },
   });
 
   // Fetch chapters
@@ -1165,10 +1176,10 @@ function EmptyState({ material }: EmptyStateProps) {
         {t("materials:detail.emptyDescription")}
       </p>
 
-      {material.status === "processing" && (
+      {isActiveMaterialStatus(material.status) && (
         <div className="mt-6 flex items-center gap-2 text-sm text-blue-600">
           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
-          <span>{t("materials:status.processing")}</span>
+          <span>{t(`materials:status.${material.status}`)}</span>
         </div>
       )}
     </div>
