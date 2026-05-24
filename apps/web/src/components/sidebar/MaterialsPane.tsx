@@ -164,28 +164,37 @@ export const MaterialsPane: React.FC = () => {
     });
   }, [addMaterial]);
 
-  // Search timeout ref
+  // Search timeout and request ordering refs
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRequestSeqRef = useRef(0);
 
   // Handle search with debouncing
   const handleSearch = useCallback((query: string) => {
     setSearchQuery(query);
+    const requestSeq = searchRequestSeqRef.current + 1;
+    searchRequestSeqRef.current = requestSeq;
+
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
     if (!query.trim()) {
       setSearchResults([]);
+      setIsSearching(false);
       return;
     }
     searchTimeoutRef.current = setTimeout(async () => {
       setIsSearching(true);
       try {
         const results = await materialsApi.searchMaterials(query);
-        setSearchResults(results);
+        if (searchRequestSeqRef.current === requestSeq) {
+          setSearchResults(results);
+        }
       } catch (err) {
         logger.error('Failed to search materials:', err);
       } finally {
-        setIsSearching(false);
+        if (searchRequestSeqRef.current === requestSeq) {
+          setIsSearching(false);
+        }
       }
     }, 300);
   }, []);

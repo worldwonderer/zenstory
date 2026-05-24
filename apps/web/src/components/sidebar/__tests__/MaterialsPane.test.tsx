@@ -5,6 +5,7 @@ import { MaterialsPane } from '../MaterialsPane'
 
 const mockBatchImport = vi.fn()
 const mockGetCharacters = vi.fn()
+const mockSearchMaterials = vi.fn()
 const mockToastSuccess = vi.fn()
 const mockToastError = vi.fn()
 const mockToggleNovel = vi.fn()
@@ -78,7 +79,7 @@ vi.mock('../../../lib/materialsApi', () => ({
     getStoryLines: vi.fn(),
     getStories: vi.fn(),
     getRelationships: vi.fn(),
-    searchMaterials: vi.fn(),
+    searchMaterials: (...args: unknown[]) => mockSearchMaterials(...args),
     importToProject: vi.fn(),
   },
 }))
@@ -108,6 +109,53 @@ describe('MaterialsPane', () => {
       results: [{ file_id: 'file-1', title: 'Hero', folder_name: 'Characters', file_type: 'character' }],
       failed_count: 1,
     })
+  })
+
+  it('keeps the latest material search results when an older request resolves later', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveOldSearch!: (value: unknown[]) => void
+      let resolveNewSearch!: (value: unknown[]) => void
+      mockSearchMaterials
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOldSearch = resolve }))
+        .mockReturnValueOnce(new Promise((resolve) => { resolveNewSearch = resolve }))
+
+      render(<MaterialsPane />)
+
+      const input = screen.getByPlaceholderText('editor:fileTree.searchMaterials')
+
+      fireEvent.change(input, { target: { value: 'old' } })
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+      })
+      expect(mockSearchMaterials).toHaveBeenCalledWith('old')
+
+      fireEvent.change(input, { target: { value: 'new' } })
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+      })
+      expect(mockSearchMaterials).toHaveBeenCalledWith('new')
+
+      await act(async () => {
+        resolveNewSearch([
+          { novel_id: 1, novel_title: 'Novel One', entity_type: 'characters', entity_id: 2, name: 'Fresh Hero' },
+        ])
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Fresh Hero')).toBeInTheDocument()
+
+      await act(async () => {
+        resolveOldSearch([
+          { novel_id: 1, novel_title: 'Novel One', entity_type: 'characters', entity_id: 1, name: 'Stale Hero' },
+        ])
+        await Promise.resolve()
+      })
+
+      expect(screen.getByText('Fresh Hero')).toBeInTheDocument()
+      expect(screen.queryByText('Stale Hero')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not report full success when batch import partially fails', async () => {
