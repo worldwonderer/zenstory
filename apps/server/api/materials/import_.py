@@ -53,8 +53,8 @@ def _validate_target_folder_or_raise(
     session: Session,
     project_id: str,
     folder_id: str,
-) -> None:
-    """Validate that target folder exists in project and is a folder node."""
+) -> str:
+    """Validate that target folder exists in project and return its title."""
     from models.file_model import File as ProjectFile
 
     target_folder = session.get(ProjectFile, folder_id)
@@ -72,6 +72,7 @@ def _validate_target_folder_or_raise(
             status_code=400,
             detail="target_folder_id must be a folder",
         )
+    return target_folder.title
 
 
 # ==================== Import Endpoints ====================
@@ -119,8 +120,9 @@ def import_material(
 
     # Find or create target folder (use flush instead of commit to keep in same transaction)
     folder_id = request.target_folder_id
+    folder_name = preview.suggested_folder_name
     if folder_id:
-        _validate_target_folder_or_raise(session, request.project_id, folder_id)
+        folder_name = _validate_target_folder_or_raise(session, request.project_id, folder_id)
     else:
         folder_title_candidates = [
             preview.suggested_folder_name,
@@ -138,6 +140,7 @@ def import_material(
 
         if existing_folder:
             folder_id = existing_folder.id
+            folder_name = existing_folder.title
         else:
             # Create new folder (flush but don't commit yet)
             new_folder = ProjectFile(
@@ -151,6 +154,7 @@ def import_material(
             session.add(new_folder)
             session.flush()  # Flush to get ID without committing
             folder_id = new_folder.id
+            folder_name = new_folder.title
 
     # Create the file with material content
     file_metadata = {
@@ -180,7 +184,7 @@ def import_material(
     return MaterialImportResponse(
         file_id=new_file.id,
         title=new_file.title,
-        folder_name=preview.suggested_folder_name,
+        folder_name=folder_name,
         file_type=new_file.file_type,
     )
 

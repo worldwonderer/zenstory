@@ -1012,6 +1012,55 @@ async def test_import_material_invalid_target_folder_rejected(client: AsyncClien
 
 
 @pytest.mark.integration
+async def test_import_material_returns_selected_target_folder_name(client: AsyncClient, db_session):
+    """Import response should report the actual selected folder, not the suggestion."""
+    from models.file_model import File as ProjectFile
+
+    user, token = await create_test_user(client, db_session, "importuser_selected_folder")
+    novel = create_test_novel(db_session, user.id, "Import Selected Folder Novel")
+    create_test_job(db_session, novel.id, "completed")
+
+    character = Character(novel_id=novel.id, name="Folder Hero")
+    db_session.add(character)
+
+    project = Project(name="Import Selected Folder Project", owner_id=user.id)
+    db_session.add(project)
+    db_session.commit()
+    db_session.refresh(character)
+    db_session.refresh(project)
+
+    target_folder = ProjectFile(
+        project_id=project.id,
+        title="Custom References",
+        file_type="folder",
+        content="",
+    )
+    db_session.add(target_folder)
+    db_session.commit()
+    db_session.refresh(target_folder)
+
+    response = await client.post(
+        "/api/v1/materials/import",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "project_id": project.id,
+            "novel_id": novel.id,
+            "entity_type": "characters",
+            "entity_id": character.id,
+            "target_folder_id": target_folder.id,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["folder_name"] == "Custom References"
+
+    imported_file = db_session.get(ProjectFile, payload["file_id"])
+    assert imported_file is not None
+    assert imported_file.parent_id == target_folder.id
+
+
+@pytest.mark.integration
 async def test_import_material_skips_soft_deleted_auto_folder(client: AsyncClient, db_session):
     """Auto-folder lookup should ignore soft-deleted folders with same title."""
     from models.file_model import File as ProjectFile
