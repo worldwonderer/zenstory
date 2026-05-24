@@ -228,6 +228,41 @@ describe("MaterialDetailPage", () => {
     expect(screen.getByText("materials:detail.relationships")).toBeInTheDocument();
   });
 
+  it("retries lazy folder loading after an initial failure", async () => {
+    mockGetCharacters
+      .mockRejectedValueOnce(new Error("temporary character load failure"))
+      .mockResolvedValueOnce([
+        {
+          id: "character-retry",
+          name: "Retry Hero",
+          description: "Loaded after retry",
+        },
+      ]);
+
+    render(<MaterialDetailPage />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText("Novel One")).toBeInTheDocument();
+    });
+
+    const charactersFolder = screen.getByRole("button", {
+      name: /materials:detail.characters/,
+    });
+
+    fireEvent.click(charactersFolder);
+    await waitFor(() => {
+      expect(mockGetCharacters).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(charactersFolder);
+    fireEvent.click(charactersFolder);
+
+    await waitFor(() => {
+      expect(mockGetCharacters).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText("Retry Hero")).toBeInTheDocument();
+  });
+
   it("loads folder content and renders chapter, character, and story details", async () => {
     render(<MaterialDetailPage />, { wrapper: createWrapper() });
 

@@ -174,39 +174,27 @@ export default function MaterialDetailPage() {
 
   // Trigger load function
   const triggerLoad = (folderId: string) => {
-    if (loadedFolders.has(folderId)) return;
+    if (loadedFolders.has(folderId) || loadingStates[folderId]) return;
 
-    setLoadedFolders((prev) => new Set(prev).add(folderId));
+    const refetchByFolder: Record<string, () => Promise<{ status: string }>> = {
+      chapters: refetchChapters,
+      characters: refetchCharacters,
+      stories: refetchStories,
+      plots: refetchPlots,
+      storylines: refetchStorylines,
+      relationships: refetchRelationships,
+      goldenfingers: refetchGoldenFingers,
+      worldview: refetchWorldview,
+      timeline: refetchTimeline,
+    };
 
-    switch (folderId) {
-      case "chapters":
-        refetchChapters();
-        break;
-      case "characters":
-        refetchCharacters();
-        break;
-      case "stories":
-        refetchStories();
-        break;
-      case "plots":
-        refetchPlots();
-        break;
-      case "storylines":
-        refetchStorylines();
-        break;
-      case "relationships":
-        refetchRelationships();
-        break;
-      case "goldenfingers":
-        refetchGoldenFingers();
-        break;
-      case "worldview":
-        refetchWorldview();
-        break;
-      case "timeline":
-        refetchTimeline();
-        break;
-    }
+    const refetchFolder = refetchByFolder[folderId];
+    if (!refetchFolder) return;
+
+    void refetchFolder().then((result) => {
+      if (result.status !== "success") return;
+      setLoadedFolders((prev) => new Set(prev).add(folderId));
+    });
   };
 
   // Build tree structure - folders always visible, children lazy loaded
