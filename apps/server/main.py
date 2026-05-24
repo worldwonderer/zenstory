@@ -1,3 +1,4 @@
+# ruff: noqa: E402, I001
 """
 zenstory API - Main application entry point
 
@@ -12,7 +13,10 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
+from scripts.check_python_runtime import check_pyexpat
+
 load_dotenv()
+check_pyexpat()
 
 # Import routers and other modules
 from fastapi import FastAPI, Request

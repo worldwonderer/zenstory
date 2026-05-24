@@ -241,16 +241,18 @@ EOF
 # ============================================================================
 
 activate_venv() {
-    if [ -d "$SERVER_DIR/venv" ]; then
-        # shellcheck disable=SC1091
-        source "$SERVER_DIR/venv/bin/activate"
-    elif [ -d "$SERVER_DIR/.venv312" ]; then
+    if [ -d "$SERVER_DIR/.venv312" ]; then
         # shellcheck disable=SC1091
         source "$SERVER_DIR/.venv312/bin/activate"
     elif [ -d "$SERVER_DIR/.venv" ]; then
         # shellcheck disable=SC1091
         source "$SERVER_DIR/.venv/bin/activate"
+    elif [ -d "$SERVER_DIR/venv" ]; then
+        # shellcheck disable=SC1091
+        source "$SERVER_DIR/venv/bin/activate"
     fi
+
+    python "$SERVER_DIR/scripts/check_python_runtime.py"
 }
 
 cleanup_lite_db() {

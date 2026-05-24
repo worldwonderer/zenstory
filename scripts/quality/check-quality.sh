@@ -27,6 +27,24 @@ print_usage() {
     echo "  i18n      - Hardcoded Chinese text detection"
 }
 
+activate_backend_venv() {
+    if [ -d ".venv312" ]; then
+        # shellcheck disable=SC1091
+        source .venv312/bin/activate
+    elif [ -d ".venv" ]; then
+        # shellcheck disable=SC1091
+        source .venv/bin/activate
+    elif [ -d "venv" ]; then
+        # shellcheck disable=SC1091
+        source venv/bin/activate
+    else
+        echo -e "${YELLOW}Warning: Virtual environment not found at apps/server/.venv312, .venv, or venv${NC}"
+        echo -e "${YELLOW}Some checks may fail. Run: cd apps/server && python3.12 -m venv .venv312 && . .venv312/bin/activate && pip install -r requirements.txt${NC}\n"
+    fi
+
+    python scripts/check_python_runtime.py
+}
+
 # Backend quality checks
 check_backend() {
     echo -e "\n${BLUE}======================================${NC}"
@@ -35,13 +53,7 @@ check_backend() {
 
     cd "$PROJECT_ROOT/apps/server"
 
-    # Activate virtual environment if exists
-    if [ -d "venv" ]; then
-        source venv/bin/activate
-    else
-        echo -e "${YELLOW}Warning: Virtual environment not found at apps/server/venv${NC}"
-        echo -e "${YELLOW}Some checks may fail. Run: cd apps/server && python3 -m venv venv && pip install -r requirements.txt${NC}\n"
-    fi
+    activate_backend_venv
 
     # 1. Ruff - Python linting
     echo -e "${YELLOW}1. Ruff (Python linting)...${NC}"
@@ -144,10 +156,7 @@ check_security() {
 
     cd "$PROJECT_ROOT/apps/server"
 
-    # Activate virtual environment if exists
-    if [ -d "venv" ]; then
-        source venv/bin/activate
-    fi
+    activate_backend_venv
 
     # 1. Bandit - Security linting
     echo -e "${YELLOW}1. Bandit (Security linting)...${NC}"
