@@ -33,6 +33,7 @@ help:
 env-check:
 	@echo "$(COLOR_BLUE)Using venv: $(VENV)$(COLOR_RESET)"
 	@$(VENV_PYTHON) -V
+	@$(VENV_PYTHON) scripts/check_python_runtime.py
 	@$(VENV_PYTHON) -c "import sqlmodel; print('sqlmodel', sqlmodel.__version__)"
 
 ## test: Run all tests
