@@ -214,6 +214,33 @@ def set_resend_cooldown(email: str, cooldown_seconds: int = 60) -> bool:
         return False
 
 
+def delete_resend_cooldown(email: str) -> bool:
+    """
+    Delete resend cooldown for an email address.
+
+    Args:
+        email: Email address
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        client = get_redis_client()
+        key = f"resend_cooldown:{email}"
+        client.delete(key)
+        return True
+    except Exception as e:
+        log_with_context(
+            logger,
+            40,  # ERROR
+            "Error deleting resend cooldown",
+            email=email,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return False
+
+
 def get_verification_attempts(email: str) -> int:
     """
     Get the number of failed verification attempts for an email.

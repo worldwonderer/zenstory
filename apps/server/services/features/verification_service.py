@@ -13,6 +13,7 @@ from utils.logger import get_logger, log_with_context
 from ..infra.email_client import send_verification_email
 from ..infra.redis_client import (
     check_resend_cooldown,
+    delete_resend_cooldown,
     delete_verification_code,
     get_verification_attempts,
     get_verification_code,
@@ -86,8 +87,10 @@ async def send_verification_code(email: str, language: str = "zh") -> tuple[bool
         email_sent = await send_verification_email(email, code, expiry_minutes, language=language)
 
         if not email_sent:
-            # Delete the code if email failed
+            # Delete retry state if email failed so users who never received
+            # a code can immediately request another one.
             delete_verification_code(email)
+            delete_resend_cooldown(email)
             return False, get_message("verification_email_failed", language)
 
         return True, None

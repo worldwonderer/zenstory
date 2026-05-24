@@ -184,6 +184,36 @@ class TestSendVerificationCode:
             mock_delete.assert_called_once_with(email)
 
     @pytest.mark.asyncio
+    async def test_send_code_email_failure_clears_resend_cooldown(self):
+        """If email delivery fails, users should not be locked out from retrying."""
+        email = "delivery-failed@example.com"
+        redis_store: dict[str, str] = {}
+
+        class _FakeRedisClient:
+            def setex(self, key: str, _ttl: int, value: str):
+                redis_store[key] = value
+
+            def delete(self, key: str):
+                redis_store.pop(key, None)
+
+            def ttl(self, key: str):
+                return 60 if key in redis_store else -2
+
+        with patch("services.infra.redis_client.get_redis_client", return_value=_FakeRedisClient()), \
+             patch(
+                "services.features.verification_service.send_verification_email",
+                new_callable=AsyncMock,
+            ) as mock_send_email:
+            mock_send_email.return_value = False
+
+            success, error = await send_verification_code(email, language="zh")
+
+            assert success is False
+            assert error is not None
+            assert f"verification:{email}" not in redis_store
+            assert f"resend_cooldown:{email}" not in redis_store
+
+    @pytest.mark.asyncio
     async def test_send_code_english_language(self):
         """Test sending code with English language setting."""
         email = "test@example.com"
