@@ -136,6 +136,7 @@
     "batchImportSuccess_one": "Successfully imported 1 item",
     "batchImportSuccess_other": "Successfully imported {{count}} items",
     "batchImportSuccess": "Successfully imported {{count}} items",
+    "batchImportPartialFailed": "Imported {{successCount}} item(s), {{failedCount}} failed. Please review and try again.",
     "batchImportFailed": "Batch import failed, please try again"
   }
 }

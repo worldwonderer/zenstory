@@ -136,6 +136,7 @@
     "batchImportSuccess": "成功导入 {{count}} 个素材",
     "batchImportSuccess_one": "成功导入 {{count}} 个素材",
     "batchImportSuccess_other": "成功导入 {{count}} 个素材",
+    "batchImportPartialFailed": "已导入 {{successCount}} 个素材，{{failedCount}} 个失败，请检查后重试。",
     "batchImportFailed": "批量导入失败，请重试"
   }
 }

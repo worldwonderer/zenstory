@@ -123,7 +123,7 @@ export const MaterialsPane: React.FC = () => {
       entityListLoadingRef.current[key] = false;
       setEntityListLoading(prev => ({ ...prev, [key]: false }));
     }
-  }, [entityLists, materialLib.libraries]);
+  }, [entityLists, materialLib.libraries, t]);
 
   // Handle entity type toggle with lazy loading
   const handleEntityTypeToggle = useCallback((novelId: number, entityType: MaterialEntityType) => {
@@ -151,7 +151,7 @@ export const MaterialsPane: React.FC = () => {
       logger.error('Failed to quick import material:', err);
       toast.error(t('materials:toast.importFailed'));
     }
-  }, [currentProjectId]);
+  }, [currentProjectId, t]);
 
   // Attach library material to chat
   const handleAttachToChat = useCallback((novelId: number, entityType: MaterialEntityType, entityId: number, itemName: string) => {
@@ -228,7 +228,15 @@ export const MaterialsPane: React.FC = () => {
           entity_id: Number(entityId),
         };
       });
-      await materialsApi.batchImport(currentProjectId, items);
+      const result = await materialsApi.batchImport(currentProjectId, items);
+      if (result.failed_count > 0) {
+        toast.error(t('materials:toast.batchImportPartialFailed', {
+          successCount: result.results.length,
+          failedCount: result.failed_count,
+        }));
+        return;
+      }
+
       toast.success(t('materials:toast.batchImportSuccess', { count: items.length }));
       setBatchMode(false);
       setSelectedItems(new Set());
@@ -238,7 +246,7 @@ export const MaterialsPane: React.FC = () => {
     } finally {
       setIsBatchImporting(false);
     }
-  }, [currentProjectId, selectedItems]);
+  }, [currentProjectId, selectedItems, t]);
 
   // Entity type labels
   const entityTypeLabels: Record<MaterialEntityType, string> = {
