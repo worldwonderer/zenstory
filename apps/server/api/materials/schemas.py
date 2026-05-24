@@ -105,6 +105,7 @@ class CharacterListItem(BaseModel):
     description: str | None
     archetype: str | None
     first_appearance_chapter_id: int | None
+    first_appearance_chapter: int | None = None
 
 
 class PlotListItem(BaseModel):

@@ -83,8 +83,10 @@ export interface MaterialCharacter {
   aliases?: string[];
   /** Character description and traits */
   description?: string;
+  /** ID of the chapter where the character first appears */
+  first_appearance_chapter_id?: number | null;
   /** Chapter number where character first appears */
-  first_appearance_chapter?: number;
+  first_appearance_chapter?: number | null;
   /** UTC timestamp of creation */
   created_at: string;
 }

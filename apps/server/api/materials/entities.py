@@ -122,6 +122,20 @@ def get_characters(
         .order_by(Character.first_appearance_chapter_id.asc())
     ).all()
 
+    first_appearance_chapter_ids = {
+        character.first_appearance_chapter_id
+        for character in characters
+        if character.first_appearance_chapter_id is not None
+    }
+    first_appearance_chapter_numbers: dict[int, int] = {}
+    if first_appearance_chapter_ids:
+        first_appearance_chapters = session.exec(
+            select(Chapter.id, Chapter.chapter_number)
+            .where(Chapter.novel_id == novel_id)
+            .where(Chapter.id.in_(first_appearance_chapter_ids))
+        ).all()
+        first_appearance_chapter_numbers = dict(first_appearance_chapters)
+
     result = []
     for character in characters:
         # Parse aliases
@@ -142,6 +156,9 @@ def get_characters(
             description=character.description,
             archetype=character.archetype,
             first_appearance_chapter_id=character.first_appearance_chapter_id,
+            first_appearance_chapter=first_appearance_chapter_numbers.get(
+                character.first_appearance_chapter_id
+            ),
         ))
 
     return result

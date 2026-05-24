@@ -52,6 +52,13 @@ vi.mock("react-i18next", () => ({
       ) {
         return defaultValueOrOptions.defaultValue;
       }
+      if (
+        defaultValueOrOptions &&
+        typeof defaultValueOrOptions === "object" &&
+        "number" in defaultValueOrOptions
+      ) {
+        return `${key} ${String(defaultValueOrOptions.number)}`;
+      }
       return key;
     },
   }),
@@ -125,7 +132,8 @@ describe("MaterialDetailPage", () => {
         name: "Li Wei",
         aliases: ["Blade"],
         description: "A fearless lead",
-        first_appearance_chapter: 1,
+        first_appearance_chapter_id: 101,
+        first_appearance_chapter: 7,
       },
     ]);
     mockGetStories.mockResolvedValue([
@@ -240,6 +248,7 @@ describe("MaterialDetailPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Li Wei/ }));
     expect(await screen.findByText("A fearless lead")).toBeInTheDocument();
+    expect(screen.getByText(/materials:detail.firstAppearance/)).toHaveTextContent("7");
 
     fireEvent.click(screen.getByRole("button", { name: /materials:detail.stories/ }));
     await waitFor(() => {

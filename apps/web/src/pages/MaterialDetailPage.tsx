@@ -677,6 +677,7 @@ function ContentDetail({ item }: ContentDetailProps) {
 
   if (item.type === "character") {
     const character = item.data as MaterialCharacter;
+    const firstAppearanceChapter = character.first_appearance_chapter;
     return (
       <div className="max-w-3xl">
         <div className="mb-6">
@@ -703,9 +704,9 @@ function ContentDetail({ item }: ContentDetailProps) {
           </div>
         )}
 
-        {character.first_appearance_chapter && (
+        {firstAppearanceChapter != null && (
           <div className="text-sm text-[hsl(var(--text-secondary))]">
-            {t("materials:detail.firstAppearance")}: {t("materials:detail.chapter", { number: character.first_appearance_chapter })}
+            {t("materials:detail.firstAppearance")}: {t("materials:detail.chapter", { number: firstAppearanceChapter })}
           </div>
         )}
       </div>

@@ -786,6 +786,42 @@ async def test_search_materials_only_completed(client: AsyncClient, db_session):
     assert any(item["name"] == "Hero" for item in data)
 
 
+# ==================== Material Entity Tests ====================
+
+
+@pytest.mark.integration
+async def test_get_characters_includes_first_appearance_chapter_number(
+    client: AsyncClient, db_session
+):
+    """Character list should expose chapter number, not only internal chapter ID."""
+    user, token = await create_test_user(client, db_session, "characterschapter1")
+
+    novel = create_test_novel(db_session, user.id, "Character Chapter Novel")
+    chapter = Chapter(novel_id=novel.id, chapter_number=7, title="Chapter 7")
+    db_session.add(chapter)
+    db_session.commit()
+    db_session.refresh(chapter)
+
+    character = Character(
+        novel_id=novel.id,
+        name="Li Wei",
+        first_appearance_chapter_id=chapter.id,
+    )
+    db_session.add(character)
+    db_session.commit()
+
+    response = await client.get(
+        f"/api/v1/materials/{novel.id}/characters",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["name"] == "Li Wei"
+    assert payload[0]["first_appearance_chapter_id"] == chapter.id
+    assert payload[0]["first_appearance_chapter"] == 7
+
+
 # ==================== Material Detail Tests ====================
 
 
