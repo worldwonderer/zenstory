@@ -479,15 +479,20 @@ async def retry_material_job(
     session.commit()
     session.refresh(new_job)
 
-    if not compensatory_retry and not consume_quota(
-        "material_decompose", session, current_user.id
-    ):
-        session.delete(new_job)
-        session.commit()
-        allowed, used, limit = quota_service.check_feature_quota(
-            session, current_user.id, "material_decompose"
-        )
-        if not allowed:
+    quota_consumed = False
+    if not compensatory_retry:
+        if consume_quota("material_decompose", session, current_user.id):
+            quota_consumed = True
+        else:
+            session.delete(new_job)
+            session.commit()
+            allowed, used, limit = quota_service.check_feature_quota(
+                session, current_user.id, "material_decompose"
+            )
+            # This request did not charge quota, so it must not proceed to
+            # dispatch (and a possible refund). Raise regardless of a racy
+            # allowed==True (a concurrent decrement could flip it): new_job is
+            # already deleted and nothing was consumed for this request.
             raise QuotaExceededException(
                 feature_type="material_decompose",
                 used=used,
@@ -512,7 +517,9 @@ async def retry_material_job(
     )
 
     if flow_run_id is None:
-        if not compensatory_retry:
+        # Only refund quota that THIS request actually consumed, so a dispatch
+        # failure cannot under-count usage (refund-leak) when no unit was charged.
+        if quota_consumed:
             quota_service.release_feature_quota(
                 session, current_user.id, "material_decompose"
             )

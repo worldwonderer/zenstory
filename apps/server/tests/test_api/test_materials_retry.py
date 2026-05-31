@@ -314,3 +314,85 @@ async def test_retry_material_job_does_not_consume_quota_for_compensatory_failur
     assert response.status_code == 200
     db_session.refresh(quota)
     assert quota.material_decompositions_used == 5
+
+
+@pytest.mark.integration
+async def test_retry_material_job_rejects_when_quota_cannot_be_consumed(
+    client: AsyncClient, db_session, monkeypatch
+):
+    """If quota consumption fails, retry must reject (402) and must NOT proceed
+    to dispatch or refund quota it never consumed.
+
+    Regression: when consume_quota returned False but a concurrent decrement
+    made check_feature_quota report allowed=True, the old code fell through to
+    dispatch without charging quota, and a dispatch failure then refunded a unit
+    that was never consumed (refund-leak / free decomposition).
+    """
+    user, token = await _create_test_user_and_token(client, db_session, "retryconsumefail")
+
+    now = datetime.utcnow()
+    quota = UsageQuota(
+        user_id=user.id,
+        period_start=now,
+        period_end=now + timedelta(days=30),
+        ai_conversations_used=0,
+        material_decompositions_used=5,
+        monthly_period_start=now - timedelta(days=1),
+        monthly_period_end=now + timedelta(days=30),
+        last_reset_at=now,
+    )
+    db_session.add(quota)
+    db_session.commit()
+
+    novel = Novel(user_id=user.id, title="Retry Consume Fail Novel", author="Tester")
+    db_session.add(novel)
+    db_session.commit()
+    db_session.refresh(novel)
+
+    failed_job = IngestionJob(
+        novel_id=novel.id,
+        source_path="/tmp/test.txt",
+        status="failed",
+        total_chapters=10,
+        processed_chapters=0,
+        error_message="flow failed",
+        error_details='{"stage":"flow","message":"flow failed"}',
+    )
+    db_session.add(failed_job)
+    db_session.commit()
+
+    # Simulate the race: the pre-check passes, consume_quota fails, but a
+    # concurrent decrement makes check_feature_quota report allowed=True.
+    monkeypatch.setattr(materials_upload_api, "check_quota", lambda *a, **k: None)
+    monkeypatch.setattr(materials_upload_api, "consume_quota", lambda *a, **k: False)
+    monkeypatch.setattr(
+        materials_upload_api.quota_service,
+        "check_feature_quota",
+        lambda *a, **k: (True, 4, 5),
+    )
+
+    release_calls: list[int] = []
+    monkeypatch.setattr(
+        materials_upload_api.quota_service,
+        "release_feature_quota",
+        lambda *a, **k: release_calls.append(1),
+    )
+
+    dispatch_calls: list[int] = []
+
+    async def _tracking_dispatch(*args, **kwargs):
+        dispatch_calls.append(1)
+        return "flow-run-test"
+
+    monkeypatch.setattr(materials_upload_api, "_start_flow_deployment", _tracking_dispatch)
+
+    response = await client.post(
+        f"/api/v1/materials/{novel.id}/retry",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 402
+    assert dispatch_calls == []  # never proceeded to dispatch
+    assert release_calls == []  # never refunded quota it did not consume
+    db_session.refresh(quota)
+    assert quota.material_decompositions_used == 5  # unchanged
