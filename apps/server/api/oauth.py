@@ -463,9 +463,12 @@ async def google_oauth_callback(
             user_id=existing_user.id,
             email=google_email,
         )
-        # Update user info
-        if existing_user.email != google_email:
-            existing_user.email = google_email
+        # Update user info.
+        # The lookup above already matched this account case-insensitively, so
+        # do NOT rewrite the stored email casing here: the email column has a
+        # case-sensitive UNIQUE constraint, and lowercasing a legacy mixed-case
+        # address can collide with another row and raise IntegrityError on an
+        # otherwise-valid OAuth login.
         if google_name and existing_user.username == google_email.split("@")[0]:
             # Only update username if it's still the default email prefix
             existing_user.username = google_name

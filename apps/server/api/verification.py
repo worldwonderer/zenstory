@@ -115,8 +115,13 @@ async def verify_email(
             status_code=status.HTTP_400_BAD_REQUEST
         )
 
-    # Update user verification status
-    user.email = normalized_email
+    # Update user verification status.
+    # The lookup above already matched this account case-insensitively, so do
+    # NOT rewrite the stored email casing here: the email column has a
+    # case-sensitive UNIQUE constraint, and lowercasing a legacy mixed-case
+    # address can collide with another row and raise IntegrityError on an
+    # otherwise-correct verification code. New accounts are already stored
+    # normalized at registration time.
     user.email_verified = True
     user.updated_at = utcnow()
     session.add(user)

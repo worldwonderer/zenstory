@@ -433,6 +433,93 @@ async def test_google_oauth_callback_matches_existing_user_email_case_insensitiv
 
 
 @pytest.mark.integration
+async def test_google_oauth_callback_preserves_existing_user_email_casing(
+    client: AsyncClient, db_session, monkeypatch
+):
+    """OAuth login must not rewrite a legacy mixed-case email to lowercase.
+
+    Regression: lowercasing an existing account's email on login could collide
+    with the case-sensitive UNIQUE(email) constraint and surface as a 500.
+    """
+    from sqlmodel import select
+
+    from api.oauth import OAUTH_STATE_COOKIE_NAME, _encode_oauth_state
+    from models import User
+    from services.core.auth_service import hash_password
+
+    class _DummyResponse:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class _DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return _DummyResponse(200, {"access_token": "google-access-token"})
+
+        async def get(self, *args, **kwargs):
+            return _DummyResponse(
+                200,
+                {
+                    "email": "casing-oauth@example.com",
+                    "name": "Casing OAuth User",
+                    "picture": "https://example.com/avatar.png",
+                },
+            )
+
+    existing_user = User(
+        username="casing_oauth_user",
+        email="Casing-OAuth@Example.com",
+        hashed_password=hash_password("password123"),
+        email_verified=True,
+        is_active=True,
+    )
+    db_session.add(existing_user)
+    db_session.commit()
+    db_session.refresh(existing_user)
+    existing_user_id = existing_user.id
+
+    monkeypatch.setattr("api.oauth.httpx.AsyncClient", _DummyAsyncClient)
+    monkeypatch.setattr("api.oauth.GOOGLE_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr("api.oauth.GOOGLE_CLIENT_SECRET", "test-client-secret")
+    monkeypatch.setattr(
+        "api.oauth.GOOGLE_REDIRECT_URI",
+        "http://localhost:8000/api/auth/google/callback",
+    )
+
+    nonce = "oauth-casing-preserve-nonce"
+    state = _encode_oauth_state({"nonce": nonce})
+
+    response = await client.get(
+        "/api/auth/google/callback",
+        params={"code": "dummy-code", "state": state},
+        headers={"Cookie": f"{OAUTH_STATE_COOKIE_NAME}={nonce}"},
+    )
+
+    assert response.status_code in [302, 307]
+
+    users = db_session.exec(select(User)).all()
+    assert len(users) == 1
+    db_session.expire_all()
+    refreshed = db_session.get(User, existing_user_id)
+    # Stored casing is preserved (no destructive lowercase rewrite); the rest
+    # of the existing-user update path (avatar) still runs.
+    assert refreshed.email == "Casing-OAuth@Example.com"
+    assert refreshed.avatar_url == "https://example.com/avatar.png"
+
+
+@pytest.mark.integration
 async def test_google_oauth_callback_requires_invite_code_for_new_user(
     client: AsyncClient, monkeypatch
 ):

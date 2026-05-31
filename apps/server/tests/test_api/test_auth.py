@@ -217,6 +217,49 @@ async def test_verify_email_uses_case_insensitive_email_identity(client: AsyncCl
 
 
 @pytest.mark.integration
+async def test_verify_email_preserves_stored_email_casing(
+    client: AsyncClient, db_session, monkeypatch
+):
+    """Verifying must not rewrite a legacy mixed-case email to lowercase.
+
+    Regression: case-insensitive lookup plus an unconditional lowercase
+    write-back could collide with the case-sensitive UNIQUE(email) constraint
+    and return a 500 on an otherwise-correct verification code.
+    """
+    from models import User
+    from services.core.auth_service import hash_password
+
+    async def _mock_verify_code(email: str, code: str, language: str = "zh"):
+        return True, None
+
+    monkeypatch.setattr("api.verification.verify_code", _mock_verify_code)
+
+    user = User(
+        username="casing_preserve_verify",
+        email="Casing-Preserve@Example.com",
+        hashed_password=hash_password("testpassword123"),
+        email_verified=False,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    user_id = user.id
+
+    response = await client.post(
+        "/api/auth/verify-email",
+        json={"email": "Casing-Preserve@Example.com", "code": "123456"},
+    )
+
+    assert response.status_code == 200
+    db_session.expire_all()
+    refreshed = db_session.get(User, user_id)
+    assert refreshed.email_verified is True
+    # Stored casing is preserved (no destructive lowercase rewrite).
+    assert refreshed.email == "Casing-Preserve@Example.com"
+
+
+@pytest.mark.integration
 async def test_register_duplicate_username(client: AsyncClient):
     """Test registration with duplicate username returns 400."""
     # First registration
