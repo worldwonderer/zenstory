@@ -370,6 +370,53 @@ describe('useMaterialLibrary', () => {
 
       consoleErrorSpy.mockRestore()
     })
+
+    it('does not clear a newer preview when an earlier request fails out of order', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      let rejectFirst: ((err: Error) => void) | undefined
+      vi.mocked(materialsApi.materialsApi.getPreview)
+        .mockImplementationOnce(
+          () =>
+            new Promise<MaterialPreviewResponse>((_resolve, reject) => {
+              rejectFirst = reject
+            })
+        )
+        .mockResolvedValueOnce(mockPreview)
+
+      const { result } = renderHook(() => useMaterialLibrary())
+
+      // Kick off a slow first request that will fail later (do not await it).
+      let firstCall: Promise<void> | undefined
+      act(() => {
+        firstCall = result.current.loadPreview(1, 'characters', 123)
+      })
+
+      // A later request resolves first and populates the preview.
+      await act(async () => {
+        await result.current.loadPreview(1, 'stories', 456)
+      })
+      expect(result.current.preview).toEqual(mockPreview)
+      expect(result.current.previewEntityInfo).toEqual({
+        novelId: 1,
+        entityType: 'stories',
+        entityId: 456,
+      })
+
+      // The earlier request now fails — it must NOT clobber the newer preview.
+      await act(async () => {
+        rejectFirst!(new Error('Stale preview failed'))
+        await firstCall!
+      })
+
+      expect(result.current.preview).toEqual(mockPreview)
+      expect(result.current.previewEntityInfo).toEqual({
+        novelId: 1,
+        entityType: 'stories',
+        entityId: 456,
+      })
+
+      consoleErrorSpy.mockRestore()
+    })
   })
 
   describe('clearPreview', () => {

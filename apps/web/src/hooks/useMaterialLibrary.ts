@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { materialsApi } from '../lib/materialsApi';
 import { logger } from "../lib/logger";
@@ -54,6 +54,9 @@ export function useMaterialLibrary(): MaterialLibraryState {
   const [preview, setPreview] = useState<MaterialPreviewResponse | null>(null);
   const [previewEntityInfo, setPreviewEntityInfo] = useState<PreviewEntityInfo | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  // Monotonic sequence so out-of-order preview responses cannot clobber a
+  // newer one (e.g. an earlier slow request that fails after a later success).
+  const previewSeqRef = useRef(0);
 
   // Fetch library summary - auto-load when component mounts
   const { data, isLoading, isFetching, error } = useQuery({
@@ -92,17 +95,27 @@ export function useMaterialLibrary(): MaterialLibraryState {
     entityType: MaterialEntityType,
     entityId: number,
   ) => {
+    const seq = ++previewSeqRef.current;
     setIsPreviewLoading(true);
     try {
       const data = await materialsApi.getPreview(novelId, entityType, entityId);
-      setPreview(data);
-      setPreviewEntityInfo({ novelId, entityType, entityId });
+      // Ignore responses that have been superseded by a newer request.
+      if (previewSeqRef.current === seq) {
+        setPreview(data);
+        setPreviewEntityInfo({ novelId, entityType, entityId });
+      }
     } catch (err) {
-      setPreview(null);
-      setPreviewEntityInfo(null);
+      // Only clear the preview if this is still the latest request, so a stale
+      // failure cannot erase a newer, successfully-loaded preview.
+      if (previewSeqRef.current === seq) {
+        setPreview(null);
+        setPreviewEntityInfo(null);
+      }
       logger.error('Failed to load material preview:', err);
     } finally {
-      setIsPreviewLoading(false);
+      if (previewSeqRef.current === seq) {
+        setIsPreviewLoading(false);
+      }
     }
   }, []);
 
