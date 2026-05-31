@@ -51,12 +51,15 @@ from api.vector_search import router as vector_search_router
 from api.verification import router as verification_router
 from api.versions import router as versions_router
 from api.voice import router as voice_router
+from sqlalchemy.exc import IntegrityError
+
 from config.logger_config import configure_logging
 from core.error_handler import (
     APIException,
     api_exception_handler,
     general_exception_handler,
     http_exception_handler,
+    integrity_error_handler,
     validation_exception_handler,
 )
 from database import init_db
@@ -95,6 +98,7 @@ logger = get_logger(__name__)
 app.add_exception_handler(APIException, api_exception_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(IntegrityError, integrity_error_handler)
 app.add_exception_handler(Exception, general_exception_handler)
 
 # Register logging middleware

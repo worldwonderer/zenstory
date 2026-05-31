@@ -30,6 +30,7 @@ class ErrorCode:
     SERVICE_UNAVAILABLE = "ERR_SERVICE_UNAVAILABLE"
     BAD_REQUEST = "ERR_BAD_REQUEST"
     NOT_FOUND = "ERR_NOT_FOUND"
+    RESOURCE_CONFLICT = "ERR_RESOURCE_CONFLICT"
 
     # ==================== Authentication & Authorization Errors (2000-2999) ====================
 
@@ -151,6 +152,7 @@ ERROR_MESSAGES = {
         "ERR_INTERNAL_SERVER_ERROR": "服务器内部错误，请稍后重试",
         "ERR_VALIDATION_ERROR": "请求参数验证失败",
         "ERR_DATABASE_ERROR": "数据库操作失败",
+        "ERR_RESOURCE_CONFLICT": "操作与现有数据冲突，请检查后重试",
         "ERR_SERVICE_UNAVAILABLE": "服务暂时不可用",
         "ERR_BAD_REQUEST": "请求格式错误",
         "ERR_NOT_FOUND": "资源不存在",
@@ -242,6 +244,7 @@ ERROR_MESSAGES = {
         "ERR_INTERNAL_SERVER_ERROR": "Internal server error, please try again later",
         "ERR_VALIDATION_ERROR": "Request validation failed",
         "ERR_DATABASE_ERROR": "Database operation failed",
+        "ERR_RESOURCE_CONFLICT": "The request conflicts with existing data",
         "ERR_SERVICE_UNAVAILABLE": "Service temporarily unavailable",
         "ERR_BAD_REQUEST": "Invalid request format",
         "ERR_NOT_FOUND": "Resource not found",

@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.error_codes import ErrorCode
@@ -126,6 +127,34 @@ async def validation_exception_handler(
             "detail": ErrorCode.VALIDATION_ERROR,
             "error_code": ErrorCode.VALIDATION_ERROR,
             "errors": exc.errors(),
+        },
+    )
+
+
+async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+    """
+    Handle uncaught database integrity (unique/constraint) violations.
+
+    Converts them into a clean 409 Conflict instead of leaking a raw 500, and
+    never exposes the underlying SQL to clients. This is a safety net for any
+    unhandled constraint collision (e.g. a unique-key race between a duplicate
+    check and an insert/update).
+    """
+    log_with_context(
+        logger,
+        logging.WARNING,
+        "Database integrity error",
+        error_type=type(exc).__name__,
+        error_message=str(getattr(exc, "orig", exc)),
+        path=request.url.path,
+        method=request.method,
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "detail": ErrorCode.RESOURCE_CONFLICT,
+            "error_code": ErrorCode.RESOURCE_CONFLICT,
         },
     )
 
