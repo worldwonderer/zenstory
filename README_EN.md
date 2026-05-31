@@ -41,7 +41,8 @@ ZenStory's Agent operates your creative files directly — building character ca
 - [Tech Stack](#tech-stack) — frontend / backend / AI / retrieval / deployment at a glance
 - [Quick Start](#quick-start) — one-line Docker or local development
 - [Project Architecture](#project-architecture) — monorepo layout
-- [Roadmap](#roadmap) · [Contributing](#contributing)
+- [Roadmap](#roadmap) — shipped capabilities and what's next
+- [Contributing](#contributing) — bugs, feature requests, PRs
 
 ---
 
