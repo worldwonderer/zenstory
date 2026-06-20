@@ -1,7 +1,6 @@
-"""
-Anthropic tool definitions for workflow integration.
+"""Provider-neutral tool schema definitions for workflow integration.
 
-Defines tools in Anthropic format with proper input_schema.
+The OpenAI Agents adapter converts these internal schemas into SDK tools.
 """
 
 from typing import Any
@@ -356,7 +355,7 @@ REQUEST_CLARIFICATION_TOOL: dict[str, Any] = {
 
 
 # Export all tool schemas by name (schema source-of-truth).
-ANTHROPIC_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "create_file": CREATE_FILE_TOOL,
     "edit_file": EDIT_FILE_TOOL,
     "delete_file": DELETE_FILE_TOOL,
@@ -370,9 +369,9 @@ ANTHROPIC_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 
 def get_tool_by_name(name: str) -> dict[str, Any] | None:
     """Get a tool definition by name."""
-    return ANTHROPIC_TOOL_SCHEMAS.get(name)
+    return TOOL_SCHEMAS.get(name)
 
 
 def get_all_tool_names() -> list[str]:
     """Get all tool names."""
-    return list(ANTHROPIC_TOOL_SCHEMAS.keys())
+    return list(TOOL_SCHEMAS.keys())

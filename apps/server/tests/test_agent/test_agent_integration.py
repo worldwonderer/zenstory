@@ -21,10 +21,10 @@ def test_user_with_project(db_session: Session):
     """Create a test user with project for integration testing."""
     # Create user
     user = User(
-        email="claude_integration_test@example.com",
-        username="claudeintegrationtest",
+        email="agent_integration_test@example.com",
+        username="agentintegrationtest",
         hashed_password=hash_password("password123"),
-        name="Claude Integration Test User",
+        name="Agent Integration Test User",
         email_verified=True,
         is_active=True,
     )
@@ -34,8 +34,8 @@ def test_user_with_project(db_session: Session):
 
     # Create project
     project = Project(
-        name="Claude Integration Test Project",
-        description="A test project for Claude SDK integration",
+        name="Agent Integration Test Project",
+        description="A test project for writing agent integration",
         owner_id=user.id,
         project_type="novel",
     )
@@ -247,7 +247,7 @@ class TestStreamAdapterLangGraph:
 
     async def test_process_text_event(self):
         """Test processing TEXT event from LangGraph."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
         from agent.stream_adapter import create_stream_adapter
 
         adapter = create_stream_adapter()
@@ -268,7 +268,7 @@ class TestStreamAdapterLangGraph:
 
     async def test_process_tool_use_event(self):
         """Test processing TOOL_USE event from LangGraph."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
         from agent.stream_adapter import create_stream_adapter
 
         adapter = create_stream_adapter()
@@ -293,7 +293,7 @@ class TestStreamAdapterLangGraph:
 
     async def test_process_tool_result_event(self):
         """Test processing TOOL_RESULT event from LangGraph."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
         from agent.stream_adapter import create_stream_adapter
 
         adapter = create_stream_adapter()
@@ -320,7 +320,7 @@ class TestStreamAdapterLangGraph:
 
     async def test_process_thinking_event(self):
         """Test processing THINKING event from LangGraph."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
         from agent.stream_adapter import create_stream_adapter
 
         adapter = create_stream_adapter()
@@ -341,7 +341,7 @@ class TestStreamAdapterLangGraph:
 
     async def test_process_error_event(self):
         """Test processing ERROR event from LangGraph."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
         from agent.stream_adapter import create_stream_adapter
 
         adapter = create_stream_adapter()

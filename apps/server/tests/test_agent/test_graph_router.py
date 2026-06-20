@@ -4,7 +4,7 @@ Tests for agent/graph/router.py
 Tests the router node for LangGraph writing workflow.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -75,24 +75,19 @@ class TestRouterNode:
     async def test_router_node_with_message(self):
         """Test router with valid message."""
         from agent.graph.router import router_node
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
 
-        with patch("agent.graph.router.get_router_client") as mock_get_client:
-            async def mock_stream_message(**_kwargs):
-                yield StreamEvent(
-                    type=StreamEventType.TEXT,
-                    data={
-                        "text": (
-                            '{"agent_type":"planner","workflow_type":"standard",'
-                            '"reason":"需要先规划","confidence":0.95}'
-                        ),
-                    },
-                )
-
-            mock_client = MagicMock()
-            mock_client.stream_message = mock_stream_message
-            mock_get_client.return_value = mock_client
-
+        route_response = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        '{"agent_type":"planner","workflow_type":"standard",'
+                        '"reason":"需要先规划","confidence":0.95}'
+                    ),
+                }
+            ]
+        }
+        with patch("agent.graph.router._route_with_deepseek_chat", AsyncMock(return_value=route_response)):
             state = {"user_message": "Plan a story outline"}
             result = await router_node(state)
 
@@ -103,19 +98,8 @@ class TestRouterNode:
     async def test_router_node_error_defaults_to_writer(self):
         """Test router defaults to writer on error."""
         from agent.graph.router import router_node
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
 
-        with patch("agent.graph.router.get_router_client") as mock_get_client:
-            async def mock_stream_message(**_kwargs):
-                yield StreamEvent(
-                    type=StreamEventType.ERROR,
-                    data={"error": "API Error", "error_type": "Exception"},
-                )
-
-            mock_client = MagicMock()
-            mock_client.stream_message = mock_stream_message
-            mock_get_client.return_value = mock_client
-
+        with patch("agent.graph.router._route_with_deepseek_chat", AsyncMock(side_effect=ValueError("API Error"))):
             state = {"user_message": "Some message"}
             result = await router_node(state)
 

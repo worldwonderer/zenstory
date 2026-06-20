@@ -391,7 +391,6 @@ class TestTokenBudget:
 
     def test_chars_per_token_constant(self):
         """Test CHARS_PER_TOKEN constant."""
-        from agent.utils.token_utils import CHARS_PER_TOKEN
         assert CHARS_PER_TOKEN == 4
 
     def test_default_allocation_percentages(self):

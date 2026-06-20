@@ -1,19 +1,7 @@
+"""Legacy LLM package placeholder.
+
+Provider-specific agent clients were removed in favor of DeepSeek-only
+OpenAI-compatible clients under ``agent.core`` and ``agent.openai_agents``.
 """
-LLM client module for zenstory Agent.
 
-Provides Anthropic SDK client wrapper with streaming and tool calling support.
-"""
-
-from .anthropic_client import (
-    AnthropicClient,
-    AnthropicConfig,
-    StreamEvent,
-    get_anthropic_client,
-)
-
-__all__ = [
-    "AnthropicClient",
-    "AnthropicConfig",
-    "StreamEvent",
-    "get_anthropic_client",
-]
+__all__: list[str] = []

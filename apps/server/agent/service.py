@@ -11,7 +11,7 @@ Features:
 - Context compaction for long sessions
 - Steering message support
 
-Powered by custom workflow orchestration + Anthropic SDK.
+Powered by LangGraph workflow orchestration + openai-agents-python.
 """
 
 import asyncio
@@ -71,11 +71,11 @@ AGENT_MAX_ITERATIONS = AGENT_REQUEST_MAX_ITERATIONS
 
 class AgentService:
     """
-    AI writing assistant service powered by workflow orchestration + Anthropic SDK.
+    AI writing assistant service powered by workflow orchestration + openai-agents-python.
 
     Features:
     - Multi-agent routing (planner/writer/quality_reviewer)
-    - Open-ended conversation with Claude
+    - Open-ended conversation with DeepSeek via openai-agents-python
     - File CRUD via tool calling
     - Chat history persistence
     - Streaming responses
@@ -639,7 +639,7 @@ class AgentService:
                 if context_parts:
                     user_content += f"\n\n{'Context' if force_en else '上下文'}:\n" + "\n".join(context_parts)
 
-            # Combine messages (without system message - it's passed separately to Claude)
+            # Combine messages (without system message - it is passed separately to the model)
             messages = history_messages + [{"role": "user", "content": user_content}]
 
             yield thinking_event(

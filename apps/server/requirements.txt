@@ -5,11 +5,10 @@ sqlmodel>=0.0.14
 python-multipart>=0.0.6
 pydantic-settings>=2.0.0
 
-# OpenAI API client
+# DeepSeek OpenAI-compatible API client and Agents SDK
 openai>=1.3.0
+openai-agents>=0.17.6,<0.18
 
-# Anthropic SDK for Claude API
-anthropic>=0.40.0
 
 # Prefect for workflow orchestration
 prefect>=3.4.0
@@ -52,7 +51,6 @@ asyncpg>=0.29.0  # Async PostgreSQL driver
 
 # LlamaIndex for RAG and retrieval
 llama-index-core>=0.10.0
-llama-index-embeddings-openai>=0.1.0
 llama-index-vector-stores-chroma>=0.1.0
 
 # Chroma vector database

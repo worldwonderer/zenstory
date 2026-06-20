@@ -12,12 +12,11 @@ import pytest
 
 from agent.core.metrics import (
     AGENT_CLARIFICATION_TOTAL,
-    MetricsCollector,
     AGENT_REQUESTS_DURATION_MS,
     AGENT_REQUESTS_ERRORS,
     AGENT_REQUESTS_TOTAL,
-    CONTEXT_COMPACTION_TOTAL,
     CONTEXT_COMPACTION_TOKENS_SAVED,
+    CONTEXT_COMPACTION_TOTAL,
     CONTEXT_ITEMS_COUNT,
     CONTEXT_TOKENS_TOTAL,
     LLM_CALLS_DURATION_MS,
@@ -34,6 +33,7 @@ from agent.core.metrics import (
     TOOL_CALLS_DURATION_MS,
     TOOL_CALLS_ERRORS,
     TOOL_CALLS_TOTAL,
+    MetricsCollector,
     get_metrics_collector,
     reset_metrics_collector,
 )

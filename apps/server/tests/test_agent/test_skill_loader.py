@@ -4,25 +4,22 @@ Tests for skill loader module.
 Tests SKILL.md parsing for OpenViking and zenstory formats.
 """
 
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 import tempfile
-import os
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from agent.skills.loader import (
-    parse_skill_md,
-    parse_openviking_format,
-    parse_zenstory_format,
-    load_skills_from_dir,
-    load_builtin_skills,
-    load_project_skills,
-    load_user_skills,
+    FRONTMATTER_PATTERN,
     get_all_skills,
     get_builtin_skills,
+    load_skills_from_dir,
+    parse_openviking_format,
+    parse_skill_md,
+    parse_zenstory_format,
     reload_builtin_skills,
     to_skill_md,
-    FRONTMATTER_PATTERN,
 )
 from agent.skills.schemas import Skill, SkillSource
 

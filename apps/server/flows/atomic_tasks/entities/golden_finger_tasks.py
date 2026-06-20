@@ -11,7 +11,7 @@ from typing import Any
 from prefect import get_run_logger
 
 from flows.database_session import get_prefect_db_session
-from flows.utils.clients import LLMResponse, call_gemini_api, get_gemini_client
+from flows.utils.clients import LLMResponse, call_deepseek_api, get_deepseek_client
 from flows.utils.decorators import api_task, database_task
 from prompts import create_golden_finger_extraction_prompt
 
@@ -55,10 +55,10 @@ def extract_golden_fingers_task(
         }
     ]
 
-    response: LLMResponse = call_gemini_api(messages, system_prompt)
+    response: LLMResponse = call_deepseek_api(messages, system_prompt)
 
     # 提取和验证 JSON
-    client = get_gemini_client()
+    client = get_deepseek_client()
     data = client.extract_json_from_response(response)
 
     golden_fingers = data.get("golden_fingers", [])

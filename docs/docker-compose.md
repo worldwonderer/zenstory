@@ -2,12 +2,11 @@
 
 ## Quick Start（推荐）
 
-只需配置一个 LLM API Key 即可启动：
+只需配置 DeepSeek API Key 即可启动（写作 Agent 固定使用 `deepseek-v4-flash`）：
 
 ```bash
-# 1. 设置 API Key
+# 1. 设置 DeepSeek API Key
 export DEEPSEEK_API_KEY=your-key-here
-# 或: export ANTHROPIC_API_KEY=your-key-here
 
 # 2. 启动
 docker compose up -d --build
@@ -27,7 +26,7 @@ cp apps/server/.env.docker.example apps/server/.env.docker
 cp apps/web/.env.docker.example apps/web/.env.docker
 
 # 2. 编辑 apps/server/.env.docker，填入：
-#    - DEEPSEEK_API_KEY 或 ANTHROPIC_API_KEY
+#    - DEEPSEEK_API_KEY
 #    - JWT_SECRET_KEY（至少 32 字符）
 #    - DATABASE_URL（如需覆盖默认连接）
 

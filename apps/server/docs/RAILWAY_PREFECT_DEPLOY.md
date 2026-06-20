@@ -62,9 +62,8 @@ railway service create prefect-worker
 ```
 PREFECT_API_URL=https://prefect-server.up.railway.app/api
 DATABASE_URL=${{Postgres.DATABASE_URL}}
-MATERIAL_ANTHROPIC_API_KEY=your-api-key
-MATERIAL_ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic
-MATERIAL_ANTHROPIC_MODEL=glm-4.7
+DEEPSEEK_API_KEY=your-deepseek-api-key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 ```
 
 ### 4. 初始化 Work Pool
@@ -108,9 +107,8 @@ PREFECT_API_URL=https://prefect-server.up.railway.app/api
 PREFECT_API_URL=https://api.prefect.cloud/api/accounts/<ACCOUNT_ID>/workspaces/<WORKSPACE_ID>
 PREFECT_API_KEY=your-prefect-cloud-api-key
 DATABASE_URL=${{Postgres.DATABASE_URL}}
-MATERIAL_ANTHROPIC_API_KEY=your-api-key
-MATERIAL_ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic
-MATERIAL_ANTHROPIC_MODEL=glm-4.7
+DEEPSEEK_API_KEY=your-deepseek-api-key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 ```
 
 ### 4. 创建 Work Pool
@@ -161,7 +159,7 @@ PREFECT_API_KEY=your-prefect-cloud-api-key
 | `DATABASE_URL` | 应用数据库（Worker 需要访问） |
 | `API_SERVER_INTERNAL_URL` | API 服务内网地址（建议 `http://server.railway.internal:8080`） |
 | `MATERIAL_INTERNAL_TOKEN` | 与 API 服务一致的内部下载鉴权 token |
-| `MATERIAL_*` | 素材库 LLM 配置 |
+| `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` | 素材库 DeepSeek LLM 配置 |
 
 ---
 

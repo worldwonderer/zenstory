@@ -2,7 +2,7 @@
 Agent Service tests.
 
 Unit tests for the AgentService business logic with mocked dependencies.
-Tests core functionality without making real Anthropic API calls.
+Tests core functionality without making real LLM API calls.
 
 Updated for LangGraph architecture.
 """
@@ -67,7 +67,7 @@ def test_user_with_project(db_session: Session):
 @pytest.fixture
 def mock_langgraph_workflow():
     """Mock the LangGraph workflow for testing."""
-    from agent.llm.anthropic_client import StreamEvent, StreamEventType
+    from agent.core.workflow_events import StreamEvent, StreamEventType
 
     async def mock_stream():
         yield StreamEvent(type=StreamEventType.TEXT, data={"text": "Hello"})
@@ -140,7 +140,7 @@ class TestAgentServiceProcessStream:
     @pytest.fixture
     def mock_workflow_stream(self):
         """Create a mock LangGraph workflow stream."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
 
         async def mock_stream():
             yield StreamEvent(type=StreamEventType.TEXT, data={"text": "Hello"})
@@ -454,7 +454,7 @@ class TestAgentServiceProcessStream:
         self, mock_agent_service, test_user_with_project, db_session: Session
     ):
         """Tool results should be associated by tool_use_id instead of append-order."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
 
         service, mock_context_assembler = mock_agent_service
 
@@ -566,7 +566,7 @@ class TestAgentServiceProcessStream:
         self, mock_agent_service, test_user_with_project, db_session: Session
     ):
         """Stream completion should persist to the resolved session, not whichever session is active later."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
 
         service, _ = mock_agent_service
         project = test_user_with_project["project"]
@@ -661,7 +661,7 @@ class TestAgentServiceProcessStream:
         self, mock_agent_service, test_user_with_project, db_session: Session
     ):
         """Assistant chat message should persist model stop_reason/usage metadata."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
 
         service, _ = mock_agent_service
         project = test_user_with_project["project"]
@@ -711,7 +711,7 @@ class TestAgentServiceProcessStream:
         self, mock_agent_service, test_user_with_project, db_session: Session
     ):
         """Done event should be delayed until history save succeeds and include the assistant message ID."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
 
         service, _ = mock_agent_service
         project = test_user_with_project["project"]
@@ -755,7 +755,7 @@ class TestAgentServiceProcessStream:
     ):
         """PostgreSQL offload branch should still save history successfully."""
         from agent.core.session_loader import SessionData
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
         from agent.schemas.context import ContextData
 
         service, _ = mock_agent_service
@@ -829,7 +829,7 @@ class TestAgentServiceProcessStream:
         self, mock_agent_service, test_user_with_project, db_session: Session
     ):
         """Stream error events should persist partial history for recovery, but NOT emit done."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
 
         service, _ = mock_agent_service
         project = test_user_with_project["project"]
@@ -869,7 +869,7 @@ class TestAgentServiceProcessStream:
         self, mock_agent_service, test_user_with_project, db_session: Session
     ):
         """Cancellation should schedule steering cleanup instead of awaiting it inline."""
-        from agent.llm.anthropic_client import StreamEvent, StreamEventType
+        from agent.core.workflow_events import StreamEvent, StreamEventType
 
         service, _ = mock_agent_service
         project = test_user_with_project["project"]

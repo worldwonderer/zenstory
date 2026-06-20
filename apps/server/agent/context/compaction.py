@@ -26,7 +26,7 @@ MAX_DELAY: Final[float] = 10.0  # seconds
 T = TypeVar("T")
 P = ParamSpec("P")
 
-# Default context window for Claude models
+# Default context window for long-form DeepSeek writing sessions
 CONTEXT_WINDOW = 200000
 
 
@@ -463,11 +463,8 @@ async def generate_compaction_summary(
     previous_summary: str | None = None,
     max_tokens: int = 8192,
 ) -> str:
-    """Generate a structured summary of messages using LLM with retry and fallback."""
-    from agent.llm.anthropic_client import get_anthropic_client
-
-    # Reserved for future model-level output budgeting.
-    _ = max_tokens
+    """Generate a structured summary with DeepSeek Chat Completions."""
+    from agent.core.deepseek_client import DEEPSEEK_CHAT_MODEL, get_deepseek_client
 
     if not messages_to_summarize:
         return "No prior history to summarize."
@@ -482,10 +479,8 @@ async def generate_compaction_summary(
         prompt_text += SUMMARIZATION_PROMPT
 
     summarization_messages = [
-        {
-            "role": "user",
-            "content": [{"type": "text", "text": prompt_text}],
-        }
+        {"role": "system", "content": SUMMARIZATION_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt_text},
     ]
 
     log_with_context(
@@ -496,19 +491,17 @@ async def generate_compaction_summary(
     )
 
     async def _call_llm() -> str:
-        client = get_anthropic_client()
-        response = await client.create_message(
+        client = get_deepseek_client()
+        response = await client.chat.completions.create(
+            model=DEEPSEEK_CHAT_MODEL,
             messages=summarization_messages,
-            system_prompt=SUMMARIZATION_SYSTEM_PROMPT,
+            max_tokens=max_tokens,
+            temperature=0.2,
         )
-
-        content = response.get("content", [])
-        text_parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text_parts.append(block.get("text", ""))
-
-        return "\n".join(text_parts)
+        text = response.choices[0].message.content or ""
+        if not text.strip():
+            raise ValueError("DeepSeek returned an empty compaction summary")
+        return text
 
     try:
         summary = await _retry_with_backoff(_call_llm)

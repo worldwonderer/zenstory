@@ -23,8 +23,8 @@ from agent.core.events import (
     steering_received_event,
 )
 from agent.core.stream_processor import StreamState, normalize_file_markers
-from agent.llm.anthropic_client import StreamEvent as LangGraphStreamEvent
-from agent.llm.anthropic_client import StreamEventType
+from agent.core.workflow_events import StreamEvent as LangGraphStreamEvent
+from agent.core.workflow_events import StreamEventType
 from agent.stream_adapter import (
     PendingFileWrite,
     StreamAdapter,
@@ -1520,3 +1520,29 @@ class TestIntegration:
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
         assert EventType.DONE in [e.type for e in events]
+
+
+@pytest.mark.unit
+async def test_abandoned_file_write_clears_pending_empty_file_guard():
+    """An abandoned <file> write must not leave ToolContext's pending guard set.
+
+    Regression: create_file emits an empty file (pending-empty-file guard + adapter
+    tracker set), but the model never streams the <file>...</file> content. The stream
+    must clear the stale guard on finalize so later create_file calls are not blocked.
+    """
+    from agent.stream_adapter import create_stream_adapter
+    from agent.tools.mcp_tools import ToolContext
+
+    adapter = create_stream_adapter(project_id="p", user_id="u", process_file_markers=True)
+    ToolContext.set_pending_empty_file("file-A", "角色A")
+    adapter.set_pending_file_write("file-A", "character", "角色A")
+    assert ToolContext.has_pending_empty_file() is True
+
+    async def mock_events():
+        yield LangGraphStreamEvent(type=StreamEventType.TEXT, data={"text": "好的，我已创建角色A。"})
+        yield LangGraphStreamEvent(type=StreamEventType.MESSAGE_END, data={"stop_reason": "end_turn"})
+
+    _ = [e async for e in adapter.process_workflow_events(mock_events())]
+
+    assert ToolContext.has_pending_empty_file() is False
+    assert adapter._pending_file_write is None

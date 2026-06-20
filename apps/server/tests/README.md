@@ -272,7 +272,7 @@ pytest -m "not slow"
 
 ## Mock 外部依赖
 
-### Mock OpenAI API
+### Mock DeepSeek/OpenAI-compatible API
 
 使用 `pytest-mock` 的 `mocker` fixture：
 
@@ -282,14 +282,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 @pytest.mark.integration
 async def test_agent_stream(mocker, client: AsyncClient):
-    # Mock OpenAI 客户端
+    # Mock DeepSeek/OpenAI-compatible 客户端
     mock_llm = AsyncMock()
     mock_llm.chat.completions.create.return_value = MagicMock(
         choices=[MagicMock(message=MagicMock(content="Test response")))]
     )
 
     # 注入 mock
-    mocker.patch("agent.core.llm_client.get_openai_client", return_value=mock_llm)
+    mocker.patch("agent.core.deepseek_client.get_deepseek_client", return_value=mock_llm)
 
     # 测试代码
     response = await client.post("/agent/stream", json={...})

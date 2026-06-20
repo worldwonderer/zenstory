@@ -10,7 +10,7 @@ from typing import Any
 from prefect import get_run_logger
 
 from flows.database_session import get_db_session
-from flows.utils import call_gemini_api, get_gemini_client
+from flows.utils import call_deepseek_api, get_deepseek_client
 from flows.utils.decorators import api_task, database_task
 from prompts import create_orphan_assignment_prompt
 
@@ -299,12 +299,12 @@ def _assign_single_batch_task(
 
     # 4. 调用LLM
     logger.info(f"📤 调用LLM处理 {len(orphan_plots)} 个情节点...")
-    response = call_gemini_api(
+    response = call_deepseek_api(
         messages=[{"role": "user", "content": user_message}],
         system_prompt=system_prompt,
     )
 
-    client = get_gemini_client()
+    client = get_deepseek_client()
     data = client.extract_json_from_response(response)
 
     # 5. 解析新格式的返回结果

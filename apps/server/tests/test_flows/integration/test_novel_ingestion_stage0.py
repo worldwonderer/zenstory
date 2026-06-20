@@ -45,8 +45,8 @@ class TestExecuteStage0:
             },
         )
 
-        import services.material.novels_service as novels_mod
         import services.material.chapters_service as chapters_mod
+        import services.material.novels_service as novels_mod
 
         class FakeNovelsService:
             def get_by_content_hash(self, _session, _content_hash, _user_id):

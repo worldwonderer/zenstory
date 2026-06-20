@@ -78,7 +78,7 @@ class WritingState(TypedDict, total=False):
         agent_output: Output from the current agent
         workflow_plan: Planned workflow path from router
         tool_calls: List of tool calls made during processing
-        messages: Conversation history in Anthropic message format
+        messages: Conversation history in workflow message format
     """
 
     # Input fields

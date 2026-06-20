@@ -13,9 +13,9 @@ from prefect import get_run_logger
 from flows.database_session import get_db_session
 from flows.utils import (
     api_task,
-    call_gemini_api,
+    call_deepseek_api,
     database_task,
-    get_gemini_client,
+    get_deepseek_client,
 )
 from flows.utils.validators import validate_meta_response
 from prompts import create_meta_extraction_prompt
@@ -70,13 +70,13 @@ def extract_novel_meta_task(
 请提取金手指和世界观信息。
 """
 
-    response = call_gemini_api(
+    response = call_deepseek_api(
         messages=[{"role": "user", "content": user_message}],
         system_prompt=system_prompt
     )
 
     # 提取 JSON
-    client = get_gemini_client()
+    client = get_deepseek_client()
     data = client.extract_json_from_response(response)
 
     # 验证数据

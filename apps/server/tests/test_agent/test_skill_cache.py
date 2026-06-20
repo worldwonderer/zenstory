@@ -3,7 +3,7 @@ Tests for skill caching with TTL and LRU eviction.
 """
 
 import asyncio
-import time
+
 import pytest
 
 from agent.skills.loader import SkillCache

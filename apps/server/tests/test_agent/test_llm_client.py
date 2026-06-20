@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel, Field
 
-from agent.core.llm_client import LLMClient
+from agent.core.llm_client import DEEPSEEK_CHAT_MODEL, LLMClient
 
 
 class _NestedPayload(BaseModel):
@@ -48,6 +48,10 @@ class _DummySyncClient:
         self.chat = SimpleNamespace(completions=_DummySyncCompletions(response_or_stream))
 
 
+def _set_deepseek_env(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://example.invalid")
+
 def _tool_call(tool_id: str, name: str, arguments: str):
     return SimpleNamespace(
         id=tool_id,
@@ -64,26 +68,49 @@ def _response(*, content: str = "", tool_calls: list[object] | None = None):
 
 
 @pytest.mark.unit
-def test_build_json_schema_strips_titles_defaults_and_sets_additional_properties():
-    client = LLMClient(api_key="test-key", base_url="https://example.invalid")
+def test_structured_messages_prepends_schema_instruction(monkeypatch):
+    _set_deepseek_env(monkeypatch)
+    client = LLMClient()
 
-    schema = client._build_json_schema(_StructuredPayload)
-    payload_schema = schema["json_schema"]["schema"]
+    original = [{"role": "user", "content": "give structured"}]
+    messages = client._structured_messages(original, _StructuredPayload)
 
-    assert schema["json_schema"]["name"] == "_StructuredPayload"
-    assert schema["json_schema"]["strict"] is True
-    assert payload_schema["type"] == "object"
-    assert payload_schema["additionalProperties"] is False
-    assert "title" not in payload_schema
-    assert "description" not in payload_schema["properties"]["name"]
-    assert payload_schema["$defs"]["_NestedPayload"]["additionalProperties"] is False
-    assert "default" not in payload_schema["$defs"]["_NestedPayload"]["properties"]["flag"]
+    # Original messages are preserved after a prepended system instruction.
+    assert messages[1:] == original
+    assert messages[0]["role"] == "system"
+    instruction = messages[0]["content"]
+    # The literal word "json" is required for DeepSeek's json_object response_format.
+    assert "json" in instruction.lower()
+    # The target schema is embedded so the model knows the expected shape.
+    assert "name" in instruction and "nested" in instruction
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_acomplete_disables_thinking_via_extra_body():
-    client = LLMClient(api_key="test-key", base_url="https://example.invalid")
+async def test_acomplete_structured_uses_json_object_response_format(monkeypatch):
+    _set_deepseek_env(monkeypatch)
+    client = LLMClient()
+    dummy_client = _DummyAsyncClient([
+        _response(content=json.dumps({"name": "payload", "nested": {"flag": True}})),
+    ])
+    client._async_client = dummy_client
+
+    await client.acomplete_structured(
+        [{"role": "user", "content": "give structured"}],
+        _StructuredPayload,
+    )
+
+    call = dummy_client.chat.completions.calls[0]
+    # DeepSeek does not support response_format=json_schema; we must use json_object.
+    assert call["response_format"] == {"type": "json_object"}
+    assert call["messages"][0]["role"] == "system"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_acomplete_disables_thinking_via_extra_body(monkeypatch):
+    _set_deepseek_env(monkeypatch)
+    client = LLMClient()
     dummy_client = _DummyAsyncClient([_response(content="done")])
     client._async_client = dummy_client
 
@@ -95,8 +122,9 @@ async def test_acomplete_disables_thinking_via_extra_body():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_acomplete_with_tools_records_tool_errors_and_stops_on_max_iterations():
-    client = LLMClient(api_key="test-key", base_url="https://example.invalid")
+async def test_acomplete_with_tools_records_tool_errors_and_stops_on_max_iterations(monkeypatch):
+    _set_deepseek_env(monkeypatch)
+    client = LLMClient()
     tool_call = _tool_call("call-1", "explode", '{"value": 1}')
     dummy_client = _DummyAsyncClient([
         _response(tool_calls=[tool_call]),
@@ -123,8 +151,9 @@ async def test_acomplete_with_tools_records_tool_errors_and_stops_on_max_iterati
 
 
 @pytest.mark.unit
-def test_complete_uses_default_sampling_parameters_and_returns_content():
-    client = LLMClient(api_key="test-key", base_url="https://example.invalid")
+def test_complete_uses_default_sampling_parameters_and_returns_content(monkeypatch):
+    _set_deepseek_env(monkeypatch)
+    client = LLMClient()
     response = SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content="sync-done"))],
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=2, total_tokens=3),
@@ -142,8 +171,9 @@ def test_complete_uses_default_sampling_parameters_and_returns_content():
 
 
 @pytest.mark.unit
-def test_complete_stream_yields_only_non_empty_chunks():
-    client = LLMClient(api_key="test-key", base_url="https://example.invalid")
+def test_complete_stream_yields_only_non_empty_chunks(monkeypatch):
+    _set_deepseek_env(monkeypatch)
+    client = LLMClient()
     stream = [
         SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="he"))]),
         SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=None))]),
@@ -159,8 +189,9 @@ def test_complete_stream_yields_only_non_empty_chunks():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_acomplete_structured_validates_response_model():
-    client = LLMClient(api_key="test-key", base_url="https://example.invalid")
+async def test_acomplete_structured_validates_response_model(monkeypatch):
+    _set_deepseek_env(monkeypatch)
+    client = LLMClient()
     dummy_client = _DummyAsyncClient([
         _response(content=json.dumps({"name": "payload", "nested": {"flag": False}})),
     ])
@@ -173,3 +204,26 @@ async def test_acomplete_structured_validates_response_model():
 
     assert result.name == "payload"
     assert result.nested.flag is False
+
+@pytest.mark.unit
+def test_llm_client_rejects_legacy_model_override(monkeypatch):
+    _set_deepseek_env(monkeypatch)
+    client = LLMClient()
+    dummy_client = _DummySyncClient(_response(content="unused"))
+    client._sync_client = dummy_client
+
+    with pytest.raises(ValueError, match="only supports"):
+        client.complete([{"role": "user", "content": "hi"}], model="legacy-model")
+
+    assert dummy_client.chat.completions.calls == []
+
+
+@pytest.mark.unit
+def test_llm_client_accepts_only_deepseek_model(monkeypatch):
+    _set_deepseek_env(monkeypatch)
+    client = LLMClient()
+    dummy_client = _DummySyncClient(_response(content="ok"))
+    client._sync_client = dummy_client
+
+    assert client.complete([{"role": "user", "content": "hi"}], model=DEEPSEEK_CHAT_MODEL) == "ok"
+    assert dummy_client.chat.completions.calls[0]["model"] == DEEPSEEK_CHAT_MODEL

@@ -4,29 +4,40 @@ Tests for context compaction module.
 Tests token estimation, cut point detection, and summarization.
 """
 
-import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime
 
 from agent.context.compaction import (
-    CompactionSettings,
+    CONTEXT_WINDOW,
     CompactionResult,
-    ContextUsageEstimate,
-    estimate_tokens,
-    estimate_context_tokens,
-    should_compact,
-    find_cut_point,
-    generate_compaction_summary,
-    compact_context,
-    create_compaction_summary_message,
-    _get_assistant_usage,
+    CompactionSettings,
     _calculate_context_tokens,
+    _get_assistant_usage,
     _serialize_messages_to_text,
     _simple_truncate_messages,
-    CONTEXT_WINDOW,
+    compact_context,
+    create_compaction_summary_message,
+    estimate_context_tokens,
+    estimate_tokens,
+    find_cut_point,
+    generate_compaction_summary,
+    should_compact,
 )
 
+
+def _chat_response(content: str):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+    )
+
+
+def _mock_deepseek_chat(mock_client):
+    mock_instance = MagicMock()
+    mock_instance.chat.completions.create = AsyncMock()
+    mock_client.return_value = mock_instance
+    return mock_instance.chat.completions.create
 
 @pytest.mark.unit
 class TestEstimateTokens:
@@ -405,19 +416,11 @@ class TestGenerateCompactionSummary:
             {"role": "assistant", "content": "Once upon a time..."},
         ]
 
-        with patch("agent.llm.anthropic_client.get_anthropic_client") as mock_client:
+        with patch("agent.core.deepseek_client.get_deepseek_client") as mock_client:
             mock_instance = MagicMock()
             mock_client.return_value = mock_instance
-            mock_instance.create_message = AsyncMock(
-                return_value={
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "## Goal\nWrite a story\n## Progress\n- Started writing",
-                        }
-                    ]
-                }
-            )
+            mock_create = _mock_deepseek_chat(mock_client)
+            mock_create.return_value = _chat_response("## Goal\nWrite a story\n## Progress\n- Started writing")
 
             summary = await generate_compaction_summary(messages)
             assert "## Goal" in summary
@@ -426,16 +429,11 @@ class TestGenerateCompactionSummary:
         """Should accept max_tokens keyword without signature errors."""
         messages = [{"role": "user", "content": "Summarize this"}]
 
-        with patch("agent.llm.anthropic_client.get_anthropic_client") as mock_client:
+        with patch("agent.core.deepseek_client.get_deepseek_client") as mock_client:
             mock_instance = MagicMock()
             mock_client.return_value = mock_instance
-            mock_instance.create_message = AsyncMock(
-                return_value={
-                    "content": [
-                        {"type": "text", "text": "## Goal\nSummarize this"}
-                    ]
-                }
-            )
+            mock_create = _mock_deepseek_chat(mock_client)
+            mock_create.return_value = _chat_response("## Goal\nSummarize this")
 
             summary = await generate_compaction_summary(messages, max_tokens=256)
             assert "## Goal" in summary
@@ -522,11 +520,10 @@ class TestCompactionLLMIntegration:
     @pytest.mark.asyncio
     async def test_llm_timeout_triggers_fallback(self):
         """LLM timeout should trigger fallback truncation."""
-        with patch("agent.llm.anthropic_client.get_anthropic_client") as mock_client:
+        with patch("agent.core.deepseek_client.get_deepseek_client") as mock_client:
             # Mock client that times out
-            mock_instance = MagicMock()
-            mock_instance.create_message = AsyncMock(side_effect=asyncio.TimeoutError("LLM timeout"))
-            mock_client.return_value = mock_instance
+            mock_create = _mock_deepseek_chat(mock_client)
+            mock_create.side_effect = TimeoutError("LLM timeout")
 
             messages = [{"role": "user", "content": "Test message"}]
             result = await generate_compaction_summary(messages)
@@ -544,12 +541,11 @@ class TestCompactionLLMIntegration:
             call_count += 1
             if call_count < 3:
                 raise Exception("Rate limit exceeded")
-            return {"content": [{"type": "text", "text": "Summary created"}]}
+            return _chat_response("Summary created")
 
-        with patch("agent.llm.anthropic_client.get_anthropic_client") as mock_client:
-            mock_instance = MagicMock()
-            mock_instance.create_message = mock_create
-            mock_client.return_value = mock_instance
+        with patch("agent.core.deepseek_client.get_deepseek_client") as mock_client:
+            mock_completion_create = _mock_deepseek_chat(mock_client)
+            mock_completion_create.side_effect = mock_create
 
             messages = [{"role": "user", "content": "Test"}]
             result = await generate_compaction_summary(messages)
@@ -561,10 +557,9 @@ class TestCompactionLLMIntegration:
     @pytest.mark.asyncio
     async def test_all_retries_fail_uses_fallback(self):
         """All retries failing should use fallback."""
-        with patch("agent.llm.anthropic_client.get_anthropic_client") as mock_client:
-            mock_instance = MagicMock()
-            mock_instance.create_message = AsyncMock(side_effect=Exception("Permanent error"))
-            mock_client.return_value = mock_instance
+        with patch("agent.core.deepseek_client.get_deepseek_client") as mock_client:
+            mock_create = _mock_deepseek_chat(mock_client)
+            mock_create.side_effect = Exception("Permanent error")
 
             messages = [
                 {"role": "user", "content": "Message 1"},
@@ -633,23 +628,20 @@ class TestRetryBackoff:
     async def test_backoff_delays(self):
         """Test that backoff delays increase exponentially."""
         delays = []
-        original_sleep = asyncio.sleep
-
         async def mock_sleep(delay):
             delays.append(delay)
             # Don't actually sleep
 
         with patch("asyncio.sleep", mock_sleep):
-            with patch("agent.llm.anthropic_client.get_anthropic_client") as mock_client:
-                mock_instance = MagicMock()
-                mock_instance.create_message = AsyncMock(side_effect=Exception("Error"))
-                mock_client.return_value = mock_instance
+            with patch("agent.core.deepseek_client.get_deepseek_client") as mock_client:
+                mock_create = _mock_deepseek_chat(mock_client)
+                mock_create.side_effect = Exception("Error")
 
                 messages = [{"role": "user", "content": "Test"}]
 
                 try:
                     await generate_compaction_summary(messages)
-                except:
+                except Exception:
                     pass
 
         # Should have delays: 1s, 2s (capped at MAX_DELAY=10)

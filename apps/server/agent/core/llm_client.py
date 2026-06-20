@@ -9,7 +9,6 @@ Features:
 """
 
 import json
-import os
 from collections.abc import AsyncGenerator, Callable, Generator
 from typing import (
     Any,
@@ -20,6 +19,13 @@ import httpx
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
+from agent.core.deepseek_client import (
+    DEEPSEEK_CHAT_MODEL,
+    DEEPSEEK_CLIENT_CONNECT_TIMEOUT_S,
+    DEEPSEEK_CLIENT_MAX_RETRIES,
+    DEEPSEEK_CLIENT_TIMEOUT_S,
+    get_deepseek_base_url,
+)
 from config.datetime_utils import utcnow
 from utils.logger import get_logger, log_with_context
 
@@ -27,40 +33,6 @@ logger = get_logger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-
-def _get_positive_float_env(name: str, default: float) -> float:
-    """Read a positive float env var with safe fallback."""
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        return default
-    return value if value > 0 else default
-
-
-def _get_non_negative_int_env(name: str, default: int) -> int:
-    """Read a non-negative integer env var with safe fallback."""
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        return default
-    return value if value >= 0 else default
-
-
-OPENAI_CLIENT_TIMEOUT_S = _get_positive_float_env("OPENAI_CLIENT_TIMEOUT_S", 45.0)
-OPENAI_CLIENT_CONNECT_TIMEOUT_S = _get_positive_float_env(
-    "OPENAI_CLIENT_CONNECT_TIMEOUT_S",
-    5.0,
-)
-OPENAI_CLIENT_MAX_RETRIES = _get_non_negative_int_env(
-    "OPENAI_CLIENT_MAX_RETRIES",
-    2,
-)
 
 
 class LLMClient:
@@ -73,35 +45,33 @@ class LLMClient:
     - Structured output with Pydantic models
     """
 
-    # Model aliases — configurable via env vars
-    MODEL_FAST = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-    MODEL_QUALITY = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    # Model aliases — intentionally fixed for DeepSeek-only operation.
+    MODEL_FAST = DEEPSEEK_CHAT_MODEL
+    MODEL_QUALITY = DEEPSEEK_CHAT_MODEL
 
     # Default inference parameters
     DEFAULT_TEMPERATURE = 1.0
     DEFAULT_TOP_P = 0.95
 
-    def __init__(
-        self,
-        api_key: str | None = None,
-        base_url: str | None = None,
-    ):
-        """Initialize with OpenAI API key and optional base URL."""
-        self.api_key = (
-            api_key or os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
+    @classmethod
+    def _resolve_model(cls, model: str | None = None) -> str:
+        """Return the only supported model or reject legacy multi-model overrides."""
+        requested = (model or cls.MODEL_QUALITY).strip()
+        if requested == DEEPSEEK_CHAT_MODEL:
+            return DEEPSEEK_CHAT_MODEL
+        raise ValueError(
+            f"Unsupported LLM model {requested!r}; "
+            f"ZenStory only supports {DEEPSEEK_CHAT_MODEL!r}"
         )
-        # Base URL resolution:
-        # - If using DEEPSEEK_API_KEY, prefer DeepSeek endpoints over legacy OPENAI_API_BASE
-        if base_url:
-            self.base_url = base_url
-        elif os.getenv("DEEPSEEK_BASE_URL"):
-            self.base_url = os.getenv("DEEPSEEK_BASE_URL")
-        elif os.getenv("DEEPSEEK_API_KEY"):
-            self.base_url = "https://api.deepseek.com"
-        else:
-            self.base_url = os.getenv("OPENAI_API_BASE")
+
+    def __init__(self):
+        """Initialize from DeepSeek runtime environment variables only."""
+        import os
+
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        self.base_url = get_deepseek_base_url()
         if not self.api_key:
-            raise ValueError("OpenAI API key not found")
+            raise ValueError("DEEPSEEK_API_KEY is required")
 
         self._sync_client: OpenAI | None = None
         self._async_client: AsyncOpenAI | None = None
@@ -123,10 +93,10 @@ class LLMClient:
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=httpx.Timeout(
-                    OPENAI_CLIENT_TIMEOUT_S,
-                    connect=OPENAI_CLIENT_CONNECT_TIMEOUT_S,
+                    DEEPSEEK_CLIENT_TIMEOUT_S,
+                    connect=DEEPSEEK_CLIENT_CONNECT_TIMEOUT_S,
                 ),
-                max_retries=OPENAI_CLIENT_MAX_RETRIES,
+                max_retries=DEEPSEEK_CLIENT_MAX_RETRIES,
             )
         return self._sync_client
 
@@ -138,10 +108,10 @@ class LLMClient:
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=httpx.Timeout(
-                    OPENAI_CLIENT_TIMEOUT_S,
-                    connect=OPENAI_CLIENT_CONNECT_TIMEOUT_S,
+                    DEEPSEEK_CLIENT_TIMEOUT_S,
+                    connect=DEEPSEEK_CLIENT_CONNECT_TIMEOUT_S,
                 ),
-                max_retries=OPENAI_CLIENT_MAX_RETRIES,
+                max_retries=DEEPSEEK_CLIENT_MAX_RETRIES,
             )
         return self._async_client
 
@@ -168,7 +138,7 @@ class LLMClient:
             Generated text
         """
         start_time = utcnow()
-        model_name = model or self.MODEL_QUALITY
+        model_name = self._resolve_model(model)
 
         log_with_context(
             logger,
@@ -247,7 +217,7 @@ class LLMClient:
             Text chunks as they are generated
         """
         stream = self.sync_client.chat.completions.create(
-            model=model or self.MODEL_QUALITY,
+            model=self._resolve_model(model),
             messages=messages,  # type: ignore[arg-type]
             temperature=temperature if temperature is not None else self.DEFAULT_TEMPERATURE,
             top_p=top_p if top_p is not None else self.DEFAULT_TOP_P,
@@ -275,9 +245,9 @@ class LLMClient:
             Validated Pydantic model instance
         """
         response = self.sync_client.chat.completions.create(
-            model=model or self.MODEL_QUALITY,
-            messages=messages,  # type: ignore[arg-type]
-            response_format=self._build_json_schema(response_model),
+            model=self._resolve_model(model),
+            messages=self._structured_messages(messages, response_model),  # type: ignore[arg-type]
+            response_format={"type": "json_object"},
             temperature=0.0,
         )  # type: ignore[call-overload]
         data = json.loads(response.choices[0].message.content or "{}")
@@ -309,7 +279,7 @@ class LLMClient:
             Generated text
         """
         start_time = utcnow()
-        model_name = model or self.MODEL_QUALITY
+        model_name = self._resolve_model(model)
 
         log_with_context(
             logger,
@@ -392,7 +362,7 @@ class LLMClient:
             Text chunks as they are generated
         """
         stream = await self.async_client.chat.completions.create(
-            model=model or self.MODEL_QUALITY,
+            model=self._resolve_model(model),
             messages=messages,  # type: ignore[arg-type]
             temperature=temperature if temperature is not None else self.DEFAULT_TEMPERATURE,
             top_p=top_p if top_p is not None else self.DEFAULT_TOP_P,
@@ -420,9 +390,9 @@ class LLMClient:
             Validated Pydantic model instance
         """
         response = await self.async_client.chat.completions.create(
-            model=model or self.MODEL_QUALITY,
-            messages=messages,  # type: ignore[arg-type]
-            response_format=self._build_json_schema(response_model),
+            model=self._resolve_model(model),
+            messages=self._structured_messages(messages, response_model),  # type: ignore[arg-type]
+            response_format={"type": "json_object"},
             temperature=0.0,
         )  # type: ignore[call-overload]
         data = json.loads(response.choices[0].message.content or "{}")
@@ -474,7 +444,7 @@ class LLMClient:
             ... )
         """
         start_time = utcnow()
-        model_name = model or self.MODEL_QUALITY
+        model_name = self._resolve_model(model)
 
         log_with_context(
             logger,
@@ -626,52 +596,27 @@ class LLMClient:
 
     # ========== Helpers ==========
 
-    def _build_json_schema(self, model: type[BaseModel]) -> dict[str, Any]:
-        """Build JSON schema for structured output."""
-        schema = model.model_json_schema()
+    @staticmethod
+    def _structured_messages(
+        messages: list[dict[str, str]],
+        response_model: type[BaseModel],
+    ) -> list[dict[str, str]]:
+        """Steer structured output via DeepSeek's json_object mode.
 
-        # Clean up schema for OpenAI compatibility
-        def clean_schema(s: dict) -> dict[str, Any]:
-            """Remove unsupported fields and ensure strict mode compatibility."""
-            cleaned: dict[str, Any] = {}
-            for key, value in s.items():
-                if key in ("title", "description", "examples", "default"):
-                    continue
-                if isinstance(value, dict):
-                    cleaned[key] = clean_schema(value)
-                elif isinstance(value, list):
-                    cleaned[key] = [  # type: ignore[assignment]
-                        clean_schema(item) if isinstance(item, dict) else item
-                        for item in value
-                    ]
-                else:
-                    cleaned[key] = value
-
-            # Ensure additionalProperties is set for objects
-            if (
-                cleaned.get("type") == "object"
-                and "additionalProperties" not in cleaned
-            ):
-                cleaned["additionalProperties"] = False  # type: ignore[assignment]
-
-            return cleaned
-
-        cleaned_schema = clean_schema(schema)
-
-        # Handle $defs (definitions) if present
-        if "$defs" in cleaned_schema:
-            cleaned_schema["$defs"] = {
-                k: clean_schema(v) for k, v in cleaned_schema["$defs"].items()
-            }
-
-        return {
-            "type": "json_schema",
-            "json_schema": {
-                "name": model.__name__,
-                "strict": True,
-                "schema": cleaned_schema,
-            },
-        }
+        DeepSeek's OpenAI-compatible endpoint rejects
+        ``response_format={"type": "json_schema"}`` with HTTP 400
+        ("This response_format type is unavailable now"), but supports
+        ``{"type": "json_object"}``. We therefore prepend the target JSON schema as a
+        system instruction and let the caller request a plain JSON object. The literal
+        word "json" in the instruction also satisfies the API's json_object requirement.
+        """
+        schema = response_model.model_json_schema()
+        instruction = (
+            "Respond with a single valid JSON object that conforms to the following "
+            "JSON schema. Output only the JSON object — no markdown fences, no commentary.\n"
+            f"JSON schema:\n{json.dumps(schema, ensure_ascii=False)}"
+        )
+        return [{"role": "system", "content": instruction}, *messages]
 
 
 # Singleton instance

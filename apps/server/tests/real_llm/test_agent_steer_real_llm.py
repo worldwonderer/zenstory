@@ -3,6 +3,7 @@ import uuid
 import pytest
 from httpx import AsyncClient
 
+from agent.core.steering import create_steering_queue_async
 from tests.real_llm.sse_utils import collect_sse_events, event_names
 
 
@@ -11,11 +12,18 @@ from tests.real_llm.sse_utils import collect_sse_events, event_names
 async def test_steer_real_llm_injected_during_stream(
     client: AsyncClient,
     real_auth_context: dict,
-    require_anthropic_key,
+    require_deepseek_key,
 ):
     context = real_auth_context
     project = context["project"]
+    user = context["user"]
     session_id = str(uuid.uuid4())
+
+    # /steer only injects into an already-registered runtime session queue (it uses the
+    # owner-scoped getter, never auto-creating queues for arbitrary ids). Register the
+    # queue first — as the live streaming endpoint does on first use — so a pre-queued
+    # steering message is then drained when the stream starts.
+    await create_steering_queue_async(session_id, str(user.id))
 
     steering_message = "请在后续回答中保持一句话总结。"
     steer_response = await client.post(

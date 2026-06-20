@@ -3,8 +3,8 @@
 import pytest
 from sqlmodel import Session
 
-from agent.tools.anthropic_tools import CREATE_FILE_TOOL
 from agent.tools.file_ops.crud import FileCRUD
+from agent.tools.tool_schemas import CREATE_FILE_TOOL
 from models import File, Project, User
 
 

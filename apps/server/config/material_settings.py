@@ -8,20 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class MaterialSettings(BaseSettings):
     """素材库功能配置（从 DeepNovel config 迁移）"""
 
-    # ============ LLM 配置 ============
-    # LLM 提供商: "anthropic" 或 "openai"
-    LLM_PROVIDER: str = "openai"
-
-    # Anthropic 配置 (备用)
-    ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_BASE_URL: str = "https://open.bigmodel.cn/api/anthropic"
-    ANTHROPIC_MODEL: str = "glm-4.7"
-
-    # OpenAI 兼容配置 (主力 — DeepSeek)
-    OPENAI_API_KEY: str = ""
-    OPENAI_BASE_URL: str = "https://api.deepseek.com"
-    OPENAI_MODEL: str = "deepseek-v4-flash"
-
     # 通用 LLM 参数
     LLM_TEMPERATURE: float = 0.7
     LLM_MAX_TOKENS: int = 64000

@@ -107,7 +107,6 @@ def mock_llm_client():
 def suggest_service(mock_context_assembler, mock_llm_client):
     """Create SuggestService instance with mocked dependencies."""
     from agent.suggest_service import SuggestService
-    from agent.core.llm_client import get_llm_client
 
     # Mock get_llm_client before creating SuggestService
     with patch('agent.suggest_service.get_llm_client', return_value=mock_llm_client):

@@ -59,6 +59,13 @@ AGENT_TOOL_CALL_MAX_ITERATIONS = _get_int_env(
     20,
 )
 
+# Max output tokens for the OpenAI Agents SDK Chat Completions calls.
+# This is intentionally independent from the tool-turn budget above.
+AGENT_OPENAI_AGENTS_MAX_OUTPUT_TOKENS = _get_int_env(
+    "AGENT_OPENAI_AGENTS_MAX_OUTPUT_TOKENS",
+    64000,
+)
+
 # Chat history loading budget (sliding window, newest-first)
 AGENT_CHAT_HISTORY_TOKEN_BUDGET = _get_int_env(
     "AGENT_CHAT_HISTORY_TOKEN_BUDGET",
