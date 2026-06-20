@@ -64,7 +64,7 @@ export default defineConfig({
           'state-vendor': ['zustand', '@tanstack/react-query'],
 
           // Editor 库分离 - 首页不需要
-          'editor-vendor': ['@tiptap/react', '@tiptap/starter-kit', '@tiptap/extension-placeholder'],
+          'editor-vendor': ['@tiptap/react', '@tiptap/starter-kit'],
 
           // i18n 库分离
           'i18n-vendor': ['i18next', 'react-i18next'],
