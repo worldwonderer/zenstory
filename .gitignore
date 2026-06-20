@@ -147,3 +147,4 @@ prompt参考/
 .worktrees/
 .security-key
 logs/security/
+.vercel
