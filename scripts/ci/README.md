@@ -69,7 +69,7 @@ The script sets these test environment variables automatically:
 | `REDIS_URL`           | `redis://localhost:6380/1`          | `redis://localhost:6379/1`|
 | `OPENAI_API_KEY`      | `test-key-for-ci-testing`           | Same                     |
 | `JWT_SECRET_KEY`      | `test-secret-key-...`               | Same                     |
-| `ANTHROPIC_API_KEY`   | `test-key-for-ci-testing`           | Same                     |
+| `DEEPSEEK_API_KEY`    | `test-key-for-ci-testing`           | Same                     |
 
 ### Browser lane selection
 

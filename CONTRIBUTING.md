@@ -18,7 +18,7 @@ python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env with your API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+# Edit .env and set DEEPSEEK_API_KEY — the only key required to run the writing agent
 ```
 
 ### Frontend
