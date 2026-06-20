@@ -44,19 +44,24 @@ def _get_str_env(
     return normalized
 
 
+# Iteration budgets. These caps are NOT for cost control (DeepSeek is cheap) — they only
+# exist as a runaway-loop safety net so a stuck tool-loop or handoff ping-pong can't hang a
+# request forever. They are therefore set generously so they never constrain a real task,
+# while still bounding pathological loops. All remain env-overridable.
+
 # Total request-level iteration budget (legacy compatibility constant)
-AGENT_MAX_ITERATIONS = _get_int_env("AGENT_MAX_ITERATIONS", 15)
+AGENT_MAX_ITERATIONS = _get_int_env("AGENT_MAX_ITERATIONS", 100)
 
 # Multi-agent collaboration loop budget (writer/planner/reviewer handoffs)
 AGENT_COLLABORATION_MAX_ITERATIONS = _get_int_env(
     "AGENT_COLLABORATION_MAX_ITERATIONS",
-    5,
+    30,
 )
 
-# Single-agent tool-calling loop budget
+# Single-agent tool-calling loop budget (SDK max_turns per agent run)
 AGENT_TOOL_CALL_MAX_ITERATIONS = _get_int_env(
     "AGENT_TOOL_CALL_MAX_ITERATIONS",
-    20,
+    100,
 )
 
 # Max output tokens for the OpenAI Agents SDK Chat Completions calls.

@@ -934,7 +934,9 @@ class TestAgentServiceHelpers:
             service_module._service = None
 
     def test_agent_max_iterations_constant(self):
-        """Test agent loop configuration constant."""
+        """service re-exports the configured iteration budget (a positive int)."""
         from agent.service import AGENT_MAX_ITERATIONS
+        from config.agent_runtime import AGENT_MAX_ITERATIONS as CONFIGURED
 
-        assert AGENT_MAX_ITERATIONS == 15
+        assert AGENT_MAX_ITERATIONS == CONFIGURED
+        assert AGENT_MAX_ITERATIONS > 0
