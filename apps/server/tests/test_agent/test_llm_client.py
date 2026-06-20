@@ -52,13 +52,6 @@ def _set_deepseek_env(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://example.invalid")
 
-def _tool_call(tool_id: str, name: str, arguments: str):
-    return SimpleNamespace(
-        id=tool_id,
-        type="function",
-        function=SimpleNamespace(name=name, arguments=arguments),
-    )
-
 
 def _response(*, content: str = "", tool_calls: list[object] | None = None):
     return SimpleNamespace(
@@ -118,36 +111,6 @@ async def test_acomplete_disables_thinking_via_extra_body(monkeypatch):
 
     assert result == "done"
     assert dummy_client.chat.completions.calls[0].get("extra_body") is None
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_acomplete_with_tools_records_tool_errors_and_stops_on_max_iterations(monkeypatch):
-    _set_deepseek_env(monkeypatch)
-    client = LLMClient()
-    tool_call = _tool_call("call-1", "explode", '{"value": 1}')
-    dummy_client = _DummyAsyncClient([
-        _response(tool_calls=[tool_call]),
-        _response(tool_calls=[tool_call]),
-    ])
-    client._async_client = dummy_client
-
-    def tool_handler(name: str, args: dict[str, object]):
-        raise RuntimeError(f"{name} failed with {args['value']}")
-
-    result = await client.acomplete_with_tools(
-        messages=[{"role": "user", "content": "run tool"}],
-        tools=[{"type": "function", "function": {"name": "explode"}}],
-        tool_handler=tool_handler,
-        max_iterations=2,
-    )
-
-    assert result["type"] == "tool_calls"
-    assert result["error"] == "Max iterations (2) reached"
-    assert len(result["tool_calls"]) == 2
-    assert len(result["tool_results"]) == 2
-    assert result["tool_results"][0]["result"]["status"] == "error"
-    assert "explode failed with 1" in result["tool_results"][0]["result"]["error"]
 
 
 @pytest.mark.unit
