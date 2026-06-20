@@ -6,10 +6,13 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 安装 Prefect 和 PostgreSQL 驱动
+# importlib-metadata is a prefect 3.4.19 dependency on Python < 3.12; pin it explicitly
+# so the server can never crash with ModuleNotFoundError if resolution skips it.
 RUN pip install --no-cache-dir \
     prefect==3.4.19 \
     asyncpg \
-    psycopg2-binary
+    psycopg2-binary \
+    importlib-metadata
 
 # 暴露端口 (Railway 会自动分配 PORT)
 EXPOSE 4200

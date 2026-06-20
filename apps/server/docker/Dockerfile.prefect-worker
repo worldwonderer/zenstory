@@ -17,7 +17,10 @@ COPY apps/server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 安装 Prefect 和数据库驱动
-RUN pip install --no-cache-dir prefect==3.4.19 psycopg2-binary asyncpg
+# importlib-metadata is required by prefect 3.4.19 on Python < 3.12. requirements.txt
+# pulls a newer prefect, and downgrading here to 3.4.19 can leave it uninstalled, so
+# install it explicitly to avoid the worker crashing with ModuleNotFoundError.
+RUN pip install --no-cache-dir prefect==3.4.19 psycopg2-binary asyncpg importlib-metadata
 
 # 复制应用代码
 COPY apps/server/ .
