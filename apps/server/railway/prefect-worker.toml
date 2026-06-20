@@ -3,7 +3,9 @@
 
 [build]
 builder = "dockerfile"
-dockerfilePath = "docker/Dockerfile.prefect-worker"
+# Repo-root-relative: the Dockerfile COPYs apps/server/... so the build context is the
+# repo root (set Root Directory empty in Railway), and this path is resolved from there.
+dockerfilePath = "apps/server/docker/Dockerfile.prefect-worker"
 
 [deploy]
 restartPolicyType = "on_failure"
