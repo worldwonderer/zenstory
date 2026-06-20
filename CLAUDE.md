@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents when working with code in this repository.
 
 ## Project Overview
 
@@ -76,7 +76,7 @@ The backend uses Alembic for database migrations:
 
 ### Backend (apps/server)
 
-**Tech Stack**: FastAPI, SQLModel (Pydantic + SQLAlchemy), SQLite (dev) / PostgreSQL (production), Anthropic Claude API, LlamaIndex, ChromaDB
+**Tech Stack**: FastAPI, SQLModel (Pydantic + SQLAlchemy), SQLite (dev) / PostgreSQL (production), DeepSeek OpenAI-compatible API with openai-agents-python, LlamaIndex, ChromaDB
 
 **Key Directories**:
 - `main.py` - App entry point, registers all routers and middleware
@@ -164,9 +164,8 @@ Global file search functionality for quickly finding files within the current pr
 
 **Environment (.env)** - Only one LLM API key required:
 ```
-# Pick one — all other settings have sensible defaults
+# Required for Agent/LLM calls — all other settings have sensible defaults
 DEEPSEEK_API_KEY=your-deepseek-api-key
-# ANTHROPIC_API_KEY=sk-ant-xxx
 ```
 
 Database defaults to SQLite (`./zenstory.db`). JWT secret auto-generated in development. See `apps/server/.env.example` for all options.

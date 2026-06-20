@@ -9,7 +9,7 @@ from tests.real_llm.sse_utils import collect_sse_events, event_names
 async def test_chat_session_lifecycle_after_real_stream(
     client: AsyncClient,
     real_auth_context: dict,
-    require_anthropic_key,
+    require_deepseek_key,
 ):
     context = real_auth_context
     project = context["project"]

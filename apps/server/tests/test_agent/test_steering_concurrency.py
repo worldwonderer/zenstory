@@ -5,12 +5,13 @@ Tests message ID uniqueness and concurrent access patterns.
 """
 
 import asyncio
+
 import pytest
 
 from agent.core.steering import (
     SteeringQueue,
-    get_steering_queue_async,
     cleanup_steering_queue_async,
+    get_steering_queue_async,
 )
 
 

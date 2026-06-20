@@ -2,7 +2,7 @@
 Tool registry: central source for tool schema/handler wiring.
 
 This module provides one place to assemble:
-- Anthropic tool schema lists
+- Tool schema lists
 - MCP handler dispatch map
 - Agent-type -> toolset mapping
 """
@@ -10,9 +10,9 @@ This module provides one place to assemble:
 import json
 from typing import Any
 
-from agent.tools.anthropic_tools import ANTHROPIC_TOOL_SCHEMAS
 from agent.tools.mcp_tools import MCP_TOOL_HANDLERS
 from agent.tools.parallel_executor import execute_parallel
+from agent.tools.tool_schemas import TOOL_SCHEMAS
 
 DEFAULT_TOOL_NAMES: list[str] = [
     "create_file",
@@ -65,8 +65,8 @@ TOOL_FUNCTIONS: dict[str, Any] = {
 
 
 def _build_tool_schemas(tool_names: list[str]) -> list[dict[str, Any]]:
-    """Resolve Anthropic tool schema list from registry names."""
-    return [ANTHROPIC_TOOL_SCHEMAS[name] for name in tool_names if name in ANTHROPIC_TOOL_SCHEMAS]
+    """Resolve Tool schema list from registry names."""
+    return [TOOL_SCHEMAS[name] for name in tool_names if name in TOOL_SCHEMAS]
 
 
 AGENT_TOOLS_MAP: dict[str, list[dict[str, Any]]] = {
@@ -76,7 +76,7 @@ AGENT_TOOLS_MAP: dict[str, list[dict[str, Any]]] = {
 
 
 def get_agent_tools(agent_type: str) -> list[dict[str, Any]]:
-    """Get Anthropic tool schema list by agent type."""
+    """Get Tool schema list by agent type."""
     return AGENT_TOOLS_MAP.get(agent_type, AGENT_TOOLS_MAP["writer"])
 
 
@@ -86,7 +86,7 @@ def validate_registry_alignment() -> dict[str, list[str]]:
 
     This is a lightweight helper for tests/diagnostics.
     """
-    missing_schemas = [name for name in DEFAULT_TOOL_NAMES if name not in ANTHROPIC_TOOL_SCHEMAS]
+    missing_schemas = [name for name in DEFAULT_TOOL_NAMES if name not in TOOL_SCHEMAS]
     missing_handlers = [name for name in DEFAULT_TOOL_NAMES if name not in TOOL_FUNCTIONS]
     quality_reviewer_missing = [
         name for name in QUALITY_REVIEWER_TOOL_NAMES if name not in DEFAULT_TOOL_NAMES

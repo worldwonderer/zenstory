@@ -18,7 +18,7 @@ from services.core.auth_service import hash_password
 # Test helper: Create mock LangGraph stream events
 def create_mock_langgraph_events():
     """Create mock LangGraph StreamEvent objects."""
-    from agent.llm.anthropic_client import StreamEvent, StreamEventType
+    from agent.core.workflow_events import StreamEvent, StreamEventType
 
     async def mock_stream():
         yield StreamEvent(type=StreamEventType.TEXT, data={"text": "Hello"})
@@ -147,7 +147,7 @@ async def test_agent_health_check(client: AsyncClient):
 
 
 @pytest.mark.integration
-async def test_agent_stream_openai_error(client: AsyncClient, db_session: Session):
+async def test_agent_stream_workflow_error(client: AsyncClient, db_session: Session):
     """Test agent stream when LangGraph workflow returns error."""
     # Create user
     user = User(
@@ -171,7 +171,7 @@ async def test_agent_stream_openai_error(client: AsyncClient, db_session: Sessio
     db_session.commit()
 
     # Mock workflow error
-    from agent.llm.anthropic_client import StreamEvent, StreamEventType
+    from agent.core.workflow_events import StreamEvent, StreamEventType
 
     async def mock_error_stream():
         yield StreamEvent(type=StreamEventType.ERROR, data={"error": "API error"})
@@ -215,7 +215,7 @@ async def test_agent_stream_error_refunds_quota(client: AsyncClient, db_session:
     db_session.add(project)
     db_session.commit()
 
-    from agent.llm.anthropic_client import StreamEvent, StreamEventType
+    from agent.core.workflow_events import StreamEvent, StreamEventType
 
     async def mock_error_stream():
         yield StreamEvent(type=StreamEventType.ERROR, data={"error": "API error"})
@@ -653,7 +653,7 @@ async def test_agent_suggest_falls_back_when_llm_unavailable(client: AsyncClient
     # Ensure get_suggest_service builds a SuggestService instance whose llm init fails.
     with patch("agent.suggest_service._service", None), patch(
         "agent.suggest_service.get_llm_client",
-        side_effect=ValueError("OpenAI API key not found"),
+        side_effect=ValueError("DEEPSEEK_API_KEY is required"),
     ):
         response = await client.post(
             "/api/v1/agent/suggest",

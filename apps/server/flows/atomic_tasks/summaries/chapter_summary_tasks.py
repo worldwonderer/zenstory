@@ -13,8 +13,8 @@ from prefect import get_run_logger
 from flows.database_session import get_db_session
 from flows.utils import (
     api_task,
-    call_gemini_api,
-    get_gemini_client,
+    call_deepseek_api,
+    get_deepseek_client,
 )
 from prompts import create_chapter_summary_prompt
 from services.material.chapters_service import ChaptersService
@@ -70,13 +70,13 @@ def generate_chapter_summary_task(
 
     logger.info(f"[章节摘要] 调用 LLM: chapter_id={chapter_id}")
 
-    response = call_gemini_api(
+    response = call_deepseek_api(
         messages=[{"role": "user", "content": user_message}],
         system_prompt=system_prompt,
     )
 
     # 提取 JSON
-    client = get_gemini_client()
+    client = get_deepseek_client()
     logger.debug(f"[章节摘要] 开始解析 LLM 响应: chapter_id={chapter_id}")
 
     try:

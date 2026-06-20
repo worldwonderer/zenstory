@@ -9,7 +9,7 @@ from tests.real_llm.sse_utils import collect_sse_events, event_names, iter_sse_e
 async def test_stream_real_llm_event_lifecycle(
     client: AsyncClient,
     real_auth_context: dict,
-    require_anthropic_key,
+    require_deepseek_key,
 ):
     context = real_auth_context
     project = context["project"]
@@ -46,7 +46,7 @@ async def test_stream_real_llm_event_lifecycle(
 async def test_stream_real_llm_tool_roundtrip(
     client: AsyncClient,
     real_auth_context: dict,
-    require_anthropic_key,
+    require_deepseek_key,
 ):
     context = real_auth_context
     project = context["project"]

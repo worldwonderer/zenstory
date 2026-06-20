@@ -59,13 +59,8 @@ def real_llm_enabled():
 
 
 @pytest.fixture
-def require_anthropic_key(real_llm_enabled):
-    _require_keys("ANTHROPIC_API_KEY")
-
-
-@pytest.fixture
-def require_openai_key(real_llm_enabled):
-    _require_keys("OPENAI_API_KEY")
+def require_deepseek_key(real_llm_enabled):
+    _require_keys("DEEPSEEK_API_KEY")
 
 
 @pytest.fixture

@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.tools.anthropic_tools import UPDATE_PROJECT_TOOL
 from agent.tools.file_ops.project import ProjectOperations
+from agent.tools.tool_schemas import UPDATE_PROJECT_TOOL
 
 
 def _mock_task_board(monkeypatch, previous_tasks=None, save_ok=True):

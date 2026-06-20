@@ -13,7 +13,7 @@ from prefect import get_run_logger
 from pydantic import BaseModel, Field
 
 from flows.database_session import get_db_session
-from flows.utils import api_task, call_gemini_api, database_task, get_gemini_client
+from flows.utils import api_task, call_deepseek_api, database_task, get_deepseek_client
 
 # ==================== 数据模型 ====================
 
@@ -162,14 +162,14 @@ def intelligent_chunking_task(
 
         logger.info(f"调用 LLM 进行智能分块，建议分块数: {suggested_chunks}")
 
-        response = call_gemini_api(
+        response = call_deepseek_api(
             messages=[{"role": "user", "content": user_message}],
             system_prompt=system_prompt,
             temperature=0.3,
         )
 
         # 提取 JSON
-        client = get_gemini_client()
+        client = get_deepseek_client()
         data = client.extract_json_from_response(response)
 
         # 验证数据

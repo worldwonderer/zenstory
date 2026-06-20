@@ -26,7 +26,7 @@ agent/
 │   ├── nodes.py            # 流式节点实现
 │   └── router.py           # 意图路由
 ├── llm/                    # LLM 集成
-│   └── anthropic_client.py # Anthropic Claude 客户端
+│   └── openai_agents/     # openai-agents-python / DeepSeek 写作 Agent 适配层
 ├── prompts/                # 提示词模板
 │   ├── base.py             # 基础提示
 │   ├── novel.py            # 小说项目提示
@@ -43,7 +43,7 @@ agent/
 │   ├── schemas.py          # 技能数据模型
 │   └── user_skill_service.py # 用户技能服务
 └── tools/                  # 工具实现
-    ├── anthropic_tools.py  # Anthropic 工具定义
+    ├── tool_schemas.py     # provider-neutral 工具 schema 定义
     ├── file_executor.py    # 文件操作执行器
     ├── mcp_tools.py        # MCP 格式工具函数
     └── permissions.py      # 权限检查
@@ -76,7 +76,7 @@ agent/
     ▼
 ┌─────────────────────────────────────────────────────────┐
 │  router (llm / off) [router.py]                         │
-│  - llm: 调用 router_node()（额外一次 LLM 往返；使用轻量 client）│
+│  - llm: 调用 router_node()（DeepSeek Chat Completions）   │
 │  - off: 固定从 writer 开始                               │
 │  - 返回: initial_agent + workflow_plan + workflow_agents │
 └─────────────────────────────────────────────────────────┘
@@ -85,8 +85,8 @@ agent/
 ┌─────────────────────────────────────────────────────────┐
 │  run_streaming_agent() [nodes.py]                       │
 │  - 组合基础提示 + 专业 agent 提示                        │
-│  - 调用 run_agent_loop_streaming()                      │
-│  - 处理工具调用和 handoff                                │
+│  - 调用 openai_agents.runner                            │
+│  - 通过 openai-agents-python 处理工具调用和 handoff       │
 └─────────────────────────────────────────────────────────┘
     │
     ▼
@@ -170,30 +170,28 @@ async def process_stream(
 - `workflow_plan`: 工作流类型 (quick/standard/full/hook_focus/review_only)
 - `workflow_agents`: 后续要执行的 agent 列表
 
-### Streaming Agent Loop (nodes.py)
+### OpenAI Agents SDK Runner (openai_agents/runner.py)
 
-流式 agent 循环，处理工具调用。
+写作 agent 的模型循环由 `openai-agents-python` 承担，项目侧只保留图节点入口、工具适配和事件映射。
 
 ```python
-async def run_agent_loop_streaming(...):
-    while iteration < MAX_TOOL_ITERATIONS:
-        # 1. 流式调用 LLM
-        async for event in client.stream_message(...):
-            # 2. 处理文本/思考/工具调用事件
-            if event.type == TOOL_USE and status == "stop":
-                # 3. 执行工具
-                result = await execute_tool(name, input)
+async def run_openai_agents_streaming_agent(...):
+    # 1. 归一化会话历史和当前用户消息
+    api_messages = build_history_messages(state)
 
-                # 4. 检查 handoff
-                if name == "handoff_to_agent":
-                    yield handoff_event
-                    return
+    # 2. 构建 SDK Agent（DeepSeek deepseek-v4-flash + 项目工具）
+    sdk_agent = _build_agent(agent_type, system_prompt)
 
-            yield event
+    # 3. 运行 Runner.run_streamed 并映射 SDK 事件
+    async for sdk_event in result.stream_events():
+        # response.output_text.delta -> TEXT
+        # reasoning delta -> THINKING
+        # tool_called -> TOOL_USE
+        # tool_output -> TOOL_RESULT / HANDOFF / WORKFLOW_STOPPED
+        yield mapped_event
 
-        # 5. 如果有工具调用，继续循环
-        if stop_reason != "tool_use":
-            break
+    # 4. 写回 assistant/tool turn，供后续 graph agent 使用
+    state["messages"] = updated_messages
 ```
 
 ### StreamAdapter (stream_adapter.py)
@@ -223,7 +221,7 @@ async def run_agent_loop_streaming(...):
 
 ## 工具系统
 
-### 可用工具 (anthropic_tools.py)
+### 可用工具 (tool_schemas.py)
 
 | 工具名 | 描述 |
 |--------|------|
@@ -283,7 +281,7 @@ async def run_agent_loop_streaming(...):
 
 ### 添加新工具
 
-1. 在 `tools/anthropic_tools.py` 添加工具定义
+1. 在 `tools/tool_schemas.py` 添加工具定义
 2. 在 `tools/mcp_tools.py` 实现工具函数
 3. 在 `tools/registry.py` 注册工具映射
 

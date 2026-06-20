@@ -216,7 +216,7 @@ ZenStory 不只是 demo，而是一套可运营的完整产品：
 |------|------|
 | **前端** | React 19 · TypeScript · Vite · Tailwind CSS · Tiptap · Zustand · TanStack Query |
 | **后端** | FastAPI · SQLModel · Pydantic · SSE 流式响应 |
-| **AI** | Anthropic / DeepSeek（兼容 OpenAI 协议） · 自研多 Agent 编排（asyncio） |
+| **AI** | DeepSeek `deepseek-v4-flash`（兼容 OpenAI 协议） · openai-agents-python 写作 Agent |
 | **检索** | LlamaIndex · ChromaDB · 向量 + 关键词混合检索（RRF 融合） |
 | **数据** | SQLite（开发） / PostgreSQL（生产） · Redis · Alembic 迁移 |
 | **部署** | Docker Compose · Vercel（前端） · Railway（后端） · Cloudflare |
@@ -264,7 +264,7 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-> 只需一个 LLM API Key 即可运行（支持 DeepSeek / Anthropic）。生产部署（PostgreSQL + Redis）请参考 [docs/docker-compose.md](docs/docker-compose.md)。
+> 只需一个 DeepSeek API Key 即可运行。生产部署（PostgreSQL + Redis）请参考 [docs/docker-compose.md](docs/docker-compose.md)。
 
 ---
 

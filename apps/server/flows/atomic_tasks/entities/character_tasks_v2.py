@@ -14,9 +14,9 @@ from prefect import get_run_logger
 from flows.database_session import get_db_session
 from flows.utils import (
     api_task,
-    call_gemini_api,
+    call_deepseek_api,
     database_task,
-    get_gemini_client,
+    get_deepseek_client,
 )
 from flows.utils.helpers import (
     filter_character_data,
@@ -84,13 +84,13 @@ def extract_character_mentions_task(
 
     logger.info(f"[角色提及提取] 调用 LLM: chapter_id={chapter_id}")
 
-    response = call_gemini_api(
+    response = call_deepseek_api(
         messages=[{"role": "user", "content": user_message}],
         system_prompt=system_prompt
     )
 
     # 提取 JSON
-    client = get_gemini_client()
+    client = get_deepseek_client()
     logger.debug(f"[角色提及提取] 开始解析 LLM 响应: chapter_id={chapter_id}")
 
     try:
@@ -252,13 +252,13 @@ def build_character_entity_task(
 
     logger.info(f"[角色实体构建] 调用 LLM: character_name={character_name}")
 
-    response = call_gemini_api(
+    response = call_deepseek_api(
         messages=[{"role": "user", "content": user_message}],
         system_prompt=system_prompt
     )
 
     # 提取 JSON
-    client = get_gemini_client()
+    client = get_deepseek_client()
 
     try:
         data = client.extract_json_from_response(response)

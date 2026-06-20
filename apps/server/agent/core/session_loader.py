@@ -424,7 +424,7 @@ class SessionLoader:
         }
 
         # Include reasoning_content for assistant messages
-        # Anthropic protocol expects thinking inside content array, not top-level
+        # The workflow message format keeps thinking inside the content array, not top-level
         if msg.role == "assistant" and getattr(msg, "reasoning_content", None):
             reasoning = msg.reasoning_content
             # Reconstruct content as array with thinking block first

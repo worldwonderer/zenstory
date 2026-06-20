@@ -11,7 +11,7 @@ async def test_suggest_real_llm_returns_quality_envelope(
     client: AsyncClient,
     db_session: Session,
     real_auth_context: dict,
-    require_openai_key,
+    require_deepseek_key,
 ):
     context = real_auth_context
     user = context["user"]

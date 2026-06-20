@@ -1,7 +1,7 @@
 """Prompt/tool alignment regression tests.
 
 These tests ensure that the system prompt does not instruct the model to call
-tools that are not available in the Anthropic tool registry.
+tools that are not available in the Tool registry.
 """
 
 import pytest

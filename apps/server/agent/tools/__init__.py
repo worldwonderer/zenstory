@@ -8,7 +8,7 @@ Key features:
 - Generic CRUD operations on unified File model
 - Query and search capabilities
 - Permission checking
-- MCP tool definitions for Claude SDK
+- MCP tool definitions for the writing agent
 
 Usage:
     from agent.tools import FileToolExecutor, execute_file_tool_call

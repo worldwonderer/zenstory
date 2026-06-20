@@ -26,7 +26,6 @@ from models.agent_api_key import AgentApiKey
 from services.agent_auth_service import generate_api_key, hash_api_key
 from services.core.auth_service import hash_password
 
-
 # =============================================================================
 # Test Fixtures Helpers
 # =============================================================================
@@ -258,8 +257,8 @@ async def test_chat_endpoint_chat_scope_required(client: AsyncClient, db_session
 async def test_list_projects_success(client: AsyncClient, db_session: Session):
     """Test successful project listing."""
     user = create_test_user(db_session, "list_proj_user")
-    project1 = create_test_project(db_session, user.id, "Project 1")
-    project2 = create_test_project(db_session, user.id, "Project 2")
+    create_test_project(db_session, user.id, "Project 1")
+    create_test_project(db_session, user.id, "Project 2")
     _, plain_key = create_test_api_key(db_session, user.id)
 
     response = await client.get(
@@ -280,7 +279,7 @@ async def test_list_projects_with_project_restriction(client: AsyncClient, db_se
     """Test that API key with project restriction only sees allowed projects."""
     user = create_test_user(db_session, "restricted_user")
     project1 = create_test_project(db_session, user.id, "Allowed Project")
-    project2 = create_test_project(db_session, user.id, "Blocked Project")
+    create_test_project(db_session, user.id, "Blocked Project")
     _, plain_key = create_test_api_key(
         db_session, user.id, project_ids=[project1.id]
     )
@@ -354,8 +353,8 @@ async def test_list_files_success(client: AsyncClient, db_session: Session):
     """Test successful file listing."""
     user = create_test_user(db_session, "list_files_user")
     project = create_test_project(db_session, user.id)
-    file1 = create_test_file(db_session, project.id, "Chapter 1", "draft")
-    file2 = create_test_file(db_session, project.id, "Main Character", "character")
+    create_test_file(db_session, project.id, "Chapter 1", "draft")
+    create_test_file(db_session, project.id, "Main Character", "character")
     _, plain_key = create_test_api_key(db_session, user.id)
 
     response = await client.get(
@@ -374,8 +373,8 @@ async def test_list_files_filter_by_type(client: AsyncClient, db_session: Sessio
     """Test file listing with type filter."""
     user = create_test_user(db_session, "list_files_filter_user")
     project = create_test_project(db_session, user.id)
-    file1 = create_test_file(db_session, project.id, "Chapter 1", "draft")
-    file2 = create_test_file(db_session, project.id, "Main Character", "character")
+    create_test_file(db_session, project.id, "Chapter 1", "draft")
+    create_test_file(db_session, project.id, "Main Character", "character")
     _, plain_key = create_test_api_key(db_session, user.id)
 
     response = await client.get(
@@ -586,7 +585,7 @@ async def test_chat_success_with_mock(client: AsyncClient, db_session: Session):
     _, plain_key = create_test_api_key(db_session, user.id, scopes=["chat"])
 
     # Mock the LangGraph workflow
-    from agent.llm.anthropic_client import StreamEvent, StreamEventType
+    from agent.core.workflow_events import StreamEvent, StreamEventType
 
     async def mock_stream():
         yield StreamEvent(type=StreamEventType.TEXT, data={"text": "Hello"})

@@ -8,6 +8,7 @@ import os
 from collections.abc import AsyncIterator
 from typing import Any
 
+from agent.core.workflow_events import StreamEvent, StreamEventType
 from agent.graph.nodes import (
     detect_task_complete,
     evaluate_agent_output,
@@ -15,7 +16,6 @@ from agent.graph.nodes import (
 )
 from agent.graph.router import get_next_node, router_node
 from agent.graph.state import WritingState
-from agent.llm.anthropic_client import StreamEvent, StreamEventType
 from agent.tools.mcp_tools import ToolContext, update_project
 from config.agent_runtime import (
     AGENT_AUTO_REVIEW_THRESHOLD_CHARS,
@@ -391,7 +391,6 @@ async def run_writing_workflow_streaming(
             # If there's handoff context, add it to the state
             if handoff_context:
                 modified_state = dict(state)
-                original_msg = modified_state.get("user_message", "")
 
                 # 检测 writer-quality_reviewer 循环
                 is_reviewer = current_agent_type == "quality_reviewer"
@@ -439,8 +438,12 @@ async def run_writing_workflow_streaming(
                         f"交接信息: {handoff_context}{inventory_text}{round_hint}{last_iteration_hint}"
                     )
                 else:
+                    # The original user request is already replayed as the first user turn
+                    # in history; re-embedding it on every handoff duplicates it and lets
+                    # prior handoff contexts pile up across iterations. Pass only the fresh
+                    # handoff context as this turn's user message.
                     modified_state["user_message"] = (
-                        f"{original_msg}\n\n[来自上一个Agent的交接信息]: "
+                        f"[来自上一个Agent的交接信息]: "
                         f"{handoff_context}{inventory_text}{last_iteration_hint}"
                     )
             else:
@@ -730,7 +733,14 @@ async def run_writing_workflow_streaming(
                     # 终止工作流
                     break
 
-            if pending_handoff_event_data is not None:
+            # The target agent only runs if another collaboration iteration remains.
+            # Emitting a HANDOFF that can never be acted on leaves the frontend with a
+            # dangling handoff immediately followed by ITERATION_EXHAUSTED (the promised
+            # agent never speaks). Suppress it on the final iteration and let the loop
+            # fall through to the exhaustion branch instead.
+            will_run_next_agent = bool(pending_next_agent) and iteration < max_iterations
+
+            if pending_handoff_event_data is not None and will_run_next_agent:
                 yield StreamEvent(
                     type=StreamEventType.HANDOFF,
                     data=pending_handoff_event_data,
@@ -740,7 +750,7 @@ async def run_writing_workflow_streaming(
             previous_agent = current_agent_type
 
             # Apply next agent decision
-            current_agent_type = pending_next_agent or None
+            current_agent_type = pending_next_agent if will_run_next_agent else None
 
         ToolContext.set_current_agent(None)
 

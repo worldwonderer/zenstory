@@ -216,7 +216,7 @@ ZenStory isn't a demo — it's a complete, operable product:
 |------|------|
 | **Frontend** | React 19 · TypeScript · Vite · Tailwind CSS · Tiptap · Zustand · TanStack Query |
 | **Backend** | FastAPI · SQLModel · Pydantic · SSE streaming |
-| **AI** | Anthropic / DeepSeek (OpenAI-compatible) · custom multi-agent orchestration (asyncio) |
+| **AI** | DeepSeek `deepseek-v4-flash` (OpenAI-compatible) · openai-agents-python writing agent |
 | **Retrieval** | LlamaIndex · ChromaDB · vector + keyword hybrid search (RRF fusion) |
 | **Data** | SQLite (dev) / PostgreSQL (prod) · Redis · Alembic migrations |
 | **Deploy** | Docker Compose · Vercel (frontend) · Railway (backend) · Cloudflare |
@@ -264,7 +264,7 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-> Only one LLM API key is needed (DeepSeek / Anthropic). For production deployment (PostgreSQL + Redis), see [docs/docker-compose.md](docs/docker-compose.md).
+> Only one DeepSeek API key is needed. For production deployment (PostgreSQL + Redis), see [docs/docker-compose.md](docs/docker-compose.md).
 
 ---
 

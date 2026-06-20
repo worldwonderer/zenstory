@@ -38,8 +38,8 @@ from .core.events import (
     tool_result_event,
 )
 from .core.stream_processor import StreamProcessor, StreamResult
-from .llm.anthropic_client import StreamEvent as WorkflowStreamEvent
-from .llm.anthropic_client import StreamEventType
+from .core.workflow_events import StreamEvent as WorkflowStreamEvent
+from .core.workflow_events import StreamEventType
 
 logger = get_logger(__name__)
 
@@ -90,7 +90,7 @@ class PendingFileWrite:
 
 class StreamAdapter:
     """
-    Adapter that converts Claude SDK events to SSE events.
+    Adapter that converts workflow events to SSE events.
 
     Features:
     - Converts TextBlock to content events
@@ -227,6 +227,18 @@ class StreamAdapter:
             async for sse_event in self._emit_stream_result(final_result):
                 yield sse_event
 
+        # An abandoned <file> write (create_file emitted an empty file but the model never
+        # streamed its <file>...</file> content) leaves both the adapter tracker and the
+        # ToolContext pending-empty-file guard set — finalize_on_stream_end flushes a
+        # WAITING_START file as plain text without completing it, so _complete_file_write
+        # (which normally clears the guard) never runs. Clear the stale state at stream end
+        # so it cannot block create_file in any subsequent processing/request.
+        if self._pending_file_write is not None:
+            self._pending_file_write = None
+            with contextlib.suppress(Exception):
+                from agent.tools.mcp_tools import ToolContext
+                ToolContext.clear_pending_empty_file()
+
         # Ensure content_end is sent if content was started
         if self._content_started:
             yield content_end_event()
@@ -313,7 +325,7 @@ class StreamAdapter:
                 # First try to get input directly from data (workflow can send complete input)
                 tool_input = data.get("input", {})
 
-                # If no input in data, try to get from accumulated JSON (Anthropic streaming)
+                # If no input in data, try to get from accumulated JSON from streaming tool-call deltas)
                 if not tool_input and tool_id and tool_id in self._current_tool_calls:
                     input_json = self._current_tool_calls[tool_id].get("input_json", "")
                     if input_json:

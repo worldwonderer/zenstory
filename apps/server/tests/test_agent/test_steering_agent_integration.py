@@ -4,14 +4,12 @@ Integration tests for steering message injection into agent loop.
 Tests the interaction between SteeringQueue and agent loop execution.
 """
 
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from agent.core.steering import (
     SteeringQueue,
-    get_steering_queue_async,
     cleanup_steering_queue_async,
+    get_steering_queue_async,
 )
 
 
@@ -123,7 +121,6 @@ class TestSteeringQueueLifecycle:
     @pytest.mark.asyncio
     async def test_cleanup_removes_queue(self):
         """Test that cleanup removes the queue."""
-        from agent.core.steering import _queue_manager
 
         session_id = "lifecycle-test"
 

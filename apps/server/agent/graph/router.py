@@ -1,18 +1,19 @@
 """
 Router node for the writing workflow.
 
-Uses Anthropic API to classify user intent and route to the appropriate agent.
-Supports workflow planning for multi-agent collaboration.
+Uses DeepSeek's OpenAI-compatible Chat Completions API to classify user
+intent and route to the appropriate writing agent.
 """
 
 import json
 import re
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from agent.core.deepseek_client import get_deepseek_client
 from agent.graph.state import WritingState
-from agent.llm.anthropic_client import StreamEventType, get_router_client
+from agent.openai_agents.model import DEEPSEEK_WRITING_MODEL
 from agent.prompts.subagents import ROUTER_PROMPT
 from utils.logger import get_logger, log_with_context
 
@@ -48,7 +49,7 @@ async def router_node(state: WritingState) -> dict:
     """
     Route user message to appropriate agent based on intent.
 
-    Uses Anthropic API to classify the user's intent and determine
+    Uses DeepSeek Chat Completions to classify the user's intent and determine
     which agent (planner/writer/quality_reviewer) should handle the request.
     Also plans the workflow path for multi-agent collaboration.
 
@@ -82,10 +83,8 @@ async def router_node(state: WritingState) -> dict:
         }
 
     try:
-        client = get_router_client()
-
-        # Call Anthropic API for intent classification and workflow planning
-        response = await _route_with_streaming(client, user_message)
+        # Call DeepSeek Chat Completions for intent classification and workflow planning.
+        response = await _route_with_deepseek_chat(user_message)
 
         # Extract structured decision from response
         decision = _parse_router_response(response)
@@ -131,36 +130,28 @@ async def router_node(state: WritingState) -> dict:
         }
 
 
-async def _route_with_streaming(client: Any, user_message: str) -> dict[str, list[dict[str, str]]]:
-    """
-    Route using streaming API and aggregate text deltas into a router response.
-
-    This avoids long-request failures on non-streaming endpoints while keeping
-    existing parser behavior unchanged.
-    """
-    text_parts: list[str] = []
-
-    async for event in client.stream_message(
-        messages=[{"role": "user", "content": user_message}],
-        system_prompt=ROUTER_PROMPT,
-    ):
-        event_type = getattr(event, "type", None)
-
-        if event_type in (StreamEventType.TEXT, StreamEventType.TEXT.value):
-            text = event.data.get("text", "")
-            if text:
-                text_parts.append(text)
-            continue
-
-        if event_type in (StreamEventType.ERROR, StreamEventType.ERROR.value):
-            error_message = event.data.get("error", "Unknown router streaming error")
-            raise ValueError(error_message)
-
+async def _route_with_deepseek_chat(user_message: str) -> dict[str, list[dict[str, str]]]:
+    """Route using DeepSeek's OpenAI-compatible Chat Completions endpoint."""
+    client = get_deepseek_client()
+    response = await client.chat.completions.create(
+        model=DEEPSEEK_WRITING_MODEL,
+        messages=[
+            {"role": "system", "content": ROUTER_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.0,
+        # deepseek-v4-flash is a reasoning model: chain-of-thought reasoning_tokens count
+        # against completion tokens. A tight budget can be fully consumed by reasoning,
+        # leaving an empty JSON answer and forcing a silent fallback to writer/quick.
+        # Keep a generous budget so the short routing JSON always fits after reasoning.
+        max_tokens=2048,
+    )
+    text = response.choices[0].message.content or ""
     return {
         "content": [
             {
                 "type": "text",
-                "text": "".join(text_parts),
+                "text": text,
             }
         ]
     }

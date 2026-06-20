@@ -1,7 +1,7 @@
 """
 Tool execution functions for zenstory Agent.
 
-Defines tool functions that can be called by the Claude adapter.
+Defines tool functions that can be called by the writing-agent adapter.
 """
 
 import asyncio

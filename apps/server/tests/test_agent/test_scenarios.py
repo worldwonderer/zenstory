@@ -8,7 +8,7 @@ Tests complex workflows including:
 """
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlmodel import Session
@@ -320,33 +320,19 @@ class TestMultiTurnConversations:
                 "user_id": None,
             }
 
-            # Mock the router LLM client
-            with patch("agent.graph.router.get_router_client") as mock_client:
-                from agent.llm.anthropic_client import StreamEvent, StreamEventType
+            expected_initial_agent = case["expected_initial_agent"]
+            expected_workflow = case["expected_workflow"]
+            route_response = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{expected_initial_agent}\n{expected_workflow}",
+                    }
+                ]
+            }
 
-                expected_initial_agent = case["expected_initial_agent"]
-                expected_workflow = case["expected_workflow"]
-
-                async def mock_stream_message(
-                    *,
-                    _expected_initial_agent: str = expected_initial_agent,
-                    _expected_workflow: str = expected_workflow,
-                    **_kwargs,
-                ):
-                    yield StreamEvent(
-                        type=StreamEventType.TEXT,
-                        data={
-                            "text": (
-                                f"{_expected_initial_agent}\n"
-                                f"{_expected_workflow}"
-                            ),
-                        },
-                    )
-
-                mock_instance = MagicMock()
-                mock_instance.stream_message = mock_stream_message
-                mock_client.return_value = mock_instance
-
+            # Mock the router LLM call
+            with patch("agent.graph.router._route_with_deepseek_chat", AsyncMock(return_value=route_response)):
                 # Run router
                 result = await router_node(state)
 
@@ -722,7 +708,7 @@ class TestEndToEndScenarios:
     """
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Requires Anthropic API key")
+    @pytest.mark.skip(reason="Requires real LLM API key")
     async def test_full_writing_workflow(
         self,
         db_session: Session,

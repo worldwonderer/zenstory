@@ -14,7 +14,7 @@ import pytest
 from httpx import AsyncClient
 from sqlmodel import Session
 
-from agent.llm.anthropic_client import StreamEvent, StreamEventType
+from agent.core.workflow_events import StreamEvent, StreamEventType
 from models import Project, User
 from services.core.auth_service import hash_password
 

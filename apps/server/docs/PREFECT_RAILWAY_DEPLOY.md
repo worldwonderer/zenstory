@@ -63,10 +63,8 @@ railway up --service prefect-server
 | `DATABASE_URL` | 业务数据库连接 | `postgresql://...` |
 | `API_SERVER_INTERNAL_URL` | API 服务内网地址（用于下载上传文件） | `http://server.railway.internal:8080` |
 | `MATERIAL_INTERNAL_TOKEN` | Worker/API 共享内部鉴权 token | `your-random-secret` |
-| `MATERIAL_LLM_PROVIDER` | LLM 提供商 | `anthropic` |
-| `MATERIAL_ANTHROPIC_API_KEY` | API 密钥 | `sk-...` |
-| `MATERIAL_ANTHROPIC_BASE_URL` | API 基础 URL | `https://open.bigmodel.cn/api/anthropic` |
-| `MATERIAL_ANTHROPIC_MODEL` | 模型名称 | `glm-4.7` |
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | 运行时注入 |
+| `DEEPSEEK_BASE_URL` | DeepSeek API 基础 URL（可选） | `https://api.deepseek.com` |
 
 #### 部署命令
 

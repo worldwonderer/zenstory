@@ -12,9 +12,39 @@ The contract being tested:
 """
 
 import pytest
-from fastapi.routing import APIRoute
 
 from main import app
+
+
+class _RouteInfo:
+    """Lightweight route view exposing the effective mount path and methods."""
+
+    __slots__ = ("path", "methods")
+
+    def __init__(self, path: str, methods: set[str]):
+        self.path = path
+        self.methods = methods
+
+
+_HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+
+
+def _collect_api_routes() -> list[_RouteInfo]:
+    """Return every API route's *effective* path + methods from the OpenAPI schema.
+
+    Reading the OpenAPI schema yields fully-resolved mount paths regardless of how
+    FastAPI structures ``app.routes`` internally — flat in older versions, but nested
+    ``_IncludedRouter`` wrappers in 0.138+ (whose ``original_router.routes`` still
+    carry pre-prefix paths). Walking those wrappers directly would report un-mounted
+    paths (e.g. ``/skills/pending`` instead of ``/api/admin/skills/pending``); the
+    schema avoids that entirely.
+    """
+    schema = app.openapi()
+    routes: list[_RouteInfo] = []
+    for path, operations in schema.get("paths", {}).items():
+        methods = {m.upper() for m in operations if m.lower() in _HTTP_METHODS}
+        routes.append(_RouteInfo(path, methods))
+    return routes
 
 
 class TestRouterPrefixContract:
@@ -274,9 +304,9 @@ class TestRouterPrefixContract:
 
     # Helper methods
 
-    def _get_all_routes(self) -> list[APIRoute]:
-        """Get all API routes from the FastAPI app."""
-        return [route for route in app.routes if isinstance(route, APIRoute)]
+    def _get_all_routes(self) -> list[_RouteInfo]:
+        """Get all API routes (effective paths) from the FastAPI app."""
+        return _collect_api_routes()
 
 
 class TestRouterPrefixPatterns:

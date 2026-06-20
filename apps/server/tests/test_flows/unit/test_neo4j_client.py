@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from flows.utils.clients import neo4j as neo_mod
 
 

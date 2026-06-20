@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent.llm.anthropic_client import StreamEvent, StreamEventType
+from agent.core.workflow_events import StreamEvent, StreamEventType
 from agent.tools.mcp_tools import ToolContext
 
 

@@ -14,9 +14,8 @@ services:
     container_name: zenstory-server
     restart: unless-stopped
     environment:
-      # Only required config — your LLM API key
+      # Required config for the writing agent — DeepSeek only
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Database defaults to SQLite inside container
       DATABASE_URL: sqlite:///./zenstory.db
       # CORS for local dev
