@@ -14,9 +14,8 @@ from pydantic import BaseModel, Field, ValidationError
 from agent.core.deepseek_client import get_deepseek_client
 from agent.graph.state import WritingState
 from agent.openai_agents.events import parse_json_object
-from agent.openai_agents.model import DEEPSEEK_WRITING_MODEL, get_deepseek_chat_model
+from agent.openai_agents.model import DEEPSEEK_WRITING_MODEL
 from agent.prompts.subagents import ROUTER_PROMPT
-from config.agent_runtime import AGENT_ROUTER_USE_OUTPUT_TYPE
 from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
@@ -85,16 +84,11 @@ async def router_node(state: WritingState) -> dict:
         }
 
     try:
-        # 5.1: When flag is ON, attempt SDK structured-output path first.
-        # On ANY failure fall back to the tolerant chat-completions path.
-        decision: RouterDecision | None = None
-        if AGENT_ROUTER_USE_OUTPUT_TYPE:
-            decision = await _route_with_sdk_output_type(user_message)
-
-        if decision is None:
-            # Default path (flag OFF) or fallback when SDK path failed.
-            response = await _route_with_deepseek_chat(user_message)
-            decision = _parse_router_response(response)
+        # Route via DeepSeek Chat Completions + tolerant JSON parser. (An SDK
+        # output_type=RouterDecision path was evaluated and removed: DeepSeek
+        # rejects response_format json_schema, so it could never succeed.)
+        response = await _route_with_deepseek_chat(user_message)
+        decision = _parse_router_response(response)
         workflow_agents = WORKFLOW_AGENTS.get(decision.workflow_type, [])
 
         log_with_context(
@@ -135,52 +129,6 @@ async def router_node(state: WritingState) -> dict:
                 "confidence": 0.0,
             },
         }
-
-
-async def _route_with_sdk_output_type(user_message: str) -> RouterDecision | None:
-    """
-    Attempt routing via the openai-agents SDK with output_type=RouterDecision.
-
-    Returns a validated RouterDecision on success, or None on any failure so the
-    caller can fall back to the tolerant chat-completions path.  DeepSeek over Chat
-    Completions with reasoning tokens may not honour strict structured outputs, so
-    this path is guarded by AGENT_ROUTER_USE_OUTPUT_TYPE (default False).
-    """
-    try:
-        from agents import Agent, Runner
-
-        sdk_agent = Agent(
-            name="router",
-            instructions=ROUTER_PROMPT,
-            model=get_deepseek_chat_model(),
-            output_type=RouterDecision,
-            tools=[],
-        )
-        result = await Runner.run(
-            sdk_agent,
-            input=user_message,
-            max_turns=1,
-        )
-        decision = result.final_output
-        if isinstance(decision, RouterDecision):
-            return decision
-        # SDK returned something other than RouterDecision — fall back.
-        log_with_context(
-            logger,
-            30,  # WARNING
-            "SDK router returned unexpected output type, falling back to tolerant parser",
-            output_type=type(decision).__name__,
-        )
-        return None
-    except Exception as exc:
-        log_with_context(
-            logger,
-            30,  # WARNING
-            "SDK router path failed, falling back to tolerant parser",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        return None
 
 
 async def _route_with_deepseek_chat(user_message: str) -> dict[str, list[dict[str, str]]]:
