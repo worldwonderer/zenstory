@@ -28,9 +28,9 @@
   "input": {
     "placeholder": "Describe the character, scene, or plot you want to create...",
     "placeholderWhileProcessing": "AI is generating — you can type now and send when it finishes…",
-    "steerPlaceholder": "Add a follow-up instruction — applied at the next step…",
+    "steerPlaceholder": "Add a follow-up instruction…",
     "steerButton": "Add instruction",
-    "steerHint": "AI is generating: what you send becomes a follow-up instruction, applied at the next step",
+    "steerHint": "AI is generating — it applies at the next step",
     "steerSent": "Added — it will apply at the next step",
     "steerFailed": "Failed to add, please retry",
     "mode": {
