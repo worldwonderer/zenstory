@@ -100,14 +100,3 @@ AGENT_ENABLE_GRAPH_AUTO_REVIEW = _get_bool_env(
     "AGENT_ENABLE_GRAPH_AUTO_REVIEW",
     True,
 )
-
-# Router (Plan 5.1). When **True**, the writing-graph router runs as an
-# openai-agents Agent(output_type=RouterDecision) for structured output instead
-# of a raw chat.completions call hand-parsed by the tolerant JSON scraper.
-# Default **False**: DeepSeek over the OpenAI-compatible Chat Completions
-# endpoint (with reasoning tokens) may not honor strict structured outputs, so
-# the tolerant parser remains the safe fallback until the SDK path is validated.
-AGENT_ROUTER_USE_OUTPUT_TYPE = _get_bool_env(
-    "AGENT_ROUTER_USE_OUTPUT_TYPE",
-    False,
-)
