@@ -911,8 +911,6 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
     onParallelTaskEnd: streamCallbacks.onParallelTaskEnd,
     onParallelEnd: streamCallbacks.onParallelEnd,
     onSteeringReceived: streamCallbacks.onSteeringReceived,
-    onCompactionStart: streamCallbacks.onCompactionStart,
-    onCompactionDone: streamCallbacks.onCompactionDone,
   });
   const conflictCount = state.conflicts?.length ?? 0;
   const streamRenderItemCount = streamRenderItems?.length ?? 0;

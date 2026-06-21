@@ -194,10 +194,6 @@ export interface UseAgentStreamOptions {
   onParallelEnd?: (executionId: string, total: number, completed: number, failed: number, durationMs: number) => void;
   /** Called when steering message is received */
   onSteeringReceived?: (messageId: string, preview: string) => void;
-  /** Called when compaction starts */
-  onCompactionStart?: (tokensBefore: number, messagesCount: number) => void;
-  /** Called when compaction completes */
-  onCompactionDone?: (tokensAfter: number, messagesRemoved: number, summaryPreview: string) => void;
 }
 
 export interface UseAgentStreamReturn {
@@ -338,8 +334,6 @@ export function useAgentStream(
     onParallelTaskEnd,
     onParallelEnd,
     onSteeringReceived,
-    onCompactionStart,
-    onCompactionDone,
   } = options;
 
   const flushIntervalMs =
@@ -1045,16 +1039,6 @@ export function useAgentStream(
             onSteeringReceived?.(message_id, preview);
           },
 
-          onCompactionStart: (tokens_before, messages_count) => {
-            if (isStaleEvent()) return;
-            onCompactionStart?.(tokens_before, messages_count);
-          },
-
-          onCompactionDone: (tokens_after, messages_removed, summary_preview) => {
-            if (isStaleEvent()) return;
-            onCompactionDone?.(tokens_after, messages_removed, summary_preview);
-          },
-
           onConflict: (conflictData) => {
             if (isStaleEvent()) return;
             const conflict: Conflict = {
@@ -1188,8 +1172,6 @@ export function useAgentStream(
       onParallelTaskEnd,
       onParallelEnd,
       onSteeringReceived,
-      onCompactionStart,
-      onCompactionDone,
       onThinkingOption,
       onThinkingContentOption,
       startContentSegment,

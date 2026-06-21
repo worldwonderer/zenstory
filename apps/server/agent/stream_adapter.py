@@ -126,7 +126,7 @@ class StreamAdapter:
         # Track current tool call for result matching
         self._current_tool_calls: dict[str, dict[str, Any]] = {}
 
-        # Track latest model message metadata (for persistence/compaction accuracy)
+        # Track latest model message metadata (for persistence accuracy)
         self._last_message_stop_reason: str | None = None
         self._last_message_usage: dict[str, int] | None = None
 
@@ -393,8 +393,6 @@ class StreamAdapter:
             "parallel_task_start",
             "parallel_task_end",
             "parallel_end",
-            "compaction_start",
-            "compaction_done",
         ):
             # Pass through these events directly
             yield SSEEvent(type=event_type_value, data=data)

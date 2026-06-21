@@ -1431,18 +1431,15 @@ describe('useAgentStream', () => {
       const onSessionStartedV1 = vi.fn()
       const onParallelStartV1 = vi.fn()
       const onSteeringReceivedV1 = vi.fn()
-      const onCompactionStartV1 = vi.fn()
 
       const onSessionStartedV2 = vi.fn()
       const onParallelStartV2 = vi.fn()
       const onSteeringReceivedV2 = vi.fn()
-      const onCompactionStartV2 = vi.fn()
 
       type CallbackProps = {
         onSessionStarted: (sessionId: string) => void
         onParallelStart: (executionId: string, taskCount: number, descriptions: string[]) => void
         onSteeringReceived: (messageId: string, preview: string) => void
-        onCompactionStart: (tokensBefore: number, messagesCount: number) => void
       }
 
       const { result, rerender } = renderHook(
@@ -1451,14 +1448,12 @@ describe('useAgentStream', () => {
             onSessionStarted: props.onSessionStarted,
             onParallelStart: props.onParallelStart,
             onSteeringReceived: props.onSteeringReceived,
-            onCompactionStart: props.onCompactionStart,
           }),
         {
           initialProps: {
             onSessionStarted: onSessionStartedV1,
             onParallelStart: onParallelStartV1,
             onSteeringReceived: onSteeringReceivedV1,
-            onCompactionStart: onCompactionStartV1,
           },
         }
       )
@@ -1472,19 +1467,16 @@ describe('useAgentStream', () => {
         callbacks.onSessionStarted?.('session-v1')
         callbacks.onParallelStart?.('exec-v1', 1, ['task-v1'])
         callbacks.onSteeringReceived?.('steer-v1', 'preview-v1')
-        callbacks.onCompactionStart?.(1000, 10)
       })
 
       expect(onSessionStartedV1).toHaveBeenCalledWith('session-v1')
       expect(onParallelStartV1).toHaveBeenCalledWith('exec-v1', 1, ['task-v1'])
       expect(onSteeringReceivedV1).toHaveBeenCalledWith('steer-v1', 'preview-v1')
-      expect(onCompactionStartV1).toHaveBeenCalledWith(1000, 10)
 
       rerender({
         onSessionStarted: onSessionStartedV2,
         onParallelStart: onParallelStartV2,
         onSteeringReceived: onSteeringReceivedV2,
-        onCompactionStart: onCompactionStartV2,
       })
 
       act(() => {
@@ -1495,18 +1487,15 @@ describe('useAgentStream', () => {
         callbacks.onSessionStarted?.('session-v2')
         callbacks.onParallelStart?.('exec-v2', 2, ['task-a', 'task-b'])
         callbacks.onSteeringReceived?.('steer-v2', 'preview-v2')
-        callbacks.onCompactionStart?.(2000, 20)
       })
 
       expect(onSessionStartedV2).toHaveBeenCalledWith('session-v2')
       expect(onParallelStartV2).toHaveBeenCalledWith('exec-v2', 2, ['task-a', 'task-b'])
       expect(onSteeringReceivedV2).toHaveBeenCalledWith('steer-v2', 'preview-v2')
-      expect(onCompactionStartV2).toHaveBeenCalledWith(2000, 20)
 
       expect(onSessionStartedV1).toHaveBeenCalledTimes(1)
       expect(onParallelStartV1).toHaveBeenCalledTimes(1)
       expect(onSteeringReceivedV1).toHaveBeenCalledTimes(1)
-      expect(onCompactionStartV1).toHaveBeenCalledTimes(1)
     })
   })
 })

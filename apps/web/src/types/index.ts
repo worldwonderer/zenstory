@@ -305,8 +305,6 @@ export type SSEEventType =
   | "parallel_task_end"
   | "parallel_end"
   | "steering_received"
-  | "compaction_start"
-  | "compaction_done"
   | "done"
   | "error";
 
@@ -537,17 +535,6 @@ export interface SSESteeringReceivedData {
   preview: string;
 }
 
-export interface SSECompactionStartData {
-  tokens_before: number;
-  messages_count: number;
-}
-
-export interface SSECompactionDoneData {
-  tokens_after: number;
-  messages_removed: number;
-  summary_preview: string;
-}
-
 export interface SSEDoneData {
   apply_action?: ApplyAction;
   refs?: number[];
@@ -587,8 +574,6 @@ export interface SSEEvent {
     | SSEParallelTaskEndData
     | SSEParallelEndData
     | SSESteeringReceivedData
-    | SSECompactionStartData
-    | SSECompactionDoneData
     | Record<string, unknown>;
 }
 
@@ -1320,22 +1305,6 @@ export interface RedeemProResponse {
 // ============================================
 
 /**
- * Compaction event - triggered when context is compressed
- */
-export interface CompactionStartEvent {
-  type: "compaction_start";
-  tokens_before: number;
-  messages_count: number;
-}
-
-export interface CompactionDoneEvent {
-  type: "compaction_done";
-  tokens_after: number;
-  messages_removed: number;
-  summary_preview: string;
-}
-
-/**
  * Session lifecycle event - provides session ID for steering
  */
 export interface SessionStartedEvent {
@@ -1392,8 +1361,6 @@ export interface SteeringReceivedEvent {
  * Union type for all new agent events
  */
 export type AgentEnhancementEvent =
-  | CompactionStartEvent
-  | CompactionDoneEvent
   | SessionStartedEvent
   | ParallelStartEvent
   | ParallelTaskStartEvent

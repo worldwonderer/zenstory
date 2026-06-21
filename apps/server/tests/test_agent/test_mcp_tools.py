@@ -528,7 +528,7 @@ async def test_handoff_to_agent_backfills_overflow_refs_into_context():
 
 
 @pytest.mark.unit
-def test_load_recent_artifact_refs_for_handoff_filters_out_compaction_summary(db_session):
+def test_load_recent_artifact_refs_for_handoff_filters_out_non_handoff_actions(db_session):
     from agent.tools import mcp_tools
     from models import AgentArtifactLedger, ChatSession, Project, User
 
@@ -582,10 +582,10 @@ def test_load_recent_artifact_refs_for_handoff_filters_out_compaction_summary(db
             project_id=project.id,
             session_id=chat_session.id,
             user_id=user.id,
-            action="compaction_summary",
-            tool_name="context_compaction",
-            artifact_ref=f"compaction:{chat_session.id}",
-            payload=json.dumps({"summary": "checkpoint"}),
+            action="unknown_action",
+            tool_name="unknown_tool",
+            artifact_ref=f"unknown:{chat_session.id}",
+            payload=json.dumps({"note": "ignored"}),
             created_at=base_time,
         )
     )

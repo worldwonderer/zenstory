@@ -87,7 +87,7 @@ class AgentArtifactLedger(SQLModel, table=True):
     Persistent artifact ledger for agent tool outputs.
 
     Used to keep lightweight references of created/edited/deleted artifacts,
-    enabling robust handoff even after context compaction.
+    enabling robust handoff across agent turns.
     """
 
     __tablename__ = "agent_artifact_ledger"

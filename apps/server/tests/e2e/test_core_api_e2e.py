@@ -427,16 +427,6 @@ async def test_chat_session_lifecycle_covers_messages_recent_clear_and_new_sessi
         ChatMessage(session_id=chat_session_id, role="user", content="Follow-up prompt"),
     ]
     db_session.add_all(seeded_messages)
-    artifact = AgentArtifactLedger(
-        project_id=project_id,
-        session_id=chat_session_id,
-        user_id=user.id,
-        action="compaction_summary",
-        tool_name="compaction",
-        artifact_ref="summary-1",
-        payload='{"summary":"checkpoint"}',
-    )
-    db_session.add(artifact)
     chat_session = db_session.get(ChatSession, chat_session_id)
     assert chat_session is not None
     chat_session.message_count = len(seeded_messages)

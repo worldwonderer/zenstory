@@ -528,7 +528,7 @@ def _record_artifact_ledger(
     payload: Any | None = None,
 ) -> bool:
     """
-    Persist artifact refs for later handoff/compaction recovery.
+    Persist artifact refs for later handoff recovery.
 
     Best effort: failures should never break tool success path.
     """

@@ -11,27 +11,17 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import desc, or_
 from sqlmodel import Session, and_, select
 
 from agent.utils.token_utils import estimate_message_tokens
-from config.agent_runtime import (
-    AGENT_CHAT_HISTORY_TOKEN_BUDGET,
-    AGENT_COMPACTION_CHECKPOINT_RETENTION,
-)
+from config.agent_runtime import AGENT_CHAT_HISTORY_TOKEN_BUDGET
 from database import create_session
 from utils.logger import get_logger, log_with_context
 
-if TYPE_CHECKING:
-    from agent.context.compaction import CompactionResult
-
 logger = get_logger(__name__)
-
-COMPACTION_SUMMARY_ACTION = "compaction_summary"
-COMPACTION_SUMMARY_TOOL_NAME = "context_compaction"
-COMPACTION_CHECKPOINT_SCHEMA_VERSION = 1
 
 
 @dataclass
@@ -42,7 +32,6 @@ class SessionData:
     session_id: str | None = None
     history_messages: list[dict[str, Any]] = field(default_factory=list)
     context_data: Any | None = None
-    compaction_result: Any | None = None  # CompactionResult if compaction occurred
 
 
 class SessionLoader:
@@ -416,7 +405,7 @@ class SessionLoader:
         return list(reversed(selected_reversed))
 
     def _format_chat_message_for_history(self, msg: Any) -> dict[str, Any]:
-        """Convert ChatMessage ORM row to dict for agent history + compaction token math."""
+        """Convert ChatMessage ORM row to dict for agent history + token math."""
         msg_data: dict[str, Any] = {
             "id": msg.id,
             "role": msg.role,
@@ -436,7 +425,7 @@ class SessionLoader:
                     parts.append({"type": "text", "text": msg_data["content"]})
                 msg_data["content"] = parts
 
-        # Include persisted assistant metadata for compaction token estimation
+        # Include persisted assistant metadata for token estimation
         if msg.role == "assistant" and getattr(msg, "message_metadata", None):
             try:
                 metadata = json.loads(msg.message_metadata)
@@ -711,15 +700,13 @@ class SessionLoader:
         attached_library_materials: list[dict[str, int]] | None = None,
         text_quotes: list[dict[str, str]] | None = None,
         max_tokens: int = 6000,
-        enable_compaction: bool = True,
     ) -> "SessionData":
         """
-        Load session with optional async compaction.
+        Load chat session and assemble context.
 
         This is the primary method for new code. It combines:
         1. Chat session loading
         2. Context assembly
-        3. Async compaction when needed
 
         Args:
             session: Database session
@@ -730,19 +717,10 @@ class SessionLoader:
             attached_library_materials: List of library material references
             text_quotes: List of user-selected text quotes
             max_tokens: Maximum tokens for context
-            enable_compaction: Whether to enable compaction
 
         Returns:
-            SessionData with chat session, context, and optional compaction result
+            SessionData with chat session and assembled context
         """
-        from agent.context.compaction import (
-            CONTEXT_WINDOW,
-            CompactionSettings,
-            compact_context,
-            estimate_context_tokens,
-            should_compact,
-        )
-
         if self._should_offload_session_work(session):
             # 1 & 2. Load chat session + assemble context in a worker thread with a
             # fresh sync DB session so async request handling stays responsive.
@@ -771,303 +749,4 @@ class SessionLoader:
                 max_tokens,
             )
 
-        # 3. Check and perform compaction (async)
-        if enable_compaction and result.history_messages:
-            settings = CompactionSettings()
-            estimate = estimate_context_tokens(result.history_messages)
-
-            log_with_context(
-                logger,
-                20,
-                "Checking compaction need",
-                total_tokens=estimate.total_tokens,
-                context_window=CONTEXT_WINDOW,
-                reserve_tokens=settings.reserve_tokens,
-            )
-
-            if should_compact(estimate.total_tokens, CONTEXT_WINDOW, settings):
-                previous_summary = self._load_previous_compaction_summary(
-                    session=session,
-                    session_id=result.session_id,
-                )
-                log_with_context(
-                    logger,
-                    20,
-                    "Starting async compaction",
-                    total_tokens=estimate.total_tokens,
-                    has_previous_summary=previous_summary is not None,
-                )
-
-                compaction_result = await compact_context(
-                    result.history_messages,
-                    settings,
-                    previous_summary=previous_summary,
-                )
-
-                if compaction_result:
-                    result.history_messages = self._apply_compaction(
-                        result.history_messages,
-                        compaction_result,
-                    )
-                    result.compaction_result = compaction_result
-                    self._persist_compaction_summary_checkpoint(
-                        session=session,
-                        session_id=result.session_id,
-                        summary=compaction_result.summary,
-                        tokens_before=compaction_result.tokens_before,
-                        tokens_after=compaction_result.tokens_after,
-                        messages_removed=compaction_result.messages_removed,
-                    )
-
-                    log_with_context(
-                        logger,
-                        20,
-                        "Compaction applied to session",
-                        tokens_before=compaction_result.tokens_before,
-                        tokens_after=compaction_result.tokens_after,
-                        messages_removed=compaction_result.messages_removed,
-                    )
-
         return result
-
-    def _load_previous_compaction_summary(
-        self,
-        session: Session,
-        session_id: str | None,
-    ) -> str | None:
-        """Load the latest persisted compaction summary checkpoint if available."""
-        if not session_id:
-            return None
-
-        try:
-            from models import AgentArtifactLedger
-        except Exception:
-            return None
-
-        try:
-            rows = session.exec(
-                select(AgentArtifactLedger.payload)
-                .where(
-                    and_(
-                        AgentArtifactLedger.project_id == self.project_id,
-                        AgentArtifactLedger.session_id == session_id,
-                        AgentArtifactLedger.action == COMPACTION_SUMMARY_ACTION,
-                    )
-                )
-                .order_by(
-                    desc(AgentArtifactLedger.created_at),
-                    desc(AgentArtifactLedger.id),
-                )
-                .limit(5)
-            ).all()
-        except Exception as e:
-            log_with_context(
-                logger,
-                30,  # WARNING
-                "Failed to load previous compaction summary checkpoint",
-                project_id=self.project_id,
-                session_id=session_id,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-            return None
-
-        for row in rows:
-            if not isinstance(row, str) or not row.strip():
-                continue
-
-            payload_text = row.strip()
-            try:
-                payload = json.loads(payload_text)
-            except (TypeError, json.JSONDecodeError):
-                if payload_text:
-                    return payload_text
-                continue
-
-            if isinstance(payload, dict):
-                schema_version = payload.get("schema_version")
-                if schema_version not in (None, COMPACTION_CHECKPOINT_SCHEMA_VERSION):
-                    continue
-
-                summary = payload.get("summary")
-                if isinstance(summary, str) and summary.strip():
-                    return summary.strip()
-
-                nested_data = payload.get("data")
-                if isinstance(nested_data, dict):
-                    nested_summary = nested_data.get("summary")
-                    if isinstance(nested_summary, str) and nested_summary.strip():
-                        return nested_summary.strip()
-
-        return None
-
-    def _persist_compaction_summary_checkpoint(
-        self,
-        session: Session,
-        session_id: str | None,
-        summary: str,
-        tokens_before: int,
-        tokens_after: int,
-        messages_removed: int,
-    ) -> None:
-        """
-        Persist compaction summary checkpoint for incremental compaction.
-
-        Note:
-            This method only stages the ledger row in the current DB session.
-            Commit is handled by the caller/request lifecycle.
-        """
-        if not session_id or not summary.strip():
-            return
-
-        try:
-            from models import AgentArtifactLedger
-        except Exception:
-            return
-
-        payload = json.dumps(
-            {
-                "schema_version": COMPACTION_CHECKPOINT_SCHEMA_VERSION,
-                "summary": summary,
-                "tokens_before": int(tokens_before),
-                "tokens_after": int(tokens_after),
-                "messages_removed": int(messages_removed),
-            },
-            ensure_ascii=False,
-        )
-
-        try:
-            session.add(
-                AgentArtifactLedger(
-                    project_id=self.project_id,
-                    session_id=session_id,
-                    user_id=self.user_id,
-                    action=COMPACTION_SUMMARY_ACTION,
-                    tool_name=COMPACTION_SUMMARY_TOOL_NAME,
-                    artifact_ref=f"compaction:{session_id}",
-                    payload=payload,
-                )
-            )
-        except Exception as e:
-            log_with_context(
-                logger,
-                30,  # WARNING
-                "Failed to persist compaction summary checkpoint",
-                project_id=self.project_id,
-                session_id=session_id,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-
-        self._prune_compaction_summary_checkpoints(
-            session=session,
-            session_id=session_id,
-            keep_latest=AGENT_COMPACTION_CHECKPOINT_RETENTION,
-        )
-
-    def _prune_compaction_summary_checkpoints(
-        self,
-        session: Session,
-        session_id: str,
-        keep_latest: int,
-    ) -> None:
-        """Best-effort pruning to cap persisted checkpoints per session."""
-        if keep_latest <= 0:
-            return
-
-        try:
-            from models import AgentArtifactLedger
-        except Exception:
-            return
-
-        try:
-            session.flush()
-            stale_rows = session.exec(
-                select(AgentArtifactLedger)
-                .where(
-                    and_(
-                        AgentArtifactLedger.project_id == self.project_id,
-                        AgentArtifactLedger.session_id == session_id,
-                        AgentArtifactLedger.action == COMPACTION_SUMMARY_ACTION,
-                    )
-                )
-                .order_by(
-                    desc(AgentArtifactLedger.created_at),
-                    desc(AgentArtifactLedger.id),
-                )
-                .offset(keep_latest)
-            ).all()
-
-            for row in stale_rows:
-                session.delete(row)
-
-            if stale_rows:
-                log_with_context(
-                    logger,
-                    20,
-                    "Pruned stale compaction summary checkpoints",
-                    project_id=self.project_id,
-                    session_id=session_id,
-                    pruned_count=len(stale_rows),
-                    keep_latest=keep_latest,
-                )
-        except Exception as e:
-            log_with_context(
-                logger,
-                30,  # WARNING
-                "Failed to prune compaction summary checkpoints",
-                project_id=self.project_id,
-                session_id=session_id,
-                keep_latest=keep_latest,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-
-    def _apply_compaction(
-        self,
-        messages: list[dict[str, Any]],
-        result: "CompactionResult",
-    ) -> list[dict[str, Any]]:
-        """
-        Apply compaction result to message list.
-
-        Args:
-            messages: Original message list
-            result: Compaction result with summary and cut point
-
-        Returns:
-            New message list with summary at cut point
-        """
-        from agent.context.compaction import create_compaction_summary_message
-
-        # Create summary message
-        summary_msg = create_compaction_summary_message(
-            result.summary,
-            result.tokens_before,
-        )
-
-        # Use messages_removed as a stable fallback when message IDs are unavailable.
-        cut_index = min(max(result.messages_removed, 0), len(messages))
-        matched_by_id = False
-        if result.first_kept_message_id:
-            for i, msg in enumerate(messages):
-                if msg.get("id") == result.first_kept_message_id:
-                    cut_index = i
-                    matched_by_id = True
-                    break
-
-        # Return new message list with summary at cut point
-        new_messages = [summary_msg] + messages[cut_index:]
-
-        log_with_context(
-            logger,
-            20,
-            "Applied compaction to message history",
-            original_count=len(messages),
-            new_count=len(new_messages),
-            messages_removed=len(messages) - len(new_messages),
-            cut_index=cut_index,
-            matched_by_id=matched_by_id,
-        )
-
-        return new_messages

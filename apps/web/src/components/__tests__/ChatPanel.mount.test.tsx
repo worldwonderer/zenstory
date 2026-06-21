@@ -97,8 +97,6 @@ const streamCallbacks = {
   onParallelTaskEnd: vi.fn(),
   onParallelEnd: vi.fn(),
   onSteeringReceived: vi.fn(),
-  onCompactionStart: vi.fn(),
-  onCompactionDone: vi.fn(),
 }
 
 vi.mock('../../hooks/useChatStreaming', () => ({

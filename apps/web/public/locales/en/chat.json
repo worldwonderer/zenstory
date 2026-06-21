@@ -134,9 +134,7 @@
     "handoffMessage": "Handing off to {{agent}}: {{reason}}",
     "parallelStart": "Starting {{count}} parallel tasks",
     "parallelEnd": "Parallel execution complete: {{completed}}/{{total}} done, {{failed}} failed",
-    "steeringReceived": "Supplementary instruction received: {{preview}}",
-    "compactionStart": "Long conversation, compressing context",
-    "compactionDone": "Context compression complete, {{count}} historical messages trimmed"
+    "steeringReceived": "Supplementary instruction received: {{preview}}"
   },
   "tool": {
     "create_file": "Create File",

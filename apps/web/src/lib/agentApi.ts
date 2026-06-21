@@ -197,8 +197,6 @@ export function streamAgentRequest(
     onParallelTaskEnd?: (executionId: string, taskId: string, status: string, resultPreview?: string, error?: string) => void;
     onParallelEnd?: (executionId: string, total: number, completed: number, failed: number, durationMs: number) => void;
     onSteeringReceived?: (messageId: string, preview: string) => void;
-    onCompactionStart?: (tokensBefore: number, messagesCount: number) => void;
-    onCompactionDone?: (tokensAfter: number, messagesRemoved: number, summaryPreview: string) => void;
     onDone?: (data: {
       apply_action?: string;
       refs?: number[];
@@ -631,23 +629,6 @@ export function streamAgentRequest(
                 preview: string;
               };
               callbacks.onSteeringReceived?.(data.message_id, data.preview);
-              break;
-            }
-            case "compaction_start": {
-              const data = event.data as {
-                tokens_before: number;
-                messages_count: number;
-              };
-              callbacks.onCompactionStart?.(data.tokens_before, data.messages_count);
-              break;
-            }
-            case "compaction_done": {
-              const data = event.data as {
-                tokens_after: number;
-                messages_removed: number;
-                summary_preview: string;
-              };
-              callbacks.onCompactionDone?.(data.tokens_after, data.messages_removed, data.summary_preview);
               break;
             }
             case "done": {

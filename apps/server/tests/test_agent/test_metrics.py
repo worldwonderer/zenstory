@@ -15,8 +15,6 @@ from agent.core.metrics import (
     AGENT_REQUESTS_DURATION_MS,
     AGENT_REQUESTS_ERRORS,
     AGENT_REQUESTS_TOTAL,
-    CONTEXT_COMPACTION_TOKENS_SAVED,
-    CONTEXT_COMPACTION_TOTAL,
     CONTEXT_ITEMS_COUNT,
     CONTEXT_TOKENS_TOTAL,
     LLM_CALLS_DURATION_MS,
@@ -159,8 +157,6 @@ class TestMetricNames:
         """Test context metric names."""
         assert CONTEXT_TOKENS_TOTAL == "context.tokens.total"
         assert CONTEXT_ITEMS_COUNT == "context.items.count"
-        assert CONTEXT_COMPACTION_TOTAL == "context.compaction.total"
-        assert CONTEXT_COMPACTION_TOKENS_SAVED == "context.compaction.tokens_saved"
 
     def test_steering_metrics_exist(self):
         """Test steering metric names."""
@@ -259,8 +255,8 @@ class TestAgentServiceMetrics:
     """Test metrics emitted by AgentService.process_stream."""
 
     @pytest.mark.asyncio
-    async def test_process_stream_records_request_context_and_compaction_metrics(self):
-        """Successful request should record request/context/compaction metrics."""
+    async def test_process_stream_records_request_and_context_metrics(self):
+        """Successful request should record request/context metrics."""
         from agent.core.events import content_event
         from agent.service import AgentService
 
@@ -288,12 +284,6 @@ class TestAgentServiceMetrics:
                 token_estimate=256,
             ),
             history_messages=[],
-            compaction_result=SimpleNamespace(
-                tokens_before=900,
-                tokens_after=600,
-                messages_removed=3,
-                summary="summary",
-            ),
         )
         mock_loader = MagicMock()
         mock_loader.load_session_with_compaction = AsyncMock(return_value=session_data)
@@ -334,8 +324,6 @@ class TestAgentServiceMetrics:
         assert counters[AGENT_REQUESTS_TOTAL]["value"] == 1
         assert counters[CONTEXT_TOKENS_TOTAL]["value"] == 256
         assert counters[CONTEXT_ITEMS_COUNT]["value"] == 2
-        assert counters[CONTEXT_COMPACTION_TOTAL]["value"] == 1
-        assert counters[CONTEXT_COMPACTION_TOKENS_SAVED]["value"] == 300
         assert AGENT_REQUESTS_ERRORS not in counters
         assert histograms[AGENT_REQUESTS_DURATION_MS]["summary"]["count"] == 1
 

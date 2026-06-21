@@ -17,7 +17,6 @@ import pytest
 
 from agent.core.events import (
     EventType,
-    compaction_done_event,
     parallel_end_event,
     session_started_event,
     steering_received_event,
@@ -749,23 +748,6 @@ class TestProcessEventPassthrough:
         assert events[0].type == EventType.PARALLEL_END
         assert events[0].data["execution_id"] == "exec-1"
         assert events[0].data["total_tasks"] == 4
-
-    @pytest.mark.asyncio
-    async def test_core_compaction_done_event_passthrough(self, adapter):
-        """Test core compaction_done event is passed through by value."""
-        event = compaction_done_event(
-            tokens_after=2300,
-            messages_removed=12,
-            summary_preview="压缩摘要",
-        )
-
-        events = []
-        async for sse_event in adapter._process_langgraph_event(event):
-            events.append(sse_event)
-
-        assert len(events) == 1
-        assert events[0].type == EventType.COMPACTION_DONE
-        assert events[0].data["messages_removed"] == 12
 
 
 class TestProcessEventError:

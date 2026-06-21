@@ -134,9 +134,7 @@
     "handoffMessage": "交接给 {{agent}}：{{reason}}",
     "parallelStart": "开始并行执行 {{count}} 个任务",
     "parallelEnd": "并行执行结束：{{completed}}/{{total}} 完成，{{failed}} 失败",
-    "steeringReceived": "已接收补充指令：{{preview}}",
-    "compactionStart": "对话较长，正在压缩上下文",
-    "compactionDone": "上下文压缩完成，已精简 {{count}} 条历史消息"
+    "steeringReceived": "已接收补充指令：{{preview}}"
   },
   "tool": {
     "create_file": "创建文件",

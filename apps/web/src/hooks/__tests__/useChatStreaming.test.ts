@@ -962,24 +962,6 @@ describe('useChatStreaming', () => {
         expect(result.current.streamRenderItems[0].type).toBe('thinking_status')
         expect(result.current.streamRenderItems[0].content).toContain('chat:workflow.steeringReceived')
       })
-
-      it('adds thinking_status item for compaction_done', () => {
-        const { result } = renderHook(() => useChatStreaming())
-        const deps = createMockDeps()
-        const callbacks = result.current.getStreamCallbacks(deps)
-
-        act(() => {
-          callbacks.onCompactionDone?.(2300, 12, 'summary')
-        })
-
-        act(() => {
-          vi.advanceTimersByTime(100)
-        })
-
-        expect(result.current.streamRenderItems).toHaveLength(1)
-        expect(result.current.streamRenderItems[0].type).toBe('thinking_status')
-        expect(result.current.streamRenderItems[0].content).toContain('chat:workflow.compactionDone')
-      })
     })
 
     describe('onToolResult callback', () => {
