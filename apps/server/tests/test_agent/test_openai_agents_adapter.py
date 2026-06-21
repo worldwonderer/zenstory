@@ -357,3 +357,96 @@ def test_normalize_omits_tool_use_and_tool_result_blocks():
     blob = str(messages)
     assert "create_file" not in blob and "secret" not in blob
     assert "工具调用" not in blob and "工具结果" not in blob
+
+
+def _called(name, call_id):
+    return SimpleNamespace(
+        type="run_item_stream_event",
+        name="tool_called",
+        item=SimpleNamespace(
+            raw_item={"name": name, "call_id": call_id, "arguments": "{}"}
+        ),
+    )
+
+
+def _output(call_id, text="ok"):
+    return SimpleNamespace(
+        type="run_item_stream_event",
+        name="tool_output",
+        item=SimpleNamespace(raw_item={"call_id": call_id}, output=text),
+    )
+
+
+async def test_runner_wires_intra_run_trimmer_into_run_config():
+    """The intra-run tool-output trimmer is attached as the model-input filter."""
+    from agent.openai_agents.intra_run_trimmer import IntraRunToolOutputTrimmer
+    from agent.openai_agents.runner import run_openai_agents_streaming_agent
+
+    class FakeResult:
+        raw_responses = []
+
+        def cancel(self, mode="immediate"):
+            pass
+
+        async def stream_events(self):
+            if False:  # empty stream
+                yield
+
+    state = {"user_message": "hi", "messages": [], "system_prompt": "base"}
+    with (
+        patch("agent.openai_agents.runner._build_agent", return_value=object()),
+        patch("agents.Runner.run_streamed", return_value=FakeResult()) as mock_run,
+    ):
+        _ = [
+            event
+            async for event in run_openai_agents_streaming_agent(
+                state=state, agent_type="writer", system_prompt="system"
+            )
+        ]
+
+    run_config = mock_run.call_args.kwargs["run_config"]
+    assert isinstance(run_config.call_model_input_filter, IntraRunToolOutputTrimmer)
+    assert run_config.tool_execution.max_function_tool_concurrency == 1
+
+
+async def test_readonly_cocall_metric_counts_each_turn_once():
+    """Regression lock: the read-only co-call metric counts each turn once, not per output."""
+    from agent.core.metrics import (
+        TOOL_READONLY_COCALL_TOTAL,
+        TOOL_READONLY_TURNS_TOTAL,
+        get_metrics_collector,
+    )
+    from agent.openai_agents.runner import run_openai_agents_streaming_agent
+
+    class FakeResult:
+        raw_responses = []
+
+        def cancel(self, mode="immediate"):
+            pass
+
+        async def stream_events(self):
+            # Turn 1: two read-only calls then their two outputs -> ONE turn, ONE co-call.
+            yield _called("hybrid_search", "c1")
+            yield _called("query_files", "c2")
+            yield _output("c1")
+            yield _output("c2")
+            # Turn 2: a single non-read-only call -> ONE turn, NO co-call.
+            yield _called("create_file", "c3")
+            yield _output("c3")
+
+    state = {"user_message": "x", "messages": [], "system_prompt": "base"}
+    with (
+        patch("agent.openai_agents.runner._build_agent", return_value=object()),
+        patch("agents.Runner.run_streamed", return_value=FakeResult()),
+    ):
+        _ = [
+            event
+            async for event in run_openai_agents_streaming_agent(
+                state=state, agent_type="writer", system_prompt="system"
+            )
+        ]
+
+    counters = get_metrics_collector().get_all_metrics()["counters"]
+    # Pre-fix bug: TURNS counted every tool_output (would be 3). Correct is 2 turns.
+    assert counters[TOOL_READONLY_TURNS_TOTAL]["value"] == 2
+    assert counters[TOOL_READONLY_COCALL_TOTAL]["value"] == 1

@@ -47,6 +47,12 @@ TOOL_CALLS_ERRORS: Final[str] = "tool.calls.errors"
 TOOL_READONLY_COCALL_TOTAL: Final[str] = "tool.readonly.cocall.total"
 TOOL_READONLY_TURNS_TOTAL: Final[str] = "tool.readonly.turns.total"
 
+# Intra-run tool-output trimming (call_model_input_filter). Counts how many
+# stale tool outputs were previewed and how many characters were reclaimed
+# from the model input across the lifetime of the process.
+TOOL_OUTPUT_TRIMMED_TOTAL: Final[str] = "tool.output.trimmed.total"
+TOOL_OUTPUT_TRIMMED_CHARS: Final[str] = "tool.output.trimmed.chars"
+
 # Context metrics
 CONTEXT_TOKENS_TOTAL: Final[str] = "context.tokens.total"
 CONTEXT_ITEMS_COUNT: Final[str] = "context.items.count"

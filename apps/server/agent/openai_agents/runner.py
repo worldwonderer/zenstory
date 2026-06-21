@@ -307,6 +307,8 @@ async def run_openai_agents_streaming_agent(
         from agents import RunConfig, Runner, ToolExecutionConfig
         from agents.exceptions import MaxTurnsExceeded
 
+        from .intra_run_trimmer import IntraRunToolOutputTrimmer
+
         sdk_agent = _build_agent(agent_type, system_prompt)
         result = Runner.run_streamed(
             sdk_agent,
@@ -318,6 +320,12 @@ async def run_openai_agents_streaming_agent(
             # execution to preserve the previous sequential contract and avoid Session races.
             run_config=RunConfig(
                 tool_execution=ToolExecutionConfig(max_function_tool_concurrency=1),
+                # Preview stale intra-run retrieval outputs (query_files / hybrid_search)
+                # so a long multi-tool run doesn't re-send every bulky search dump on each
+                # subsequent model call. Keeps the freshest outputs full; control-flow tool
+                # outputs are never touched. See intra_run_trimmer for why the stock SDK
+                # ToolOutputTrimmer is a no-op for this project's history shape.
+                call_model_input_filter=IntraRunToolOutputTrimmer(),
             ),
         )
 
@@ -362,6 +370,13 @@ async def run_openai_agents_streaming_agent(
                         }
                     )
                     # Read-only co-call tracking: count read-only calls before outputs arrive.
+                    # A tool_called arriving after a turn's outputs starts a NEW turn, so
+                    # reset the per-turn tracking here (not in the tool_output block) — that
+                    # keeps the turn guard set for the whole turn and avoids counting every
+                    # tool_output as a separate turn.
+                    if _turn_has_output:
+                        _turn_has_output = False
+                        _turn_readonly_pending = 0
                     if tool_name in _READONLY_TOOLS:
                         _turn_readonly_pending += 1
                     yield StreamEvent(
@@ -375,6 +390,9 @@ async def run_openai_agents_streaming_agent(
                     )
                 elif event_name == "tool_output":
                     # First tool_output of this turn: flush the pending read-only count.
+                    # The guard stays set for the rest of the turn; the next tool_called
+                    # batch resets it. This counts each turn exactly once (the previous
+                    # in-block reset made it count every tool_output as a turn).
                     if not _turn_has_output:
                         _turn_has_output = True
                         from agent.core.metrics import (
@@ -386,9 +404,6 @@ async def run_openai_agents_streaming_agent(
                         _mc.increment_counter(TOOL_READONLY_TURNS_TOTAL)
                         if _turn_readonly_pending >= 2:
                             _mc.increment_counter(TOOL_READONLY_COCALL_TOTAL)
-                        # Reset for next turn (next batch of tool_called events).
-                        _turn_readonly_pending = 0
-                        _turn_has_output = False
                     call_id, result_text = _tool_output_payload(item)
                     tool_name = tool_names_by_call_id.get(call_id, "")
                     tool_input = tool_inputs_by_call_id.get(call_id, {})
