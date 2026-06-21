@@ -28,9 +28,9 @@
   "input": {
     "placeholder": "描述你想创作的角色、场景或剧情...",
     "placeholderWhileProcessing": "AI 正在生成，你可以先输入，结束后再发送…",
-    "steerPlaceholder": "追加补充指令，将在下一步生效…",
+    "steerPlaceholder": "追加补充指令…",
     "steerButton": "追加指令",
-    "steerHint": "AI 生成中：发送的内容会作为补充指令，在下一步生效",
+    "steerHint": "AI 生成中，发送后将在下一步生效",
     "steerSent": "已追加，将在下一步生效",
     "steerFailed": "追加失败，请重试",
     "mode": {
