@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+from agent.core.progress_channel import reset_progress_emitter, set_progress_emitter
 from agent.core.workflow_events import StreamEvent, StreamEventType
 from agent.graph.state import WritingState
 from agent.openai_agents.events import (
@@ -267,6 +270,30 @@ async def _inject_initial_steering(
         )
 
 
+async def _pump_sdk_events(result: Any, run_queue: "asyncio.Queue[tuple[str, Any]]") -> None:
+    """Forward SDK stream events onto the shared run queue, tagged by kind.
+
+    Runs as a background task so the consumer can interleave live in-tool
+    progress events (pushed onto the same queue via the progress channel) with
+    the SDK's own events. The SDK parks ``stream_events()`` while a tool's
+    callback runs, so without this pump those progress events could not be
+    surfaced until the tool returned.
+
+    Terminal protocol: on a stream exception, emits ``("error", exc)`` so the
+    consumer can re-raise it in the original control flow; ``("done", None)`` is
+    always emitted last so the consumer's drain loop can terminate.
+    """
+    try:
+        async for sdk_event in result.stream_events():
+            run_queue.put_nowait(("sdk", sdk_event))
+    except asyncio.CancelledError:
+        raise
+    except BaseException as exc:  # noqa: BLE001 — forwarded to consumer for unified handling
+        run_queue.put_nowait(("error", exc))
+    finally:
+        run_queue.put_nowait(("done", None))
+
+
 async def run_openai_agents_streaming_agent(
     state: WritingState,
     agent_type: str,
@@ -303,6 +330,10 @@ async def run_openai_agents_streaming_agent(
         data={"model": DEEPSEEK_WRITING_MODEL, "agent_type": agent_type},
     )
 
+    # Shared queue interleaving SDK events (via _pump_sdk_events) with live
+    # in-tool progress events (via the progress channel emitter installed below).
+    run_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+    pump_task: asyncio.Task[None] | None = None
     try:
         from agents import RunConfig, Runner, ToolExecutionConfig
         from agents.exceptions import MaxTurnsExceeded
@@ -310,27 +341,51 @@ async def run_openai_agents_streaming_agent(
         from .intra_run_trimmer import IntraRunToolOutputTrimmer
 
         sdk_agent = _build_agent(agent_type, system_prompt)
-        result = Runner.run_streamed(
-            sdk_agent,
-            input=api_messages,
-            max_turns=AGENT_TOOL_CALL_MAX_ITERATIONS,
-            # When DeepSeek emits multiple tool_calls in one turn, the SDK would run them
-            # concurrently (asyncio.create_task). Project tools share a single SQLAlchemy
-            # Session via ToolContext, which is NOT safe for concurrent use. Serialize tool
-            # execution to preserve the previous sequential contract and avoid Session races.
-            run_config=RunConfig(
-                tool_execution=ToolExecutionConfig(max_function_tool_concurrency=1),
-                # Preview stale intra-run retrieval outputs (query_files / hybrid_search)
-                # so a long multi-tool run doesn't re-send every bulky search dump on each
-                # subsequent model call. Keeps the freshest outputs full; control-flow tool
-                # outputs are never touched. See intra_run_trimmer for why the stock SDK
-                # ToolOutputTrimmer is a no-op for this project's history shape.
-                call_model_input_filter=IntraRunToolOutputTrimmer(),
-            ),
+        # Install the progress emitter only across run_streamed. The SDK creates
+        # its background task synchronously inside run_streamed, copying the
+        # current context (with the emitter) into it; that snapshot is
+        # independent of ours, so we reset immediately afterwards to keep this
+        # generator's context clean and avoid cross-yield contextvar tokens.
+        emitter_token = set_progress_emitter(
+            lambda event: run_queue.put_nowait(("progress", event))
         )
+        try:
+            result = Runner.run_streamed(
+                sdk_agent,
+                input=api_messages,
+                max_turns=AGENT_TOOL_CALL_MAX_ITERATIONS,
+                # When DeepSeek emits multiple tool_calls in one turn, the SDK would run them
+                # concurrently (asyncio.create_task). Project tools share a single SQLAlchemy
+                # Session via ToolContext, which is NOT safe for concurrent use. Serialize tool
+                # execution to preserve the previous sequential contract and avoid Session races.
+                run_config=RunConfig(
+                    tool_execution=ToolExecutionConfig(max_function_tool_concurrency=1),
+                    # Preview stale intra-run retrieval outputs (query_files / hybrid_search)
+                    # so a long multi-tool run doesn't re-send every bulky search dump on each
+                    # subsequent model call. Keeps the freshest outputs full; control-flow tool
+                    # outputs are never touched. See intra_run_trimmer for why the stock SDK
+                    # ToolOutputTrimmer is a no-op for this project's history shape.
+                    call_model_input_filter=IntraRunToolOutputTrimmer(),
+                ),
+            )
+        finally:
+            reset_progress_emitter(emitter_token)
+
+        pump_task = asyncio.create_task(_pump_sdk_events(result, run_queue))
 
         try:
-            async for sdk_event in result.stream_events():
+            while True:
+                kind, payload = await run_queue.get()
+                if kind == "progress":
+                    # Pre-built workflow/SSE event emitted from inside a tool call
+                    # (e.g. parallel_execute sub-task progress). Forward as-is.
+                    yield payload
+                    continue
+                if kind == "done":
+                    break
+                if kind == "error":
+                    raise payload
+                sdk_event = payload
                 event_type = getattr(sdk_event, "type", "")
 
                 if event_type == "raw_response_event":
@@ -525,6 +580,12 @@ async def run_openai_agents_streaming_agent(
             data={"error": str(exc), "error_type": type(exc).__name__},
         )
     finally:
+        # Stop the SDK pump if it is still running (e.g. the consumer aborted
+        # early before the stream drained), so it cannot outlive this run.
+        if pump_task is not None and not pump_task.done():
+            pump_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await pump_task
         _append_assistant_turn_to_state_messages(
             state,
             api_messages,

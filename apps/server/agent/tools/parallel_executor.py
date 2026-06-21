@@ -122,6 +122,18 @@ def _make_error(error: str) -> dict[str, Any]:
     }
 
 
+def _result_preview(result: Any, max_length: int = 100) -> str | None:
+    """Build a short preview of a task result for live progress events."""
+    if result is None:
+        return None
+    try:
+        text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = str(result)
+    text = text.strip()
+    return text[:max_length] if text else None
+
+
 async def handle_write_chapter(params: dict[str, Any]) -> dict[str, Any]:
     """Handle write_chapter task type - creates a draft file."""
     from agent.tools.mcp_tools import ToolContext, create_file
@@ -271,6 +283,13 @@ async def execute_parallel(
     Returns:
         ParallelExecutionResult as MCP-formatted dict
     """
+    from agent.core.events import (
+        parallel_end_event,
+        parallel_start_event,
+        parallel_task_end_event,
+        parallel_task_start_event,
+    )
+    from agent.core.progress_channel import emit_progress
     from agent.tools.mcp_tools import ToolContext
 
     # Check if there's a pending empty file - parallel execution not allowed
@@ -305,6 +324,15 @@ async def execute_parallel(
         for i, t in enumerate(limited_tasks)
     ]
 
+    # Announce parallel execution start so the UI can render live progress.
+    emit_progress(
+        parallel_start_event(
+            execution_id=execution_id,
+            task_count=len(subagent_tasks),
+            task_descriptions=[t.description for t in subagent_tasks],
+        )
+    )
+
     # Map task types to handlers
     task_handlers: dict[str, Callable] = {
         "write_chapter": handle_write_chapter,
@@ -320,6 +348,14 @@ async def execute_parallel(
         async with semaphore:
             task.status = "running"
             task.started_at = datetime.now()
+            emit_progress(
+                parallel_task_start_event(
+                    execution_id=execution_id,
+                    task_id=task.id,
+                    task_type=task.task_type,
+                    description=task.description,
+                )
+            )
 
             try:
                 handler = task_handlers.get(task.task_type)
@@ -371,6 +407,15 @@ async def execute_parallel(
                 logger.error(f"parallel_execute task failed: {e}", exc_info=True)
             finally:
                 task.completed_at = datetime.now()
+                emit_progress(
+                    parallel_task_end_event(
+                        execution_id=execution_id,
+                        task_id=task.id,
+                        status=task.status,
+                        result_preview=_result_preview(task.result),
+                        error=task.error,
+                    )
+                )
 
             return task
 
@@ -402,9 +447,24 @@ async def execute_parallel(
         ],
     }
 
+    # Announce completion with the aggregate outcome for the UI summary line.
+    emit_progress(
+        parallel_end_event(
+            execution_id=execution_id,
+            total_tasks=result_data["total_tasks"],
+            completed=result_data["completed"],
+            failed=result_data["failed"],
+            duration_ms=duration_ms,
+        )
+    )
+
     logger.info(
         f"parallel_execute completed: {result_data['completed']}/{result_data['total_tasks']} "
         f"tasks in {duration_ms}ms"
     )
 
+    # Always return a "success" envelope so the per-task breakdown (data.tasks[])
+    # survives the stream adapter, which drops `data` for non-success tool
+    # results. Partial/total failure is conveyed by data.any_failed / data.failed
+    # and per-task status+error, which both the LLM and the UI card read.
     return _make_result({"status": "success", "data": result_data})

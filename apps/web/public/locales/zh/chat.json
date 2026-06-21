@@ -28,6 +28,11 @@
   "input": {
     "placeholder": "描述你想创作的角色、场景或剧情...",
     "placeholderWhileProcessing": "AI 正在生成，你可以先输入，结束后再发送…",
+    "steerPlaceholder": "追加补充指令，将在下一步生效…",
+    "steerButton": "追加指令",
+    "steerHint": "AI 生成中：发送的内容会作为补充指令，在下一步生效",
+    "steerSent": "已追加，将在下一步生效",
+    "steerFailed": "追加失败，请重试",
     "mode": {
       "label": "生成模式",
       "fast": "快速",
@@ -133,6 +138,8 @@
     "stopReason": "原因：{{reason}}",
     "handoffMessage": "交接给 {{agent}}：{{reason}}",
     "parallelStart": "开始并行执行 {{count}} 个任务",
+    "parallelTaskCompleted": "✓ {{description}}",
+    "parallelTaskFailed": "✗ {{description}}：{{error}}",
     "parallelEnd": "并行执行结束：{{completed}}/{{total}} 完成，{{failed}} 失败",
     "steeringReceived": "已接收补充指令：{{preview}}"
   },
@@ -143,6 +150,8 @@
     "delete_file": "删除文件",
     "query_files": "查询文件",
     "update_project": "更新项目状态",
+    "parallel_execute": "并行执行",
+    "parallel_summary": "并行执行 {{total}} 个任务：{{completed}} 成功，{{failed}} 失败",
     "processing": "处理中",
     "processing_ellipsis": "处理中...",
     "created": "已创建{{type}}",

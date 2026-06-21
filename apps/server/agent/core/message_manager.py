@@ -65,6 +65,7 @@ class MessageManager:
         assistant_stop_reason: str | None = None,
         assistant_usage: dict[str, Any] | None = None,
         assistant_status_cards: list[dict[str, Any]] | None = None,
+        steering_messages: list[str] | None = None,
     ) -> str | None:
         """
         Save messages to chat history.
@@ -78,6 +79,8 @@ class MessageManager:
             reasoning_content: Thinking/reasoning content from the model
             assistant_stop_reason: Model stop reason from MESSAGE_END
             assistant_usage: Model usage payload from MESSAGE_END
+            steering_messages: Steering messages injected mid-run, persisted as
+                their own user-role turns so they survive into later requests
 
         Returns:
             Persisted assistant message ID when history save succeeds
@@ -93,6 +96,7 @@ class MessageManager:
                 assistant_stop_reason,
                 assistant_usage,
                 assistant_status_cards,
+                steering_messages,
             )
         return self._save_messages_with_session(
             session,
@@ -104,6 +108,7 @@ class MessageManager:
             assistant_stop_reason,
             assistant_usage,
             assistant_status_cards,
+            steering_messages,
         )
 
     def _should_offload_session_work(self, session: Session) -> bool:
@@ -122,6 +127,7 @@ class MessageManager:
         assistant_stop_reason: str | None = None,
         assistant_usage: dict[str, Any] | None = None,
         assistant_status_cards: list[dict[str, Any]] | None = None,
+        steering_messages: list[str] | None = None,
     ) -> str | None:
         """Persist chat history with a fresh sync DB session."""
         with create_session() as session:
@@ -135,6 +141,7 @@ class MessageManager:
                 assistant_stop_reason,
                 assistant_usage,
                 assistant_status_cards,
+                steering_messages,
             )
 
     def _save_messages_with_session(
@@ -148,6 +155,7 @@ class MessageManager:
         assistant_stop_reason: str | None = None,
         assistant_usage: dict[str, Any] | None = None,
         assistant_status_cards: list[dict[str, Any]] | None = None,
+        steering_messages: list[str] | None = None,
     ) -> str | None:
         """Core chat-history persistence logic using the provided session."""
         from models import ChatMessage, ChatSession
@@ -246,6 +254,23 @@ class MessageManager:
             )
             session.add(user_chat_message)
 
+            # Persist steering messages injected mid-run as their own user-role
+            # turns (between the original user message and the assistant reply),
+            # so node-boundary steering survives into the next request's history
+            # instead of being dropped when the stream ends.
+            steering_saved = 0
+            for steering_text in steering_messages or []:
+                if not isinstance(steering_text, str) or not steering_text.strip():
+                    continue
+                session.add(
+                    ChatMessage(
+                        session_id=chat_session.id,
+                        role="user",
+                        content=steering_text,
+                    )
+                )
+                steering_saved += 1
+
             # Save assistant message
             tool_calls_json = self._serialize_tool_calls(tool_calls)
             assistant_metadata_json = self._serialize_message_metadata(
@@ -264,7 +289,7 @@ class MessageManager:
             )
             session.add(assistant_chat_message)
 
-            chat_session.message_count += 2
+            chat_session.message_count += 2 + steering_saved
             chat_session.updated_at = utcnow()
             session.commit()
 

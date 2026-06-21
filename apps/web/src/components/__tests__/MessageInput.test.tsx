@@ -468,4 +468,104 @@ describe('MessageInput', () => {
     await user.click(screen.getByRole('button', { name: /chat:input.mode.label/i }))
     expect(onGenerationModeChange).toHaveBeenCalledWith('fast')
   })
+
+  describe('steering (追加消息)', () => {
+    const steerProps = {
+      sendDisabled: true,
+      onCancel: vi.fn(),
+      onSteer: vi.fn(),
+      canSteer: true,
+    }
+
+    it('shows the steering placeholder and hint while generating', () => {
+      render(<MessageInput {...defaultProps} {...steerProps} />)
+      expect(
+        screen.getByPlaceholderText('chat:input.steerPlaceholder')
+      ).toBeInTheDocument()
+      expect(screen.getByTestId('steer-hint')).toBeInTheDocument()
+    })
+
+    it('keeps the textarea editable while generating', () => {
+      render(<MessageInput {...defaultProps} {...steerProps} />)
+      expect(
+        screen.getByPlaceholderText('chat:input.steerPlaceholder')
+      ).not.toBeDisabled()
+    })
+
+    it('shows cancel when empty, and a steer button once text is typed', async () => {
+      const user = userEvent.setup({ delay: null })
+      render(<MessageInput {...defaultProps} {...steerProps} />)
+
+      // Empty input while streaming -> cancel button, no steer button.
+      expect(screen.queryByTestId('steer-button')).not.toBeInTheDocument()
+
+      await user.type(
+        screen.getByPlaceholderText('chat:input.steerPlaceholder'),
+        '把主角改名为林川'
+      )
+      expect(screen.getByTestId('steer-button')).toBeInTheDocument()
+    })
+
+    it('dispatches onSteer (not onSend) when sending during generation', async () => {
+      const user = userEvent.setup({ delay: null })
+      const onSend = vi.fn()
+      const onSteer = vi.fn()
+      render(
+        <MessageInput
+          {...defaultProps}
+          onSend={onSend}
+          sendDisabled={true}
+          onCancel={vi.fn()}
+          onSteer={onSteer}
+          canSteer={true}
+        />
+      )
+
+      const textarea = screen.getByPlaceholderText('chat:input.steerPlaceholder')
+      await user.type(textarea, '补充指令')
+      await user.click(screen.getByTestId('steer-button'))
+
+      expect(onSteer).toHaveBeenCalledWith('补充指令')
+      expect(onSend).not.toHaveBeenCalled()
+      await waitFor(() => expect(textarea).toHaveValue(''))
+    })
+
+    it('steers on Enter while generating', async () => {
+      const user = userEvent.setup({ delay: null })
+      const onSend = vi.fn()
+      const onSteer = vi.fn()
+      render(
+        <MessageInput
+          {...defaultProps}
+          onSend={onSend}
+          sendDisabled={true}
+          onCancel={vi.fn()}
+          onSteer={onSteer}
+          canSteer={true}
+        />
+      )
+
+      const textarea = screen.getByPlaceholderText('chat:input.steerPlaceholder')
+      await user.type(textarea, '下一步加一段悬念{Enter}')
+
+      expect(onSteer).toHaveBeenCalledWith('下一步加一段悬念')
+      expect(onSend).not.toHaveBeenCalled()
+    })
+
+    it('does not offer steering when canSteer is false', () => {
+      render(
+        <MessageInput
+          {...defaultProps}
+          sendDisabled={true}
+          onCancel={vi.fn()}
+          onSteer={vi.fn()}
+          canSteer={false}
+        />
+      )
+      expect(screen.queryByTestId('steer-hint')).not.toBeInTheDocument()
+      expect(
+        screen.queryByPlaceholderText('chat:input.steerPlaceholder')
+      ).not.toBeInTheDocument()
+    })
+  })
 })

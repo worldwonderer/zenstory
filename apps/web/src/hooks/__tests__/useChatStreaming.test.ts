@@ -928,21 +928,51 @@ describe('useChatStreaming', () => {
         expect(result.current.streamRenderItems[0].content).toContain('chat:workflow.parallelStart')
       })
 
-      it('does not add stream nodes for parallel task start/end (noise reduction)', () => {
+      it('renders no node on parallel task start, one line on task end (live progress)', () => {
+        const { result } = renderHook(() => useChatStreaming())
+        const deps = createMockDeps()
+        const callbacks = result.current.getStreamCallbacks(deps)
+
+        // Task start only records the description; it renders no stream node.
+        act(() => {
+          callbacks.onParallelTaskStart?.('exec-1', 'task-1', 'tool_call', '章节检查')
+        })
+        act(() => {
+          vi.advanceTimersByTime(100)
+        })
+        expect(result.current.streamRenderItems).toHaveLength(0)
+
+        // Task end renders a single per-task completion line.
+        act(() => {
+          callbacks.onParallelTaskEnd?.('exec-1', 'task-1', 'completed')
+        })
+        act(() => {
+          vi.advanceTimersByTime(100)
+        })
+        expect(result.current.streamRenderItems).toHaveLength(1)
+        expect(result.current.streamRenderItems[0].type).toBe('thinking_status')
+        expect(result.current.streamRenderItems[0].content).toContain(
+          'chat:workflow.parallelTaskCompleted'
+        )
+      })
+
+      it('uses the failed label and includes the error on a failed parallel task', () => {
         const { result } = renderHook(() => useChatStreaming())
         const deps = createMockDeps()
         const callbacks = result.current.getStreamCallbacks(deps)
 
         act(() => {
-          callbacks.onParallelTaskStart?.('exec-1', 'task-1', 'tool_call', '章节检查')
-          callbacks.onParallelTaskEnd?.('exec-1', 'task-1', 'completed')
+          callbacks.onParallelTaskStart?.('exec-1', 'task-1', 'tool_call', '删除草稿')
+          callbacks.onParallelTaskEnd?.('exec-1', 'task-1', 'failed', undefined, 'File not found')
         })
-
         act(() => {
           vi.advanceTimersByTime(100)
         })
 
-        expect(result.current.streamRenderItems).toHaveLength(0)
+        expect(result.current.streamRenderItems).toHaveLength(1)
+        expect(result.current.streamRenderItems[0].content).toContain(
+          'chat:workflow.parallelTaskFailed'
+        )
       })
 
       it('adds thinking_status item for steering_received', () => {

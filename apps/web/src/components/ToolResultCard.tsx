@@ -42,6 +42,7 @@ import {
   BookOpen,
   ScrollText,
   Settings,
+  Layers,
 } from 'lucide-react';
 import type { Conflict, AgentResponse } from '../types';
 
@@ -217,6 +218,11 @@ const getToolDisplayInfo = (toolName: string, t: (key: string) => string): { ico
       return {
         icon: <Settings className="w-4 h-4 text-[hsl(var(--warning))]" />,
         label: t('chat:tool.update_project')
+      };
+    case 'parallel_execute':
+      return {
+        icon: <Layers className="w-4 h-4 text-[hsl(var(--accent-primary))]" />,
+        label: t('chat:tool.parallel_execute')
       };
     default:
       return { 
@@ -810,6 +816,78 @@ const ToolResultCardComponent: React.FC<ToolResultCardProps> = ({
       );
     }
     
+    // parallel_execute success - show per-subtask status so partial failures
+    // are visible (the aggregate envelope stays "success" to preserve data).
+    if (toolName === 'parallel_execute' && data) {
+      const tasks = Array.isArray(data.tasks)
+        ? (data.tasks as Array<Record<string, unknown>>)
+        : [];
+      const total = (data.total_tasks as number) ?? tasks.length;
+      const completed =
+        (data.completed as number) ??
+        tasks.filter((task) => task.status === 'completed').length;
+      const failed =
+        (data.failed as number) ??
+        tasks.filter((task) => task.status === 'failed').length;
+      const anyFailed = failed > 0;
+      const accentClass = anyFailed
+        ? 'text-[hsl(var(--warning))]'
+        : 'text-[hsl(var(--success-light))]';
+
+      return (
+        <div
+          className={`bg-[hsl(var(--result-bg))] border rounded-lg px-3 py-2 ${
+            anyFailed
+              ? 'border-[hsl(var(--warning))]'
+              : 'border-[hsl(var(--result-border))]'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Layers className={`w-4 h-4 ${accentClass}`} />
+            <span className={`text-sm ${accentClass}`}>
+              {t('chat:tool.parallel_summary', { total, completed, failed })}
+            </span>
+          </div>
+          {tasks.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {tasks.map((task, index) => {
+                const isFailed = task.status === 'failed';
+                const desc =
+                  (task.description as string) ||
+                  (task.type as string) ||
+                  `#${index + 1}`;
+                return (
+                  <div
+                    key={(task.id as string) || index}
+                    className="flex items-start gap-2 text-xs"
+                  >
+                    {isFailed ? (
+                      <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[hsl(var(--error))]" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[hsl(var(--success-light))]" />
+                    )}
+                    <div className="min-w-0">
+                      <span className="text-[hsl(var(--text-secondary))]">
+                        [{task.type as string}]
+                      </span>{' '}
+                      <span className="text-[hsl(var(--text-primary))] break-words">
+                        {desc}
+                      </span>
+                      {isFailed && task.error ? (
+                        <div className="text-[hsl(var(--error))] break-words">
+                          {task.error as string}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // Default fallback - show minimal success message without technical details
     const { label } = getToolDisplayInfo(toolName, t);
     return (

@@ -99,6 +99,13 @@ vi.mock('react-i18next', () => ({
   }),
 }))
 
+// ToolResultCard imports the real i18n singleton (for i18n.language in the
+// quote helper); stub it so the module's initReactI18next side effect does not
+// run under the partial react-i18next mock.
+vi.mock('../../lib/i18n', () => ({
+  default: { language: 'zh' },
+}))
+
 describe('ToolResultCard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -690,5 +697,83 @@ describe('ToolResultCard', () => {
       <ToolResultCard type={'unknown' as 'tool_call' | 'tool_result' | 'conflict'} />
     )
     expect(container.firstChild).toBeNull()
+  })
+
+  describe('Tool Result (parallel_execute)', () => {
+    const parallelResult = {
+      execution_id: 'par-1',
+      total_tasks: 2,
+      completed: 1,
+      failed: 1,
+      any_failed: true,
+      tasks: [
+        {
+          id: 't0',
+          type: 'edit_file',
+          description: '编辑第一章',
+          status: 'completed',
+          result: {},
+          error: null,
+        },
+        {
+          id: 't1',
+          type: 'delete_file',
+          description: '删除草稿',
+          status: 'failed',
+          result: null,
+          error: 'File not found',
+        },
+      ],
+    }
+
+    it('renders each sub-task description', () => {
+      render(
+        <ToolResultCard
+          type="tool_result"
+          toolName="parallel_execute"
+          result={parallelResult}
+        />
+      )
+      expect(screen.getByText('编辑第一章')).toBeInTheDocument()
+      expect(screen.getByText('删除草稿')).toBeInTheDocument()
+    })
+
+    it('surfaces a failed sub-task error (partial failure is visible)', () => {
+      render(
+        <ToolResultCard
+          type="tool_result"
+          toolName="parallel_execute"
+          result={parallelResult}
+        />
+      )
+      expect(screen.getByText('File not found')).toBeInTheDocument()
+    })
+
+    it('renders all-success runs without an error row', () => {
+      render(
+        <ToolResultCard
+          type="tool_result"
+          toolName="parallel_execute"
+          result={{
+            execution_id: 'par-2',
+            total_tasks: 1,
+            completed: 1,
+            failed: 0,
+            any_failed: false,
+            tasks: [
+              {
+                id: 't0',
+                type: 'query_files',
+                description: '检索资料',
+                status: 'completed',
+                result: {},
+                error: null,
+              },
+            ],
+          }}
+        />
+      )
+      expect(screen.getByText('检索资料')).toBeInTheDocument()
+    })
   })
 })
