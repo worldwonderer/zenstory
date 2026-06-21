@@ -6,6 +6,21 @@ this module provides functionality to summarize older messages while
 keeping recent context intact.
 
 Based on the design pattern from pi-mono/packages/coding-agent/src/core/compaction/compaction.ts
+
+--- Runtime behavior under default config ---
+
+Under default configuration AGENT_COMPACTION_ENABLED is False, which makes this
+subsystem explicitly inert: should_compact() always returns False and no LLM
+summarization or artifact-ledger work is ever triggered.
+
+Why? The compaction threshold is CONTEXT_WINDOW - reserve_tokens ≈ 183 616 tokens,
+but chat history is loaded under AGENT_CHAT_HISTORY_TOKEN_BUDGET (~6 000 tokens).
+The history therefore never approaches the threshold, so the summarizer path was
+de-facto dead code. The flag makes this reality visible and testable.
+
+To enable compaction set AGENT_COMPACTION_ENABLED=true in the environment *and*
+raise AGENT_CHAT_HISTORY_TOKEN_BUDGET high enough that should_compact() can
+actually fire in production.
 """
 
 import asyncio
@@ -14,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any, Final, ParamSpec, TypeVar
 
 from agent.utils.token_utils import estimate_message_tokens as estimate_tokens
+from config.agent_runtime import AGENT_COMPACTION_ENABLED
 from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
@@ -181,6 +197,16 @@ def should_compact(
     """
     Check if compaction should trigger based on context usage.
 
+    Returns False unconditionally when AGENT_COMPACTION_ENABLED is False (the
+    default). Under default config the loaded-history budget (~6k tokens) is far
+    below the compaction threshold (~183k tokens), so the summarizer path would
+    never fire anyway — this flag makes that explicit and keeps the subsystem
+    inert until a deployment deliberately opts in.
+
+    When AGENT_COMPACTION_ENABLED is True, the original threshold logic applies:
+    compaction triggers when context_tokens exceeds context_window minus the
+    reserve.
+
     Args:
         context_tokens: Current context token count
         context_window: Maximum context window size
@@ -189,6 +215,9 @@ def should_compact(
     Returns:
         True if compaction should be performed
     """
+    if not AGENT_COMPACTION_ENABLED:
+        return False
+
     if not settings.enabled:
         return False
 

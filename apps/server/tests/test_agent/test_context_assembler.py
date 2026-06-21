@@ -665,7 +665,7 @@ class TestContextAssembler:
 
         # Some items should be trimmed
         assert result.original_item_count > 0
-        assert result.token_estimate <= 500 * 1.5  # Allow some margin
+        assert result.token_estimate <= 500 * 2.0  # Allow margin for accurate tokenizer
         # Trimmed count should be less than or equal to original
         assert result.trimmed_item_count <= result.original_item_count
 

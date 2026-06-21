@@ -130,35 +130,21 @@ def evaluate_agent_output(content: str, agent_type: str = "unknown") -> OutputEv
 
     lowered = text.lower()
 
-    # Explicit markers remain strongest signals (backward compatibility)
+    # Explicit [TASK_COMPLETE] marker is the ONLY completion signal.
+    # Chinese substring heuristics (任务已完成, 已完成, etc.) are intentionally
+    # removed: they produced false positives whenever those phrases appeared
+    # mid-text.  Mirror the clarification approach: structured signal only.
     has_complete_marker = lowered.endswith("[task_complete]")
     complete_score = 1.0 if has_complete_marker else 0.0
     clarification_score = 0.0
 
-    # Conservative heuristic completion signals
-    completion_phrases = (
-        "任务已完成",
-        "已完成",
-        "最终结果",
-        "总结如下",
-        "修改完成",
-    )
-    if not has_complete_marker and any(phrase in text for phrase in completion_phrases):
-        # Longer structured output is more likely to be a final answer
-        complete_score = max(complete_score, 0.75 if len(text) >= 120 else 0.6)
-
     should_clarify = False
-    should_complete = complete_score >= 0.75 and not should_clarify
+    should_complete = has_complete_marker and not should_clarify
 
     # Lightweight consistency score for observability/debugging
     consistency_score = max(0.0, 1.0 - abs(complete_score - clarification_score))
 
-    if has_complete_marker:
-        reason = "explicit_complete_marker"
-    elif should_complete:
-        reason = "heuristic_completion"
-    else:
-        reason = "insufficient_signal"
+    reason = "explicit_complete_marker" if has_complete_marker else "insufficient_signal"
 
     return OutputEvaluationResult(
         complete_score=complete_score,

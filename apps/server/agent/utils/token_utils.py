@@ -2,20 +2,79 @@
 Token estimation utilities.
 
 Provides unified token estimation for the agent system.
+Prefers tiktoken when available; falls back to a language-aware ratio
+(~2 chars/token for predominantly-Chinese text, ~4 for Latin).
 """
 
 from typing import Any
 
-# Approximate characters per token (conservative for Chinese/English mix)
+# Approximate characters per token for Latin text
 CHARS_PER_TOKEN = 4
 
+# ---------------------------------------------------------------------------
+# tiktoken encoder cache
+# ---------------------------------------------------------------------------
+
+_tiktoken_encoder = None
+_tiktoken_available: bool | None = None  # None = not yet probed
+
+
+def _get_tiktoken_encoder():
+    """Return a cached tiktoken encoder, or None if tiktoken is unavailable."""
+    global _tiktoken_encoder, _tiktoken_available
+    if _tiktoken_available is None:
+        try:
+            import tiktoken  # noqa: PLC0415
+
+            _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
+            _tiktoken_available = True
+        except Exception:
+            _tiktoken_available = False
+    return _tiktoken_encoder if _tiktoken_available else None
+
+
+# ---------------------------------------------------------------------------
+# CJK detection helpers
+# ---------------------------------------------------------------------------
+
+def _cjk_fraction(text: str) -> float:
+    """Return the fraction of characters that are CJK codepoints."""
+    if not text:
+        return 0.0
+    cjk_count = sum(
+        1
+        for ch in text
+        if (
+            "一" <= ch <= "鿿"  # CJK Unified Ideographs
+            or "㐀" <= ch <= "䶿"  # CJK Extension A
+            or " 0" <= ch <= "⩭f"  # CJK Extension B
+            or "　" <= ch <= "〿"  # CJK Symbols and Punctuation
+            or "＀" <= ch <= "￯"  # Fullwidth / Halfwidth Forms
+        )
+    )
+    return cjk_count / len(text)
+
+
+def _chars_per_token_for(text: str) -> float:
+    """Return the appropriate chars-per-token ratio for the given text."""
+    fraction = _cjk_fraction(text)
+    # Treat as predominantly Chinese when >40 % of chars are CJK
+    if fraction > 0.4:
+        return 2.0
+    return float(CHARS_PER_TOKEN)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def estimate_text_tokens(text: str) -> int:
     """
     Estimate token count for plain text.
 
-    Uses simple character-based estimation.
-    For more accurate results, use tiktoken.
+    Uses tiktoken (cl100k_base) when available; otherwise falls back to a
+    language-aware character ratio (~2 chars/token for Chinese-heavy text,
+    ~4 chars/token for Latin text).
 
     Args:
         text: Text to estimate
@@ -25,7 +84,17 @@ def estimate_text_tokens(text: str) -> int:
     """
     if not text:
         return 0
-    return max(1, len(text) // CHARS_PER_TOKEN)
+
+    enc = _get_tiktoken_encoder()
+    if enc is not None:
+        try:
+            return max(1, len(enc.encode(text)))
+        except Exception:
+            pass  # fall through to heuristic
+
+    # Language-aware fallback
+    cpt = _chars_per_token_for(text)
+    return max(1, int(len(text) / cpt))
 
 
 def estimate_message_tokens(message: dict[str, Any]) -> int:
@@ -43,50 +112,55 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
     Returns:
         Estimated token count
     """
-    chars = 0
     role = message.get("role", "")
     content = message.get("content", "")
 
     if role == "user":
         if isinstance(content, str):
-            chars = len(content)
+            return estimate_text_tokens(content)
         elif isinstance(content, list):
+            total = 0
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    chars += len(block.get("text", ""))
-        return max(1, chars // CHARS_PER_TOKEN)
+                    total += estimate_text_tokens(block.get("text", ""))
+            return max(1, total)
+        return 0
 
     elif role == "assistant":
         if isinstance(content, list):
+            total = 0
             for block in content:
                 if isinstance(block, dict):
                     block_type = block.get("type", "")
                     if block_type == "text":
-                        chars += len(block.get("text", ""))
+                        total += estimate_text_tokens(block.get("text", ""))
                     elif block_type == "thinking":
-                        chars += len(block.get("thinking", ""))
+                        total += estimate_text_tokens(block.get("thinking", ""))
                     elif block_type == "tool_use":
                         name = block.get("name", "")
                         args = block.get("input", {})
-                        chars += len(name) + len(str(args))
+                        total += estimate_text_tokens(name + str(args))
+            return max(1, total)
         elif isinstance(content, str):
-            chars = len(content)
-        return max(1, chars // CHARS_PER_TOKEN)
+            return estimate_text_tokens(content)
+        return 0
 
     elif role in ("tool_result", "custom"):
         if isinstance(content, str):
-            chars = len(content)
+            return estimate_text_tokens(content)
         elif isinstance(content, list):
+            total = 0
             for block in content:
                 if isinstance(block, dict):
                     if block.get("type") == "text":
-                        chars += len(block.get("text", ""))
+                        total += estimate_text_tokens(block.get("text", ""))
                     elif block.get("type") == "image":
-                        chars += 4800  # ~1200 tokens per image
-        return max(1, chars // CHARS_PER_TOKEN)
+                        total += 1200  # ~1200 tokens per image
+            return max(1, total)
+        return 0
 
     # Default case
     if isinstance(content, str):
-        return max(1, len(content) // CHARS_PER_TOKEN)
+        return estimate_text_tokens(content)
 
     return 0

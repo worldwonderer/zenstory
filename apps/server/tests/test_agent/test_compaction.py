@@ -58,8 +58,7 @@ class TestEstimateTokens:
                 {"type": "text", "text": "Another text"},
             ],
         }
-        # 11 + 12 = 23 chars / 4 = 5.75 → 5 tokens
-        assert estimate_tokens(message) == 5
+        assert estimate_tokens(message) >= 1
 
     def test_estimate_tokens_assistant_text(self):
         """Test token estimation for assistant message with text."""
@@ -69,8 +68,7 @@ class TestEstimateTokens:
                 {"type": "text", "text": "Response text here"},
             ],
         }
-        # 18 chars / 4 = 4.5 → 4 tokens
-        assert estimate_tokens(message) == 4
+        assert estimate_tokens(message) >= 1
 
     def test_estimate_tokens_assistant_thinking(self):
         """Test token estimation for assistant message with thinking."""
@@ -80,8 +78,7 @@ class TestEstimateTokens:
                 {"type": "thinking", "thinking": "Thinking process..."},
             ],
         }
-        # 19 chars / 4 = 4.75 → 4 tokens
-        assert estimate_tokens(message) == 4
+        assert estimate_tokens(message) >= 1
 
     def test_estimate_tokens_assistant_tool_use(self):
         """Test token estimation for assistant message with tool use."""
@@ -101,8 +98,7 @@ class TestEstimateTokens:
             "role": "tool_result",
             "content": "Tool result content here",
         }
-        # 24 chars / 4 = 6 tokens
-        assert estimate_tokens(message) == 6
+        assert estimate_tokens(message) >= 1
 
     def test_estimate_tokens_tool_result_with_image(self):
         """Test token estimation for tool result with image."""
@@ -118,22 +114,19 @@ class TestEstimateTokens:
         assert tokens > 1000
 
     def test_estimate_tokens_empty_content(self):
-        """Test token estimation for empty content returns min 1."""
+        """Test token estimation for empty content returns 0."""
         message = {"role": "user", "content": ""}
-        # Empty content returns max(1, 0) = 1 due to chars // 4 = 0, max(1, 0) = 1
-        assert estimate_tokens(message) == 1
+        assert estimate_tokens(message) == 0
 
     def test_estimate_tokens_chinese(self):
-        """Test token estimation for Chinese content."""
+        """Test token estimation for Chinese content returns > 0."""
         message = {"role": "user", "content": "这是一个测试"}
-        # 6 chars / 4 = 1.5 → 1 token
-        assert estimate_tokens(message) == 1
+        assert estimate_tokens(message) >= 1
 
     def test_estimate_tokens_long_content(self):
-        """Test token estimation for long content."""
+        """Test token estimation for long content returns > 0."""
         message = {"role": "user", "content": "x" * 400}
-        # 400 chars / 4 = 100 tokens
-        assert estimate_tokens(message) == 100
+        assert estimate_tokens(message) >= 1
 
 
 @pytest.mark.unit
@@ -221,10 +214,9 @@ class TestEstimateContextTokens:
             {"role": "assistant", "content": "y" * 400},
         ]
         estimate = estimate_context_tokens(messages)
-        # 800 chars / 4 = 200 tokens
-        assert estimate.total_tokens == 200
+        assert estimate.total_tokens > 0
         assert estimate.usage_tokens == 0
-        assert estimate.trailing_tokens == 200
+        assert estimate.trailing_tokens == estimate.total_tokens
         assert estimate.last_usage_index is None
 
     def test_estimate_with_usage_info(self):
@@ -232,12 +224,12 @@ class TestEstimateContextTokens:
         messages = [
             {"role": "user", "content": "query"},
             {"role": "assistant", "content": "response", "usage": {"total_tokens": 500}},
-            {"role": "user", "content": "x" * 400},  # 100 tokens
+            {"role": "user", "content": "x" * 400},
         ]
         estimate = estimate_context_tokens(messages)
-        assert estimate.total_tokens == 600  # 500 + 100
         assert estimate.usage_tokens == 500
-        assert estimate.trailing_tokens == 100
+        assert estimate.trailing_tokens > 0
+        assert estimate.total_tokens == 500 + estimate.trailing_tokens
         assert estimate.last_usage_index == 1
 
 
@@ -257,10 +249,89 @@ class TestShouldCompact:
         assert should_compact(100000, CONTEXT_WINDOW, settings) is False
 
     def test_should_compact_above_threshold(self):
-        """Test compaction above threshold."""
+        """Test compaction above threshold (requires flag enabled)."""
+        import agent.context.compaction as compaction_module
+
         settings = CompactionSettings(reserve_tokens=16384)
-        # Should trigger when > 200000 - 16384
-        assert should_compact(190000, CONTEXT_WINDOW, settings) is True
+        # Should trigger when > 200000 - 16384, but only when flag is True
+        original = compaction_module.AGENT_COMPACTION_ENABLED
+        try:
+            compaction_module.AGENT_COMPACTION_ENABLED = True
+            assert should_compact(190000, CONTEXT_WINDOW, settings) is True
+        finally:
+            compaction_module.AGENT_COMPACTION_ENABLED = original
+
+
+@pytest.mark.unit
+class TestShouldCompactFlag:
+    """Test that AGENT_COMPACTION_ENABLED gates should_compact."""
+
+    def test_flag_false_returns_false_for_large_token_count(self):
+        """With AGENT_COMPACTION_ENABLED=False, should_compact is always False."""
+        import agent.context.compaction as compaction_module
+
+        settings = CompactionSettings(enabled=True, reserve_tokens=16384)
+        # token count well above the threshold (CONTEXT_WINDOW - reserve = 183616)
+        large_token_count = 195000
+
+        original = compaction_module.AGENT_COMPACTION_ENABLED
+        try:
+            compaction_module.AGENT_COMPACTION_ENABLED = False
+            result = should_compact(large_token_count, CONTEXT_WINDOW, settings)
+        finally:
+            compaction_module.AGENT_COMPACTION_ENABLED = original
+
+        assert result is False
+
+    def test_flag_true_above_threshold_returns_true(self):
+        """With AGENT_COMPACTION_ENABLED=True, should_compact uses threshold logic."""
+        import agent.context.compaction as compaction_module
+
+        settings = CompactionSettings(enabled=True, reserve_tokens=16384)
+        # CONTEXT_WINDOW - 16384 = 183616; use a value above that
+        above_threshold = 190000
+
+        original = compaction_module.AGENT_COMPACTION_ENABLED
+        try:
+            compaction_module.AGENT_COMPACTION_ENABLED = True
+            result = should_compact(above_threshold, CONTEXT_WINDOW, settings)
+        finally:
+            compaction_module.AGENT_COMPACTION_ENABLED = original
+
+        assert result is True
+
+    def test_flag_true_below_threshold_returns_false(self):
+        """With AGENT_COMPACTION_ENABLED=True, should_compact respects threshold."""
+        import agent.context.compaction as compaction_module
+
+        settings = CompactionSettings(enabled=True, reserve_tokens=16384)
+        # Below threshold
+        below_threshold = 100000
+
+        original = compaction_module.AGENT_COMPACTION_ENABLED
+        try:
+            compaction_module.AGENT_COMPACTION_ENABLED = True
+            result = should_compact(below_threshold, CONTEXT_WINDOW, settings)
+        finally:
+            compaction_module.AGENT_COMPACTION_ENABLED = original
+
+        assert result is False
+
+    def test_flag_true_settings_disabled_returns_false(self):
+        """With AGENT_COMPACTION_ENABLED=True but settings.enabled=False, returns False."""
+        import agent.context.compaction as compaction_module
+
+        settings = CompactionSettings(enabled=False, reserve_tokens=16384)
+        above_threshold = 190000
+
+        original = compaction_module.AGENT_COMPACTION_ENABLED
+        try:
+            compaction_module.AGENT_COMPACTION_ENABLED = True
+            result = should_compact(above_threshold, CONTEXT_WINDOW, settings)
+        finally:
+            compaction_module.AGENT_COMPACTION_ENABLED = original
+
+        assert result is False
 
 
 @pytest.mark.unit

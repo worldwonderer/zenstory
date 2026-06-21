@@ -77,7 +77,11 @@ AGENT_TOOLS_MAP: dict[str, list[dict[str, Any]]] = {
 
 def get_agent_tools(agent_type: str) -> list[dict[str, Any]]:
     """Get Tool schema list by agent type."""
-    return AGENT_TOOLS_MAP.get(agent_type, AGENT_TOOLS_MAP["writer"])
+    tools = AGENT_TOOLS_MAP.get(agent_type, AGENT_TOOLS_MAP["writer"])
+
+    # Defensive copy: never hand callers the cached AGENT_TOOLS_MAP list object,
+    # so a caller that mutates the returned list can't corrupt the shared cache.
+    return list(tools)
 
 
 def validate_registry_alignment() -> dict[str, list[str]]:

@@ -210,7 +210,7 @@ async def run_writing_workflow_streaming(
     Args:
         state: Initial workflow state
         thread_id: Optional thread ID for logging
-        max_iterations: Maximum number of agent handoffs (default 5)
+        max_iterations: Maximum number of agent handoffs (default: AGENT_COLLABORATION_MAX_ITERATIONS from config/agent_runtime.py)
         auto_review_threshold: Character count threshold for auto-triggering quality reviewer
         get_steering_messages: Optional async callback to retrieve steering messages
 
@@ -674,11 +674,14 @@ async def run_writing_workflow_streaming(
                 if pending_handoff_event_data is not None:
                     event_context = str(pending_handoff_event_data.get("context") or "").strip()
                 base_context = (handoff_context or event_context).strip()
-                original_request = str(state.get("router_message") or state.get("user_message") or "").strip()
+                # The original user request is already the first turn in history (same as
+                # the non-reviewer branch); re-embedding it here would duplicate it.
+                # Point the reviewer at the draft via the file inventory (already appended
+                # as inventory_text which includes file ids) instead of inlining the full
+                # draft body, which can reach ~9k chars and pile up across review rounds.
                 review_payload = _format_review_payload(_extract_review_payload(agent_content))
                 handoff_context = (
                     f"{base_context}\n\n"
-                    f"[原始用户需求]\n{original_request}\n\n"
                     f"[待审查内容]\n{review_payload}"
                 ).strip()
 

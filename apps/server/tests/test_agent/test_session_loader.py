@@ -469,7 +469,7 @@ class TestSessionLoaderHistoryBudget:
         monkeypatch,
     ):
         """Should keep newest messages and preserve chronological order after truncation."""
-        monkeypatch.setattr("agent.core.session_loader.AGENT_CHAT_HISTORY_TOKEN_BUDGET", 12)
+        monkeypatch.setattr("agent.core.session_loader.AGENT_CHAT_HISTORY_TOKEN_BUDGET", 40)
         _add_chat_messages(
             db_session,
             session_loader_test_data["chat_session"].id,
@@ -748,6 +748,188 @@ class TestSessionLoaderHistoryBudget:
         # remaining window should stay chronological
         turn_indexes = [int(text.split("-")[1]) for text in contents]
         assert turn_indexes == sorted(turn_indexes)
+
+    def test_tool_call_turn_replays_as_text_breadcrumb(
+        self,
+        db_session: Session,
+        session_loader_test_data,
+        monkeypatch,
+    ):
+        """A prior tool-call turn should replay as a plain-text breadcrumb naming the file id."""
+        monkeypatch.setattr("agent.core.session_loader.AGENT_CHAT_HISTORY_TOKEN_BUDGET", 500)
+        chat_session_id = session_loader_test_data["chat_session"].id
+
+        db_session.add(
+            ChatMessage(
+                session_id=chat_session_id,
+                role="user",
+                content="帮我创建第一章大纲",
+            )
+        )
+        db_session.add(
+            ChatMessage(
+                session_id=chat_session_id,
+                role="assistant",
+                content="好的，已经为你建立大纲。",
+                tool_calls=json.dumps(
+                    [
+                        {
+                            "id": "call_1",
+                            "name": "create_file",
+                            "arguments": {"title": "第一章大纲", "file_type": "outline"},
+                            "status": "success",
+                            "result": {"id": "file-abc-123", "title": "第一章大纲"},
+                            "error": None,
+                        }
+                    ]
+                ),
+            )
+        )
+        db_session.commit()
+
+        loader = SessionLoader(
+            project_id=session_loader_test_data["project"].id,
+            user_id=session_loader_test_data["user"].id,
+        )
+        session_data = loader.load_chat_session(db_session)
+
+        assistant_msg = session_data.history_messages[-1]
+        assert assistant_msg["role"] == "assistant"
+
+        content = assistant_msg["content"]
+        content_text = (
+            content
+            if isinstance(content, str)
+            else "\n".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        )
+
+        # Breadcrumb is plain TEXT and names the created file by id.
+        assert "已创建文件" in content_text
+        assert "file-abc-123" in content_text
+        assert "第一章大纲" in content_text
+        # The original prose reply is preserved alongside the breadcrumb.
+        assert "已经为你建立大纲" in content_text
+
+    def test_tool_call_breadcrumb_emits_no_raw_tool_blocks(
+        self,
+        db_session: Session,
+        session_loader_test_data,
+        monkeypatch,
+    ):
+        """Replayed history must never contain raw tool_use/tool_result blocks or orphaned tool_call_id."""
+        from agent.openai_agents.runner import normalize_messages_for_openai_agents
+
+        monkeypatch.setattr("agent.core.session_loader.AGENT_CHAT_HISTORY_TOKEN_BUDGET", 500)
+        chat_session_id = session_loader_test_data["chat_session"].id
+
+        db_session.add(
+            ChatMessage(
+                session_id=chat_session_id,
+                role="user",
+                content="把第二章删掉",
+            )
+        )
+        db_session.add(
+            ChatMessage(
+                session_id=chat_session_id,
+                role="assistant",
+                content="",
+                tool_calls=json.dumps(
+                    [
+                        {
+                            "id": "call_del_1",
+                            "name": "delete_file",
+                            "arguments": {"id": "file-del-9"},
+                            "status": "success",
+                            "result": {"id": "file-del-9", "title": "第二章"},
+                            "error": None,
+                        }
+                    ]
+                ),
+            )
+        )
+        db_session.commit()
+
+        loader = SessionLoader(
+            project_id=session_loader_test_data["project"].id,
+            user_id=session_loader_test_data["user"].id,
+        )
+        session_data = loader.load_chat_session(db_session)
+
+        # Even with empty prose, the breadcrumb keeps the turn visible.
+        assistant_msg = session_data.history_messages[-1]
+        breadcrumb_content = assistant_msg["content"]
+        breadcrumb_text = (
+            breadcrumb_content
+            if isinstance(breadcrumb_content, str)
+            else json.dumps(breadcrumb_content, ensure_ascii=False)
+        )
+        assert "已删除文件" in breadcrumb_text
+        assert "file-del-9" in breadcrumb_text
+
+        # Normalizing for the SDK must produce ONLY plain user/assistant text —
+        # no tool_use / tool_result blocks and therefore no orphaned tool_call_id.
+        normalized = normalize_messages_for_openai_agents(session_data.history_messages)
+        for message in normalized:
+            assert set(message.keys()) == {"role", "content"}
+            assert message["role"] in {"user", "assistant"}
+            assert isinstance(message["content"], str)
+            assert "tool_use" not in message["content"]
+            assert "tool_result" not in message["content"]
+            assert "tool_call_id" not in message["content"]
+            assert "call_del_1" not in message["content"]
+
+    def test_failed_tool_call_turn_emits_no_breadcrumb(
+        self,
+        db_session: Session,
+        session_loader_test_data,
+        monkeypatch,
+    ):
+        """A failed tool call should not synthesize a misleading 'created file' breadcrumb."""
+        monkeypatch.setattr("agent.core.session_loader.AGENT_CHAT_HISTORY_TOKEN_BUDGET", 500)
+        chat_session_id = session_loader_test_data["chat_session"].id
+
+        db_session.add(
+            ChatMessage(
+                session_id=chat_session_id,
+                role="user",
+                content="创建文件",
+            )
+        )
+        db_session.add(
+            ChatMessage(
+                session_id=chat_session_id,
+                role="assistant",
+                content="抱歉，创建失败了。",
+                tool_calls=json.dumps(
+                    [
+                        {
+                            "id": "call_err",
+                            "name": "create_file",
+                            "arguments": {"title": "失败文件"},
+                            "status": "error",
+                            "result": None,
+                            "error": "permission denied",
+                        }
+                    ]
+                ),
+            )
+        )
+        db_session.commit()
+
+        loader = SessionLoader(
+            project_id=session_loader_test_data["project"].id,
+            user_id=session_loader_test_data["user"].id,
+        )
+        session_data = loader.load_chat_session(db_session)
+
+        assistant_msg = session_data.history_messages[-1]
+        assert assistant_msg["content"] == "抱歉，创建失败了。"
+        assert "已创建文件" not in str(assistant_msg["content"])
 
     def test_load_chat_session_allows_superuser_cross_project(
         self,

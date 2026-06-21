@@ -201,3 +201,146 @@ class TestNormalizeRouterPayload:
         assert normalized["agent_type"] == "planner"
         assert normalized["workflow_type"] == "quick"
         assert normalized["confidence"] == 0.0
+
+
+@pytest.mark.unit
+class TestExtractRouterPayloadUnifiedJsonRepair:
+    """5.2: verify unified JSON-repair path handles malformed/markdown-wrapped outputs."""
+
+    def test_markdown_fenced_json_is_extracted(self):
+        """JSON inside a markdown code fence should be parsed correctly."""
+        from agent.graph.router import _extract_router_payload
+
+        text = '```json\n{"agent_type":"writer","workflow_type":"quick","reason":"simple","confidence":0.8}\n```'
+        payload = _extract_router_payload(text)
+
+        assert payload.get("agent_type") == "writer"
+        assert payload.get("workflow_type") == "quick"
+
+    def test_multi_object_text_prefers_routing_keyed_object(self):
+        """When text contains multiple JSON objects, prefer the one with routing keys."""
+        from agent.graph.router import _extract_router_payload
+
+        text = (
+            'note {"foo":"bar"}\n'
+            '{"agent_type":"planner","workflow_type":"standard","reason":"需要规划","confidence":0.9}'
+        )
+        payload = _extract_router_payload(text)
+
+        assert payload.get("agent_type") == "planner"
+        assert payload.get("workflow_type") == "standard"
+
+    def test_unrelated_json_returns_fallback_object(self):
+        """A JSON object without routing keys is still returned as best-effort fallback."""
+        from agent.graph.router import _extract_router_payload
+
+        payload = _extract_router_payload('{"foo":"bar"}')
+
+        # Must return the dict (not empty), normalization handles defaults.
+        assert isinstance(payload, dict)
+
+    def test_legacy_two_line_still_works(self):
+        """Non-JSON text with agent/workflow on separate lines still parses."""
+        from agent.graph.router import _extract_router_payload
+
+        payload = _extract_router_payload("writer\nquick")
+
+        assert payload.get("agent_type") == "writer"
+        assert payload.get("workflow_type") == "quick"
+
+
+@pytest.mark.integration
+class TestRouterNodeSdkOutputTypeFlag:
+    """5.1: flag-guarded SDK output_type path in router_node."""
+
+    async def test_flag_off_uses_chat_completions_path(self):
+        """When AGENT_ROUTER_USE_OUTPUT_TYPE is False, _route_with_deepseek_chat is called."""
+        from agent.graph.router import router_node
+
+        route_response = {
+            "content": [{"type": "text", "text": '{"agent_type":"writer","workflow_type":"quick"}'}]
+        }
+        with (
+            patch("agent.graph.router.AGENT_ROUTER_USE_OUTPUT_TYPE", False),
+            patch("agent.graph.router._route_with_deepseek_chat", AsyncMock(return_value=route_response)) as mock_chat,
+            patch("agent.graph.router._route_with_sdk_output_type", AsyncMock()) as mock_sdk,
+        ):
+            result = await router_node({"user_message": "write something"})
+
+        mock_chat.assert_called_once()
+        mock_sdk.assert_not_called()
+        assert result["current_agent"] == "writer"
+
+    async def test_flag_on_well_formed_sdk_result_returns_decision(self):
+        """When flag ON and SDK returns a valid RouterDecision, it is used directly."""
+        from agent.graph.router import RouterDecision, router_node
+
+        sdk_decision = RouterDecision(
+            agent_type="planner",
+            workflow_type="standard",
+            reason="sdk path",
+            confidence=0.9,
+        )
+        with (
+            patch("agent.graph.router.AGENT_ROUTER_USE_OUTPUT_TYPE", True),
+            patch("agent.graph.router._route_with_sdk_output_type", AsyncMock(return_value=sdk_decision)),
+            patch("agent.graph.router._route_with_deepseek_chat", AsyncMock()) as mock_chat,
+        ):
+            result = await router_node({"user_message": "plan a story"})
+
+        mock_chat.assert_not_called()
+        assert result["current_agent"] == "planner"
+        assert result["workflow_plan"] == "standard"
+        assert result["routing_metadata"]["reason"] == "sdk path"
+
+    async def test_flag_on_sdk_failure_falls_back_to_tolerant_parser(self):
+        """When flag ON but SDK path returns None, tolerant parser is used as fallback."""
+        from agent.graph.router import router_node
+
+        route_response = {
+            "content": [{"type": "text", "text": '{"agent_type":"writer","workflow_type":"quick"}'}]
+        }
+        with (
+            patch("agent.graph.router.AGENT_ROUTER_USE_OUTPUT_TYPE", True),
+            # SDK path returns None (simulates any failure inside _route_with_sdk_output_type)
+            patch("agent.graph.router._route_with_sdk_output_type", AsyncMock(return_value=None)),
+            patch("agent.graph.router._route_with_deepseek_chat", AsyncMock(return_value=route_response)) as mock_chat,
+        ):
+            result = await router_node({"user_message": "write something"})
+
+        mock_chat.assert_called_once()
+        assert result["current_agent"] == "writer"
+        assert result["workflow_plan"] == "quick"
+
+
+@pytest.mark.unit
+class TestRouteWithSdkOutputTypeInternalFallback:
+    """5.1: _route_with_sdk_output_type returns None on exceptions/bad output."""
+
+    async def test_returns_none_on_exception(self):
+        """Any exception inside the SDK call makes _route_with_sdk_output_type return None."""
+        from agent.graph.router import _route_with_sdk_output_type
+
+        with patch("agent.graph.router.get_deepseek_chat_model", side_effect=RuntimeError("no sdk")):
+            result = await _route_with_sdk_output_type("hello")
+
+        assert result is None
+
+    async def test_returns_none_when_final_output_is_wrong_type(self):
+        """If Runner.run returns a non-RouterDecision final_output, return None."""
+        from unittest.mock import MagicMock
+
+        from agent.graph.router import _route_with_sdk_output_type
+
+        mock_result = MagicMock()
+        mock_result.final_output = {"not": "a RouterDecision"}
+
+        with (
+            patch("agent.graph.router.get_deepseek_chat_model", return_value=MagicMock()),
+            patch("agents.Agent", MagicMock()),
+            patch("agents.Runner") as mock_runner_cls,
+        ):
+            mock_runner_cls.run = AsyncMock(return_value=mock_result)
+            result = await _route_with_sdk_output_type("hello")
+
+        assert result is None

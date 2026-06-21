@@ -456,7 +456,153 @@ class SessionLoader:
                     if synthesized_content and not str(msg_data.get("content") or "").strip():
                         msg_data["content"] = synthesized_content
 
+        # Tool-turn breadcrumbs (cross-request tool memory).
+        #
+        # ChatMessage.tool_calls persists what the assistant DID last turn
+        # (file create/edit/delete), but on a new request the agent otherwise
+        # only sees the prose reply — it has no record that it created/edited a
+        # file. We synthesize a COMPACT assistant TEXT breadcrumb here so that
+        # memory survives across requests.
+        #
+        # CRITICAL: this is plain TEXT, never raw tool_use/tool_result blocks.
+        # Re-emitting structured tool blocks from a prior turn risks orphaned
+        # tool_call_id errors in the SDK (see the comment in
+        # openai_agents/runner.py:extract_text_from_message_content). Mirrors the
+        # text-synthesis pattern used for status cards above.
+        if msg.role == "assistant" and getattr(msg, "tool_calls", None):
+            breadcrumb = self._build_tool_calls_history_content(msg.tool_calls)
+            if breadcrumb:
+                self._append_breadcrumb_to_content(msg_data, breadcrumb)
+
         return msg_data
+
+    def _append_breadcrumb_to_content(
+        self,
+        msg_data: dict[str, Any],
+        breadcrumb: str,
+    ) -> None:
+        """Attach a tool-turn breadcrumb as plain assistant text content."""
+        content = msg_data.get("content")
+
+        if isinstance(content, list):
+            # Reasoning/structured content already present — append a text block.
+            content.append({"type": "text", "text": breadcrumb})
+            return
+
+        existing_text = str(content or "").strip()
+        if existing_text:
+            msg_data["content"] = f"{content}\n\n{breadcrumb}"
+        else:
+            msg_data["content"] = breadcrumb
+
+    def _build_tool_calls_history_content(self, tool_calls_raw: Any) -> str:
+        """
+        Synthesize a compact text breadcrumb from persisted ChatMessage.tool_calls.
+
+        Summarizes file create/edit/delete operations by title + id so the agent
+        remembers what it did on prior turns. Tool arguments and full results are
+        intentionally NOT dumped — only a one-line summary per file operation.
+        Returns an empty string when there is nothing worth recording.
+        """
+        if isinstance(tool_calls_raw, str):
+            try:
+                tool_calls = json.loads(tool_calls_raw)
+            except (TypeError, json.JSONDecodeError):
+                return ""
+        else:
+            tool_calls = tool_calls_raw
+
+        if not isinstance(tool_calls, list):
+            return ""
+
+        force_en = (os.getenv("AGENT_HISTORY_BREADCRUMB_LANG") or "").strip().lower().startswith("en")
+
+        lines: list[str] = []
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+
+            name = str(tc.get("name") or "").strip()
+            if name not in {"create_file", "edit_file", "delete_file"}:
+                continue
+
+            status = str(tc.get("status") or "").strip().lower()
+            if status in {"error", "failed", "failure"} or tc.get("error"):
+                continue
+
+            file_id = self._extract_breadcrumb_file_id(tc)
+            title = self._extract_breadcrumb_title(tc)
+
+            line = self._format_breadcrumb_line(name, title, file_id, force_en=force_en)
+            if line:
+                lines.append(line)
+
+        if not lines:
+            return ""
+
+        header = "[Previous tool actions]" if force_en else "[此前的工具操作]"
+        return header + "\n" + "\n".join(lines)
+
+    @staticmethod
+    def _extract_breadcrumb_file_id(tc: dict[str, Any]) -> str | None:
+        """Resolve the file id from a persisted tool-call record (result first, then args)."""
+        result = tc.get("result")
+        if isinstance(result, dict):
+            for key in ("id", "file_id", "fileId"):
+                value = result.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+        args = tc.get("arguments")
+        if isinstance(args, dict):
+            for key in ("id", "file_id", "fileId"):
+                value = args.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
+
+    @staticmethod
+    def _extract_breadcrumb_title(tc: dict[str, Any]) -> str | None:
+        """Resolve a human-readable file title from a persisted tool-call record."""
+        result = tc.get("result")
+        if isinstance(result, dict):
+            value = result.get("title")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        args = tc.get("arguments")
+        if isinstance(args, dict):
+            value = args.get("title")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _format_breadcrumb_line(
+        name: str,
+        title: str | None,
+        file_id: str | None,
+        *,
+        force_en: bool,
+    ) -> str:
+        """Format a single compact breadcrumb line for a file operation."""
+        title_part = f"《{title}》" if title else ("(untitled)" if force_en else "（未命名）")
+        id_part = f" (id={file_id})" if file_id else ""
+
+        if force_en:
+            verb = {
+                "create_file": "Created file",
+                "edit_file": "Edited file",
+                "delete_file": "Deleted file",
+            }[name]
+            return f"- {verb} {title_part}{id_part}"
+
+        verb = {
+            "create_file": "已创建文件",
+            "edit_file": "已编辑文件",
+            "delete_file": "已删除文件",
+        }[name]
+        return f"- {verb} {title_part}{id_part}"
 
     def _build_status_cards_history_content(
         self,
