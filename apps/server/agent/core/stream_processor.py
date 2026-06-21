@@ -43,6 +43,22 @@ ESCAPED_FILE_PATTERNS = [
 # Buffer size limit (1MB)
 BUFFER_MAX_SIZE = 1024 * 1024
 
+# Turn-control / workflow markers that belong to the model's chat narration and
+# must never be persisted as file content. If an unterminated <file> body carries
+# one of these, it means chat text (handoff summaries, a trailing [TASK_COMPLETE],
+# cross-agent narration) leaked into the file-write state instead of real prose.
+CONTROL_MARKERS: tuple[str, ...] = (
+    "[task_complete]",
+    "[workflow_stopped]",
+    "[clarification_needed]",
+)
+
+
+def _contains_control_marker(text: str) -> bool:
+    """True when text carries a turn-control marker (i.e. chat narration, not prose)."""
+    lowered = text.lower()
+    return any(marker in lowered for marker in CONTROL_MARKERS)
+
 
 def normalize_file_markers(content: str) -> str:
     """
@@ -394,6 +410,28 @@ class StreamProcessor:
             final_content = self.content_buffer
             file_id = self.file_id
             content_length = len(final_content)
+
+            # Contamination guard: an unterminated <file> whose buffered body
+            # carries turn-control markers is chat narration / cross-agent
+            # handoff text that leaked into the file-write state — NOT chapter
+            # prose. Surface it as conversation and leave the (empty) file
+            # untouched rather than persisting the narration as the file's
+            # content. Legitimately truncated prose (no control marker) is still
+            # auto-completed below.
+            if _contains_control_marker(final_content):
+                log_with_context(
+                    logger,
+                    30,  # WARNING
+                    "Stream ended with an unterminated <file> containing control "
+                    "markers; discarding buffered narration instead of writing it "
+                    "to the file",
+                    project_id=self.project_id,
+                    user_id=self.user_id,
+                    file_id=file_id,
+                    content_length=content_length,
+                )
+                self.reset()
+                return StreamResult(conversation_content=final_content)
 
             log_with_context(
                 logger,

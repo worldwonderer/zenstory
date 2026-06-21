@@ -754,3 +754,98 @@ class TestWritingGraphAutoReviewGate:
             for event in events
         )
         assert any(event.type == StreamEventType.WORKFLOW_COMPLETE for event in events)
+
+
+@pytest.mark.unit
+class TestWritingGraphFileCorrection:
+    """The workflow must re-run the writer when it leaves a created file empty."""
+
+    @pytest.mark.asyncio
+    async def test_empty_file_triggers_writer_rerun_with_correction(self):
+        from agent.graph.writing_graph import run_writing_workflow_streaming
+
+        calls: list[dict] = []
+
+        async def fake_run_streaming_agent(state, agent_type, *_args, **_kwargs):
+            calls.append({"agent": agent_type, "user_message": state.get("user_message", "")})
+            if len(calls) == 1:
+                # Writer created an empty file (guard set) but only narrated and
+                # marked complete — it never streamed the <file> body.
+                ToolContext.set_pending_empty_file("file-X", "第51章")
+                yield StreamEvent(
+                    type=StreamEventType.TEXT,
+                    data={"text": "正文文件已创建，需直接写入内容。[TASK_COMPLETE]"},
+                )
+            else:
+                # Corrective re-run finishes the file (clears the guard).
+                ToolContext.clear_pending_empty_file()
+                yield StreamEvent(
+                    type=StreamEventType.TEXT,
+                    data={"text": "已用 edit_file 补全正文。[TASK_COMPLETE]"},
+                )
+
+        state = {"user_message": "写第51章", "messages": [], "system_prompt": ""}
+
+        ToolContext.set_context(
+            session=None, user_id="u", project_id="p", session_id="s",
+        )
+        try:
+            with (
+                patch("agent.graph.writing_graph.router_node", AsyncMock(return_value={})),
+                patch("agent.graph.writing_graph.get_next_node", return_value="writer"),
+                patch("agent.graph.writing_graph.run_streaming_agent", new=fake_run_streaming_agent),
+            ):
+                events = [
+                    event async for event in run_writing_workflow_streaming(
+                        state=state, thread_id="t",
+                    )
+                ]
+        finally:
+            ToolContext.clear_context()
+
+        # The writer must have run twice: the original turn + one correction.
+        assert len(calls) == 2
+        assert calls[0]["agent"] == "writer"
+        assert calls[1]["agent"] == "writer"
+        # The correction turn must carry the "file still empty / finish it" reminder.
+        assert "正文仍为空" in calls[1]["user_message"]
+        assert "edit_file" in calls[1]["user_message"]
+        # And the workflow still completes after the correction.
+        assert any(event.type == StreamEventType.WORKFLOW_COMPLETE for event in events)
+
+    @pytest.mark.asyncio
+    async def test_correction_is_bounded_and_does_not_loop_forever(self):
+        from agent.graph.writing_graph import MAX_FILE_CORRECTION_ATTEMPTS, run_writing_workflow_streaming
+
+        calls: list[str] = []
+
+        async def fake_run_streaming_agent(state, agent_type, *_args, **_kwargs):
+            calls.append(agent_type)
+            # Writer keeps creating empty files and never finishes one.
+            ToolContext.set_pending_empty_file("file-Y", "第52章")
+            yield StreamEvent(
+                type=StreamEventType.TEXT,
+                data={"text": "又创建了一个空文件。[TASK_COMPLETE]"},
+            )
+
+        state = {"user_message": "写第52章", "messages": [], "system_prompt": ""}
+
+        ToolContext.set_context(
+            session=None, user_id="u", project_id="p", session_id="s",
+        )
+        try:
+            with (
+                patch("agent.graph.writing_graph.router_node", AsyncMock(return_value={})),
+                patch("agent.graph.writing_graph.get_next_node", return_value="writer"),
+                patch("agent.graph.writing_graph.run_streaming_agent", new=fake_run_streaming_agent),
+            ):
+                _ = [
+                    event async for event in run_writing_workflow_streaming(
+                        state=state, thread_id="t",
+                    )
+                ]
+        finally:
+            ToolContext.clear_context()
+
+        # Initial turn + at most MAX_FILE_CORRECTION_ATTEMPTS corrective re-runs.
+        assert len(calls) <= 1 + MAX_FILE_CORRECTION_ATTEMPTS

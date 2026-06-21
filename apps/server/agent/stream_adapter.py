@@ -354,6 +354,30 @@ class StreamAdapter:
             usage = data.get("usage")
             self._last_message_usage = usage if isinstance(usage, dict) else None
 
+            # Agent boundary. MESSAGE_END marks the end of ONE agent's turn; the
+            # same StreamAdapter/StreamProcessor is reused across the whole
+            # multi-agent handoff loop. If a file write is still open here, this
+            # agent created/opened a file but never closed it (no </file>), so
+            # finalize it NOW — otherwise the next handed-off agent's narration
+            # would keep accumulating into this agent's file and get flushed in
+            # at end-of-request. finalize_on_stream_end discards control-marker
+            # contaminated narration and salvages only genuine truncated prose.
+            #
+            # We deliberately leave the ToolContext pending-empty-file guard set:
+            # it is the signal the workflow loop uses to detect an unwritten file
+            # and re-run the writer to complete it (see writing_graph). It is
+            # cleared on a successful <file> completion or at full stream end.
+            if self.config.process_file_markers and self._stream_processor.is_active:
+                boundary_result = self._stream_processor.finalize_on_stream_end()
+                async for sse_event in self._emit_stream_result(boundary_result):
+                    yield sse_event
+                # NOTE: deliberately keep self._pending_file_write and the
+                # ToolContext pending-empty-file guard set. The StreamProcessor is
+                # now reset (no further cross-agent capture), but the guard remains
+                # the signal the workflow loop reads to re-run the writer, and the
+                # end-of-stream cleanup clears it so it cannot leak to the next
+                # request.
+
         elif event_type == StreamEventType.ERROR:
             # Error event
             error_msg = data.get("error", "Unknown error")
