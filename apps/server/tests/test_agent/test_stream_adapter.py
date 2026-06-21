@@ -1528,3 +1528,67 @@ async def test_abandoned_file_write_clears_pending_empty_file_guard():
 
     assert ToolContext.has_pending_empty_file() is False
     assert adapter._pending_file_write is None
+
+
+@pytest.mark.unit
+async def test_unterminated_file_with_control_marker_is_not_persisted():
+    """An unterminated <file> whose body carries a turn-control marker is chat
+    narration, not prose: it must NEVER be saved as the file's content.
+
+    This is the production corruption: the model opened <file>, streamed handoff
+    narration ending in [TASK_COMPLETE], and never closed it; the buffer must be
+    surfaced as conversation and the file left untouched.
+    """
+    from agent.stream_adapter import create_stream_adapter
+    from agent.tools.mcp_tools import ToolContext
+
+    adapter = create_stream_adapter(project_id="p", user_id="u", process_file_markers=True)
+    adapter._save_file_content = AsyncMock(return_value=True)
+    ToolContext.set_pending_empty_file("file-1", "第51章")
+    adapter.set_pending_file_write("file-1", "draft", "第51章")
+
+    async def mock_events():
+        yield LangGraphStreamEvent(
+            type=StreamEventType.TEXT,
+            data={"text": "<file>正文文件已创建，需直接写入内容。\n\n"},
+        )
+        yield LangGraphStreamEvent(
+            type=StreamEventType.TEXT,
+            data={"text": "### 交接审查完成，已交接给 writer。[TASK_COMPLETE]"},
+        )
+        yield LangGraphStreamEvent(type=StreamEventType.MESSAGE_END, data={})
+
+    events = [e async for e in adapter.process_workflow_events(mock_events())]
+    event_types = [e.type for e in events]
+
+    # The narration must not be persisted as file content...
+    adapter._save_file_content.assert_not_awaited()
+    assert EventType.FILE_CONTENT_END not in event_types
+
+
+@pytest.mark.unit
+async def test_truncated_prose_without_control_marker_is_still_saved():
+    """Genuinely truncated prose (no </file>, no control markers) must still be
+    salvaged and saved — the contamination guard must not over-discard."""
+    from agent.stream_adapter import create_stream_adapter
+    from agent.tools.mcp_tools import ToolContext
+
+    adapter = create_stream_adapter(project_id="p", user_id="u", process_file_markers=True)
+    adapter._save_file_content = AsyncMock(return_value=True)
+    ToolContext.set_pending_empty_file("file-2", "第52章")
+    adapter.set_pending_file_write("file-2", "draft", "第52章")
+
+    async def mock_events():
+        yield LangGraphStreamEvent(
+            type=StreamEventType.TEXT,
+            data={"text": "<file>夜色沉沉，林川推开门，看见了那封信。"},
+        )
+        yield LangGraphStreamEvent(type=StreamEventType.MESSAGE_END, data={})
+
+    _ = [e async for e in adapter.process_workflow_events(mock_events())]
+
+    adapter._save_file_content.assert_awaited_once()
+    saved_args = adapter._save_file_content.await_args.args
+    assert saved_args[0] == "file-2"
+    assert "夜色沉沉" in saved_args[1]
+    assert "[TASK_COMPLETE]" not in saved_args[1]

@@ -28,6 +28,11 @@ from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
 
+# Max times the workflow will re-run the writer to finish a file it created but
+# left empty (created via create_file but never completed the <file>…</file>
+# write). Bounded so a model that keeps failing cannot loop indefinitely.
+MAX_FILE_CORRECTION_ATTEMPTS = 2
+
 
 def _extract_review_payload(agent_content: str) -> str:
     """
@@ -239,6 +244,7 @@ async def run_writing_workflow_streaming(
     accumulated_content: str = ""  # Track content for auto-review threshold
     review_round: int = 0  # 跟踪 writer-quality_reviewer 循环次数
     previous_agent: str | None = None  # 跟踪上一个 agent
+    file_correction_attempts: int = 0  # 跟踪「创建了空文件但未写入正文」的纠正次数
 
     try:
         generation_mode = str(state.get("generation_mode") or "").strip().lower()
@@ -556,6 +562,53 @@ async def run_writing_workflow_streaming(
                 lowered = agent_content.lower()
                 if "<file" in lowered or "</file" in lowered:
                     writer_emitted_file_markers = True
+
+            # Corrective feedback for an abandoned file write.
+            #
+            # create_file makes an EMPTY file and sets a pending-empty-file guard
+            # that is cleared only when the model completes the <file>…</file>
+            # streaming write. If the guard is still set at this agent boundary,
+            # the model created a file but never wrote its body — it narrated
+            # instead, or dropped the closing </file>. Rather than ending the turn
+            # with an empty file (the StreamProcessor guard already prevents that
+            # narration from being persisted as the file's content), re-run the
+            # writer and explicitly tell it to finish the file. Bounded by
+            # MAX_FILE_CORRECTION_ATTEMPTS to avoid loops.
+            if (
+                not clarification_stopped
+                and not invalid_handoff_stopped
+                and not tool_call_exhausted
+                and iteration < max_iterations
+                and file_correction_attempts < MAX_FILE_CORRECTION_ATTEMPTS
+                and ToolContext.has_pending_empty_file()
+            ):
+                pending = ToolContext.get_pending_empty_file() or {}
+                pending_title = str(pending.get("title") or "未命名")
+                pending_file_id = str(pending.get("file_id") or pending.get("id") or "")
+                file_correction_attempts += 1
+                # Clear the guard now: the explicit instruction below replaces its
+                # blocking role, and leaving it set would re-trigger this branch
+                # even after edit_file fills the file (edit_file does not clear it).
+                ToolContext.clear_pending_empty_file()
+                log_with_context(
+                    logger,
+                    30,  # WARNING
+                    "Empty file detected after agent turn; re-running writer to complete it",
+                    file_id=pending_file_id,
+                    title=pending_title,
+                    attempt=file_correction_attempts,
+                )
+                id_hint = f"(id={pending_file_id})" if pending_file_id else ""
+                handoff_context = (
+                    f"[系统提醒] 你创建的文件《{pending_title}》{id_hint} 正文仍为空——"
+                    "上一轮没有用 <file>…</file> 完成流式写入（很可能漏了结尾的 </file>）。"
+                    "请立即调用 edit_file（id="
+                    f"{pending_file_id or '<该文件id>'}，op=append）把完整正文写入该文件；"
+                    "不要重复创建文件，也不要只在对话里复述正文。"
+                )
+                previous_agent = current_agent_type
+                current_agent_type = "writer"
+                continue
 
             # Structured clarification stop is canonical and must block planned/auto handoff.
             if clarification_stopped:
