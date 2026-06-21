@@ -771,7 +771,6 @@ class TestAgentServiceProcessStream:
             session_id="sess-offload",
             history_messages=[],
             context_data=ContextData(items=[], context="", token_estimate=0),
-            compaction_result=None,
         )
 
         with (

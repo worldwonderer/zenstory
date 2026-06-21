@@ -8,7 +8,6 @@ Features:
 - Streaming SSE output
 - Intelligent context assembly with priority-based selection
 - Multi-agent routing (planner/writer/quality_reviewer)
-- Context compaction for long sessions
 - Steering message support
 
 Powered by LangGraph workflow orchestration + openai-agents-python.
@@ -37,8 +36,6 @@ from utils.logger import get_logger, log_with_context
 from .context import ContextAssembler, get_context_assembler
 from .context.budget import compute_history_token_budget
 from .core.events import (
-    compaction_done_event,
-    compaction_start_event,
     context_event,
     done_event,
     error_event,
@@ -50,8 +47,6 @@ from .core.metrics import (
     AGENT_REQUESTS_DURATION_MS,
     AGENT_REQUESTS_ERRORS,
     AGENT_REQUESTS_TOTAL,
-    CONTEXT_COMPACTION_TOKENS_SAVED,
-    CONTEXT_COMPACTION_TOTAL,
     CONTEXT_ITEMS_COUNT,
     CONTEXT_TOKENS_TOTAL,
     get_metrics_collector,
@@ -513,7 +508,7 @@ class AgentService:
                 else message
             )
 
-            # Assemble intelligent context with compaction
+            # Assemble intelligent context
             yield thinking_event(
                 "Assembling context..." if force_en else "正在组装上下文..."
             ).to_sse()
@@ -541,33 +536,6 @@ class AgentService:
                 yield context_event(
                     items=context_data.items,
                     token_count=context_data.token_estimate,
-                ).to_sse()
-
-            # Emit compaction event if occurred
-            if session_data.compaction_result:
-                compaction = session_data.compaction_result
-                tokens_saved = max(0, int(compaction.tokens_before) - int(compaction.tokens_after))
-                metrics.increment_counter(CONTEXT_COMPACTION_TOTAL)
-                metrics.increment_counter(
-                    CONTEXT_COMPACTION_TOKENS_SAVED,
-                    amount=tokens_saved,
-                )
-                log_with_context(
-                    logger,
-                    20,
-                    "Emitting compaction events",
-                    tokens_before=compaction.tokens_before,
-                    tokens_after=compaction.tokens_after,
-                    messages_removed=compaction.messages_removed,
-                )
-                yield compaction_start_event(
-                    compaction.tokens_before,
-                    len(history_messages),
-                ).to_sse()
-                yield compaction_done_event(
-                    compaction.tokens_after,
-                    compaction.messages_removed,
-                    compaction.summary[:100],
                 ).to_sse()
 
             message_manager = MessageManager(

@@ -56,8 +56,6 @@ TOOL_OUTPUT_TRIMMED_CHARS: Final[str] = "tool.output.trimmed.chars"
 # Context metrics
 CONTEXT_TOKENS_TOTAL: Final[str] = "context.tokens.total"
 CONTEXT_ITEMS_COUNT: Final[str] = "context.items.count"
-CONTEXT_COMPACTION_TOTAL: Final[str] = "context.compaction.total"
-CONTEXT_COMPACTION_TOKENS_SAVED: Final[str] = "context.compaction.tokens_saved"
 
 # Steering metrics
 STEERING_MESSAGES_TOTAL: Final[str] = "steering.messages.total"

@@ -65,10 +65,6 @@ class EventType(StrEnum):
     WORKFLOW_STOPPED = "workflow_stopped"   # Workflow stopped (e.g., needs clarification)
     WORKFLOW_COMPLETE = "workflow_complete" # Workflow completed successfully
 
-    # Compaction events
-    COMPACTION_START = "compaction_start"  # Context compaction started
-    COMPACTION_DONE = "compaction_done"    # Context compaction completed
-
     # Session lifecycle events
     SESSION_STARTED = "session_started"    # Agent session started
 
@@ -617,19 +613,6 @@ class IterationExhaustedEventData(BaseModel):
     last_agent: str | None = Field(default=None, description="Last active agent")
 
 
-class CompactionStartEventData(BaseModel):
-    """Data for compaction_start events."""
-    tokens_before: int = Field(..., description="Token count before compaction")
-    messages_count: int = Field(..., description="Number of messages before compaction")
-
-
-class CompactionDoneEventData(BaseModel):
-    """Data for compaction_done events."""
-    tokens_after: int = Field(..., description="Token count after compaction")
-    messages_removed: int = Field(..., description="Number of messages removed")
-    summary_preview: str = Field(..., description="Preview of the compaction summary")
-
-
 class SessionStartedEventData(BaseModel):
     """Data for session_started events."""
     session_id: str = Field(..., description="ID of the started session")
@@ -690,36 +673,6 @@ def iteration_exhausted_event(
             max_iterations=max_iterations,
             reason=reason,
             last_agent=last_agent,
-        ).model_dump()
-    )
-
-
-def compaction_start_event(
-    tokens_before: int,
-    messages_count: int,
-) -> StreamEvent:
-    """Create a compaction_start event when context compaction begins."""
-    return StreamEvent(
-        type=EventType.COMPACTION_START,
-        data=CompactionStartEventData(
-            tokens_before=tokens_before,
-            messages_count=messages_count,
-        ).model_dump()
-    )
-
-
-def compaction_done_event(
-    tokens_after: int,
-    messages_removed: int,
-    summary_preview: str,
-) -> StreamEvent:
-    """Create a compaction_done event when context compaction completes."""
-    return StreamEvent(
-        type=EventType.COMPACTION_DONE,
-        data=CompactionDoneEventData(
-            tokens_after=tokens_after,
-            messages_removed=messages_removed,
-            summary_preview=summary_preview,
         ).model_dump()
     )
 

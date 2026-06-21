@@ -22,7 +22,7 @@ from config.datetime_utils import utcnow
 from core.error_codes import ErrorCode
 from core.error_handler import APIException
 from database import create_session, get_session
-from models import AgentArtifactLedger, ChatMessage, ChatSession, Project, User
+from models import ChatMessage, ChatSession, Project, User
 from services.chat_feedback_service import chat_feedback_service
 from utils.logger import get_logger, log_with_context
 from utils.permission import verify_project_access
@@ -454,17 +454,6 @@ async def clear_session(
         delete(ChatMessage).where(ChatMessage.session_id == chat_session.id)
     )
 
-    summary_stmt = select(AgentArtifactLedger).where(
-        and_(
-            AgentArtifactLedger.project_id == project_id,
-            AgentArtifactLedger.session_id == chat_session.id,
-            AgentArtifactLedger.action == "compaction_summary",
-        )
-    )
-    summary_checkpoints = session.exec(summary_stmt).all()
-    for checkpoint in summary_checkpoints:
-        session.delete(checkpoint)
-
     chat_session.message_count = 0
     chat_session.updated_at = utcnow()
     session.commit()
@@ -477,7 +466,6 @@ async def clear_session(
         user_id=user_id,
         session_id=chat_session.id,
         cleared_count=cleared_count,
-        compaction_checkpoint_cleared_count=len(summary_checkpoints),
     )
 
     return {"success": True, "message": f"Cleared {cleared_count} messages"}

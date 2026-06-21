@@ -19,7 +19,7 @@ from ..schemas.context import ContextItem, ContextPriority
 # prompt + skill catalog/reference + assembled context) be subtracted from this
 # ceiling so the remaining history window competes for what is actually left.
 #
-# Kept well below the model context window (compaction.CONTEXT_WINDOW=200k) and
+# Kept well below the model context window (~200k tokens) and
 # above the default 6k history budget so the ledger only *shrinks* history when
 # the other prompt costs are genuinely large — it never inflates the budget.
 DEFAULT_PROMPT_TOKEN_LEDGER_CEILING = 24000

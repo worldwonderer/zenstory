@@ -385,12 +385,6 @@ export interface UseChatStreamingOptions {
   /** Called when steering message is received */
   onSteeringReceived?: (messageId: string, preview: string) => void;
 
-  /** Called when compaction starts */
-  onCompactionStart?: (tokensBefore: number, messagesCount: number) => void;
-
-  /** Called when compaction completes */
-  onCompactionDone?: (tokensAfter: number, messagesRemoved: number, summaryPreview: string) => void;
-
   // ========================================
   // Error and completion callbacks
   // ========================================
@@ -1320,30 +1314,6 @@ export function useChatStreaming(): UseChatStreamingReturn {
               type: "thinking_status",
               id: generateUniqueId("steering-received"),
               content: t('chat:workflow.steeringReceived', { preview }),
-              timestamp: new Date(),
-            },
-          ]);
-        },
-
-        onCompactionStart: (_tokensBefore: number, _messagesCount: number) => {
-          updateStreamItems((prev) => [
-            ...prev,
-            {
-              type: "thinking_status",
-              id: generateUniqueId("compaction-start"),
-              content: t('chat:workflow.compactionStart'),
-              timestamp: new Date(),
-            },
-          ]);
-        },
-
-        onCompactionDone: (_tokensAfter: number, messagesRemoved: number, _summaryPreview: string) => {
-          updateStreamItems((prev) => [
-            ...prev,
-            {
-              type: "thinking_status",
-              id: generateUniqueId("compaction-done"),
-              content: t('chat:workflow.compactionDone', { count: messagesRemoved }),
               timestamp: new Date(),
             },
           ]);

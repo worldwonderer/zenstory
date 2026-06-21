@@ -77,13 +77,6 @@ AGENT_CHAT_HISTORY_TOKEN_BUDGET = _get_int_env(
     6000,
 )
 
-# Compaction checkpoint retention per chat session.
-# Keeps only the latest N checkpoints in agent_artifact_ledger.
-AGENT_COMPACTION_CHECKPOINT_RETENTION = _get_int_env(
-    "AGENT_COMPACTION_CHECKPOINT_RETENTION",
-    20,
-)
-
 # Content length threshold for auto-handoff to quality reviewer
 AGENT_AUTO_REVIEW_THRESHOLD_CHARS = _get_int_env(
     "AGENT_AUTO_REVIEW_THRESHOLD_CHARS",
@@ -106,18 +99,6 @@ AGENT_ROUTER_STRATEGY = _get_str_env(
 AGENT_ENABLE_GRAPH_AUTO_REVIEW = _get_bool_env(
     "AGENT_ENABLE_GRAPH_AUTO_REVIEW",
     True,
-)
-
-# Compaction (Plan 4.3). The long-session LLM summarizer in agent/context/
-# compaction.py only fires above ~183k tokens, but history is loaded under
-# AGENT_CHAT_HISTORY_TOKEN_BUDGET (~6k), so under default config it can never
-# run — older turns are simply truncated. This flag makes that explicit:
-# default **False** means the compaction subsystem is intentionally inert
-# (history hard-truncates to the budget). Set True only in a deployment whose
-# loaded-history budget is large enough for should_compact() to trigger.
-AGENT_COMPACTION_ENABLED = _get_bool_env(
-    "AGENT_COMPACTION_ENABLED",
-    False,
 )
 
 # Router (Plan 5.1). When **True**, the writing-graph router runs as an

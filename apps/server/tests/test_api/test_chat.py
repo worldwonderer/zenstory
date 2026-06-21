@@ -6,6 +6,7 @@ Tests for chat session management API endpoints.
 
 
 import json
+
 import pytest
 from httpx import AsyncClient
 from sqlmodel import Session, select
@@ -297,17 +298,6 @@ class TestChatAPI:
                 project_id=project.id,
                 session_id=session.id,
                 user_id=user.id,
-                action="compaction_summary",
-                tool_name="context_compaction",
-                artifact_ref=f"compaction:{session.id}",
-                payload=json.dumps({"summary": "stale-summary"}),
-            )
-        )
-        db_session.add(
-            AgentArtifactLedger(
-                project_id=project.id,
-                session_id=session.id,
-                user_id=user.id,
                 action="create_file",
                 tool_name="create_file",
                 artifact_ref="file-keep-1",
@@ -344,16 +334,7 @@ class TestChatAPI:
         db_session.refresh(session)
         assert session.message_count == 0
 
-        # Verify compaction checkpoints are also cleared, while other ledger rows remain
-        compaction_rows = db_session.exec(
-            select(AgentArtifactLedger).where(
-                AgentArtifactLedger.project_id == project.id,
-                AgentArtifactLedger.session_id == session.id,
-                AgentArtifactLedger.action == "compaction_summary",
-            )
-        ).all()
-        assert len(compaction_rows) == 0
-
+        # Verify non-message ledger rows remain untouched by clear_session
         other_rows = db_session.exec(
             select(AgentArtifactLedger).where(
                 AgentArtifactLedger.project_id == project.id,
