@@ -193,7 +193,16 @@ class ToolContext:
 
     @classmethod
     def set_current_agent(cls, current_agent: str | None) -> None:
-        """Update current agent in request-scoped context."""
+        """Update current agent in request-scoped context.
+
+        IMPORTANT — current_agent MUST remain in the mutable contextvar (_tool_context_var).
+        Do NOT move it into any frozen/immutable container (e.g. a future RunContext dataclass).
+        Rationale: it is mutated mid-run on every agent transition (writing_graph.py:360),
+        reset to None at run end (:755), and read at handoff time (mcp_tools.py ~1292, ~1319).
+        Freezing it at run-start would leave a stale value, causing silent wrong-agent routing
+        at handoff time — the handoff tool would dispatch to the *previous* agent instead of
+        the intended target.
+        """
         context = cls._get_context()
         if not context:
             return
@@ -252,7 +261,12 @@ class ToolContext:
 
     @classmethod
     def refresh_file_inventory(cls) -> dict[str, list[dict[str, Any]]] | None:
-        """刷新文件清单，用于 handoff 时获取最新文件列表。"""
+        """刷新文件清单，用于 handoff 时获取最新文件列表。
+
+        Uses a column-only query (no File.content load) and the same
+        sequence-sort ordering as ContextAssembler._get_file_inventory so
+        that the handoff inventory matches the context-block inventory.
+        """
         context = cls._get_context()
         project_id = context.get("project_id")
         if project_id is None:
@@ -263,6 +277,7 @@ class ToolContext:
         from sqlmodel import select
 
         from models import File
+        from utils.title_sequence import build_sequence_sort_key
 
         inventory: dict[str, list[dict[str, Any]]] = {
             "outline": [],
@@ -272,26 +287,52 @@ class ToolContext:
             "snippet": [],
         }
 
-        files = session.exec(
-            select(File).where(
+        # Column-only select: avoids loading File.content (expensive on PG TOAST).
+        file_rows = session.exec(
+            select(
+                File.id,
+                File.title,
+                File.file_type,
+                File.order,
+                File.created_at,
+            ).where(
                 File.project_id == project_id,
                 File.file_type != "folder",
                 File.is_deleted.is_(False),
-            ).order_by(File.order.asc())
+            )
         ).all()
 
-        for file in files:
-            if file.file_type in inventory:
-                word_count = (
-                    len(file.content)
-                    if file.file_type == "draft" and file.content
-                    else None
+        grouped: dict[str, list[tuple[tuple, dict[str, Any]]]] = {
+            key: [] for key in inventory
+        }
+
+        for file_id, title, file_type, file_order, created_at in file_rows:
+            if file_type not in inventory:
+                continue
+
+            effective_order, seq_num = build_sequence_sort_key(
+                file_order,
+                title=title,
+                file_type=file_type,
+            )
+            sort_key = (effective_order, seq_num, created_at, file_id)
+
+            grouped[file_type].append(
+                (
+                    sort_key,
+                    {
+                        "id": file_id,
+                        "title": title,
+                        "word_count": None,
+                    },
                 )
-                inventory[file.file_type].append({
-                    "id": file.id,
-                    "title": file.title,
-                    "word_count": word_count,
-                })
+            )
+
+        for file_type, rows in grouped.items():
+            if rows:
+                inventory[file_type] = [
+                    item for _, item in sorted(rows, key=lambda x: x[0])
+                ]
 
         return inventory
 

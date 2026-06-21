@@ -203,6 +203,25 @@ def _usage_dict_from_result(result: Any) -> dict[str, int]:
 
 
 def _build_agent(agent_type: str, system_prompt: str) -> Any:
+    # NOTE — Agent.as_tool was evaluated and rejected.
+    # Agent.as_tool wraps an agent as a callable tool for a parent agent, which
+    # would collapse each sub-agent's SSE events into a single opaque tool result
+    # and eliminate the per-agent streaming visibility the UI depends on.  It would
+    # also merge the two independent iteration budgets (AGENT_TOOL_CALL_MAX_ITERATIONS
+    # per agent, AGENT_COLLABORATION_MAX_ITERATIONS across the graph) into one, making
+    # it impossible to surface per-agent exhaustion cleanly.  The current explicit
+    # graph loop + handoff packet approach is intentional; do not replace with as_tool.
+    #
+    # NOTE — reasoning lever (not yet activated).
+    # ModelSettings also accepts a ``reasoning`` field (maps to the model's reasoning-effort
+    # parameter) and an ``extra_body`` dict for provider-specific kwargs.  DeepSeek's
+    # Chat Completions API does not document a first-class reasoning-effort parameter for
+    # deepseek-chat / deepseek-v4-flash (it is a feature of the separate /beta/reasoner
+    # endpoint).  Activating it without confirmation risks a 400/422 from the API.
+    # When DeepSeek confirms the parameter for the chat endpoint, add:
+    #   model_settings=ModelSettings(..., reasoning={"effort": "medium"})
+    # or route through extra_body if the SDK does not yet expose it natively.
+    # Until then, do NOT set reasoning here.
     from agents import Agent, ModelSettings
 
     return Agent(
@@ -265,6 +284,17 @@ async def run_openai_agents_streaming_agent(
     handoff_event_data: dict[str, Any] | None = None
     clarification_event_data: dict[str, Any] | None = None
 
+    # Read-only co-call instrumentation (item 1.4).
+    # Approximation: within a single assistant turn, the SDK emits all tool_called events
+    # first, then tool_output events (even with max_function_tool_concurrency=1, which
+    # serialises *execution* but not the event ordering for calls batched in one response).
+    # We track per-turn how many read-only tool calls appear before the first tool_output
+    # of that turn; when ≥2 are observed we record a co-call event.  A new "turn" begins
+    # after every tool_output (the model produced a fresh response with new tool requests).
+    _READONLY_TOOLS: frozenset[str] = frozenset({"query_files", "hybrid_search"})
+    _turn_readonly_pending: int = 0   # read-only calls seen since last tool_output
+    _turn_has_output: bool = False    # whether the current turn has received any tool_output
+
     async for steering_event in _inject_initial_steering(api_messages, get_steering_messages):
         yield steering_event
 
@@ -274,7 +304,7 @@ async def run_openai_agents_streaming_agent(
     )
 
     try:
-        from agents import Runner, RunConfig, ToolExecutionConfig
+        from agents import RunConfig, Runner, ToolExecutionConfig
         from agents.exceptions import MaxTurnsExceeded
 
         sdk_agent = _build_agent(agent_type, system_prompt)
@@ -331,6 +361,9 @@ async def run_openai_agents_streaming_agent(
                             "result": None,
                         }
                     )
+                    # Read-only co-call tracking: count read-only calls before outputs arrive.
+                    if tool_name in _READONLY_TOOLS:
+                        _turn_readonly_pending += 1
                     yield StreamEvent(
                         type=StreamEventType.TOOL_USE,
                         data={
@@ -341,6 +374,21 @@ async def run_openai_agents_streaming_agent(
                         },
                     )
                 elif event_name == "tool_output":
+                    # First tool_output of this turn: flush the pending read-only count.
+                    if not _turn_has_output:
+                        _turn_has_output = True
+                        from agent.core.metrics import (
+                            TOOL_READONLY_COCALL_TOTAL,
+                            TOOL_READONLY_TURNS_TOTAL,
+                            get_metrics_collector,
+                        )
+                        _mc = get_metrics_collector()
+                        _mc.increment_counter(TOOL_READONLY_TURNS_TOTAL)
+                        if _turn_readonly_pending >= 2:
+                            _mc.increment_counter(TOOL_READONLY_COCALL_TOTAL)
+                        # Reset for next turn (next batch of tool_called events).
+                        _turn_readonly_pending = 0
+                        _turn_has_output = False
                     call_id, result_text = _tool_output_payload(item)
                     tool_name = tool_names_by_call_id.get(call_id, "")
                     tool_input = tool_inputs_by_call_id.get(call_id, {})
@@ -371,6 +419,21 @@ async def run_openai_agents_streaming_agent(
                         result_data = {}
 
                     if tool_name == "handoff_to_agent" and result_data.get("status") == "handoff":
+                        # DESIGN NOTE — do not migrate to the SDK's native Agent(handoffs=[...]).
+                        #
+                        # The SDK's built-in handoff mechanism passes a plain text string from
+                        # one agent to the next.  ZenStory's handoff carries a structured packet
+                        # (completed/todo/evidence/artifact_refs) assembled here from the live
+                        # tool result, plus pre-handoff narration that has already been streamed
+                        # as TEXT events.  The SDK's text-passing handoff cannot express this
+                        # structured context, and rebuilding it inside the SDK's callback would
+                        # require duplicating the packet-assembly and event-streaming logic that
+                        # lives in build_handoff_packet / extract_artifact_refs.
+                        #
+                        # result.cancel(mode="after_turn") lets the current SDK turn finish
+                        # cleanly (so any in-flight streaming completes) before the graph picks
+                        # up the handoff_event_data and routes to the next agent node.  Using
+                        # "immediate" would truncate the trailing text stream; keep "after_turn".
                         packet = build_handoff_packet(
                             result_data,
                             artifact_refs=artifact_refs_accumulated,

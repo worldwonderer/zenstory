@@ -24,6 +24,7 @@ from sqlmodel import Session, and_, select
 
 from config.agent_runtime import (
     AGENT_AUTO_REVIEW_THRESHOLD_CHARS,
+    AGENT_CHAT_HISTORY_TOKEN_BUDGET,
     AGENT_COLLABORATION_MAX_ITERATIONS,
 )
 from config.agent_runtime import (
@@ -34,6 +35,7 @@ from database import create_session
 from utils.logger import get_logger, log_with_context
 
 from .context import ContextAssembler, get_context_assembler
+from .context.budget import compute_history_token_budget
 from .core.events import (
     compaction_done_event,
     compaction_start_event,
@@ -638,6 +640,47 @@ class AgentService:
                     )
                 if context_parts:
                     user_content += f"\n\n{'Context' if force_en else '上下文'}:\n" + "\n".join(context_parts)
+
+            # Unified prompt-token ledger.
+            #
+            # Assembled context (assembler ~6k) and chat history (~6k) used to be
+            # budgeted independently and both injected (~12k+). Now they compete
+            # within ONE shared ceiling: subtract the already-known prompt costs
+            # (system prompt + skill catalog/reference + assembled context) from
+            # the ledger ceiling, then shrink the history window to whatever room
+            # remains. The DB-history persistence contract and the configured
+            # dual budgets are unchanged — this only trims what is *loaded*.
+            from agent.utils.token_utils import estimate_text_tokens
+
+            assembled_context_text = (
+                context_data.context if context_data and context_data.context else ""
+            )
+            reserved_prompt_tokens = (
+                estimate_text_tokens(system_prompt or "")
+                + estimate_text_tokens(skill_catalog or "")
+                + estimate_text_tokens(skill_reference or "")
+                + estimate_text_tokens(assembled_context_text or "")
+            )
+            effective_history_budget = compute_history_token_budget(
+                configured_history_budget=AGENT_CHAT_HISTORY_TOKEN_BUDGET,
+                reserved_prompt_tokens=reserved_prompt_tokens,
+            )
+            history_messages = session_loader._trim_history_to_token_budget(
+                history_messages,
+                effective_history_budget,
+            )
+
+            log_with_context(
+                logger,
+                20,  # INFO
+                "Prompt token ledger allocation",
+                project_id=project_id,
+                user_id=user_id,
+                reserved_prompt_tokens=reserved_prompt_tokens,
+                configured_history_budget=AGENT_CHAT_HISTORY_TOKEN_BUDGET,
+                effective_history_budget=effective_history_budget,
+                history_message_count=len(history_messages),
+            )
 
             # Combine messages (without system message - it is passed separately to the model)
             messages = history_messages + [{"role": "user", "content": user_content}]

@@ -22,8 +22,17 @@ def _reset_global_metrics():
 class TestEvaluationSignals:
     """Tests for heuristic evaluator and marker fallback behavior."""
 
-    def test_detect_task_complete_by_heuristic_phrase(self):
-        """Should allow completion without marker when clear completion language exists."""
+    def test_detect_task_complete_explicit_marker(self):
+        """[TASK_COMPLETE] at end of content → is_complete True, reason explicit_complete_marker."""
+        from agent.graph.nodes import detect_task_complete
+
+        result = detect_task_complete("这是最终输出内容。[TASK_COMPLETE]")
+        assert result.is_complete is True
+        assert result.confidence == 1.0
+        assert result.reason == "explicit_complete_marker"
+
+    def test_detect_task_complete_chinese_phrase_mid_text_no_longer_triggers(self):
+        """'已完成' mid-text without the explicit marker must NOT flip should_complete (false positive fix)."""
         from agent.graph.nodes import detect_task_complete
 
         result = detect_task_complete(
@@ -34,8 +43,14 @@ class TestEvaluationSignals:
             "4. 关键改动与验证信息已整理完毕，准备交付。\n"
             "5. 附：涉及文件、测试结果、风险评估与后续建议均已在交付说明中完整列出。"
         )
-        assert result.is_complete is True
-        assert result.confidence >= 0.75
+        assert result.is_complete is False
+
+    def test_detect_task_complete_empty_content_not_complete(self):
+        """Empty / whitespace-only content → not complete."""
+        from agent.graph.nodes import detect_task_complete
+
+        assert detect_task_complete("").is_complete is False
+        assert detect_task_complete("   ").is_complete is False
 
     def test_detect_clarification_phrase_only_does_not_trigger(self):
         """Clarification detection should ignore phrase-only text."""

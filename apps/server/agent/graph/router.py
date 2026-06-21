@@ -13,8 +13,10 @@ from pydantic import BaseModel, Field, ValidationError
 
 from agent.core.deepseek_client import get_deepseek_client
 from agent.graph.state import WritingState
-from agent.openai_agents.model import DEEPSEEK_WRITING_MODEL
+from agent.openai_agents.events import parse_json_object
+from agent.openai_agents.model import DEEPSEEK_WRITING_MODEL, get_deepseek_chat_model
 from agent.prompts.subagents import ROUTER_PROMPT
+from config.agent_runtime import AGENT_ROUTER_USE_OUTPUT_TYPE
 from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
@@ -83,11 +85,16 @@ async def router_node(state: WritingState) -> dict:
         }
 
     try:
-        # Call DeepSeek Chat Completions for intent classification and workflow planning.
-        response = await _route_with_deepseek_chat(user_message)
+        # 5.1: When flag is ON, attempt SDK structured-output path first.
+        # On ANY failure fall back to the tolerant chat-completions path.
+        decision: RouterDecision | None = None
+        if AGENT_ROUTER_USE_OUTPUT_TYPE:
+            decision = await _route_with_sdk_output_type(user_message)
 
-        # Extract structured decision from response
-        decision = _parse_router_response(response)
+        if decision is None:
+            # Default path (flag OFF) or fallback when SDK path failed.
+            response = await _route_with_deepseek_chat(user_message)
+            decision = _parse_router_response(response)
         workflow_agents = WORKFLOW_AGENTS.get(decision.workflow_type, [])
 
         log_with_context(
@@ -128,6 +135,52 @@ async def router_node(state: WritingState) -> dict:
                 "confidence": 0.0,
             },
         }
+
+
+async def _route_with_sdk_output_type(user_message: str) -> RouterDecision | None:
+    """
+    Attempt routing via the openai-agents SDK with output_type=RouterDecision.
+
+    Returns a validated RouterDecision on success, or None on any failure so the
+    caller can fall back to the tolerant chat-completions path.  DeepSeek over Chat
+    Completions with reasoning tokens may not honour strict structured outputs, so
+    this path is guarded by AGENT_ROUTER_USE_OUTPUT_TYPE (default False).
+    """
+    try:
+        from agents import Agent, Runner
+
+        sdk_agent = Agent(
+            name="router",
+            instructions=ROUTER_PROMPT,
+            model=get_deepseek_chat_model(),
+            output_type=RouterDecision,
+            tools=[],
+        )
+        result = await Runner.run(
+            sdk_agent,
+            input=user_message,
+            max_turns=1,
+        )
+        decision = result.final_output
+        if isinstance(decision, RouterDecision):
+            return decision
+        # SDK returned something other than RouterDecision — fall back.
+        log_with_context(
+            logger,
+            30,  # WARNING
+            "SDK router returned unexpected output type, falling back to tolerant parser",
+            output_type=type(decision).__name__,
+        )
+        return None
+    except Exception as exc:
+        log_with_context(
+            logger,
+            30,  # WARNING
+            "SDK router path failed, falling back to tolerant parser",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return None
 
 
 async def _route_with_deepseek_chat(user_message: str) -> dict[str, list[dict[str, str]]]:
@@ -193,14 +246,20 @@ def _parse_router_response(response: dict) -> RouterDecision:
     )
 
 
+_ROUTER_KEYS: frozenset[str] = frozenset(
+    {"agent_type", "agent", "target_agent", "workflow_type", "workflow", "workflow_plan"}
+)
+
+
 def _extract_router_payload(text: str) -> dict[str, object]:
     """
     Extract payload from router raw text.
 
     Parsing order:
-    1) Strict JSON
-    2) JSON object fragment inside text
-    3) Legacy two-line text fallback
+    1) Strict JSON (fast path — no repair needed)
+    2) Shared JSON-repair via parse_json_object (handles markdown fences, truncation, etc.)
+       If the repaired result lacks routing keys, scan per-fragment for a better match.
+    3) Legacy two-line text fallback (agent\\nworkflow)
     """
     if not text:
         return {}
@@ -213,20 +272,28 @@ def _extract_router_payload(text: str) -> dict[str, object]:
     except json.JSONDecodeError:
         pass
 
-    # 2) JSON fragment(s) inside wrappers (e.g. markdown)
-    fallback_object: dict[str, object] | None = None
+    # 2) Shared JSON-repair path (delegates to json_repair library when available).
+    #    If parse_json_object succeeds and the result has routing keys, use it.
+    #    Otherwise scan per-fragment (raw_decode at each '{') to prefer a fragment
+    #    that contains routing keys — this handles text with multiple JSON objects
+    #    where json_repair returns the first/wrong one (or a non-dict like a list).
+    repaired, _err, _meta = parse_json_object(text, tool_name="router")
+    if repaired and any(key in repaired for key in _ROUTER_KEYS):
+        return repaired
+
+    # Per-fragment scan: prefer any fragment with routing keys, keep first as fallback.
+    fallback_object: dict[str, object] | None = repaired if repaired else None
     for candidate in _iter_json_object_candidates(text):
         try:
-            parsed = json.loads(candidate)
-            if isinstance(parsed, dict):
-                if any(
-                    key in parsed
-                    for key in ("agent_type", "agent", "target_agent", "workflow_type", "workflow", "workflow_plan")
-                ):
-                    return parsed
-                fallback_object = parsed
+            candidate_obj = json.loads(candidate)
         except json.JSONDecodeError:
             continue
+        if not isinstance(candidate_obj, dict):
+            continue
+        if any(key in candidate_obj for key in _ROUTER_KEYS):
+            return candidate_obj
+        if fallback_object is None:
+            fallback_object = candidate_obj
 
     if fallback_object is not None:
         return fallback_object
