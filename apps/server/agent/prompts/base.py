@@ -211,6 +211,25 @@ def get_tool_usage_guide(folder_ids: dict[str, str], primary_content_type: str) 
 - hybrid_search: 混合检索（向量 + 关键词融合）
 - update_project: 更新项目状态信息（用于记录项目背景和写作指导）
 - update_project(tasks=[...]): 管理任务计划板（复杂任务时必须先调用此参数规划）
+- parallel_execute: 一次并行执行多个**相互独立**的任务（批量提速）
+
+### parallel_execute 使用场景 [批量提速]
+
+当你有**多个彼此独立、互不依赖**的操作需要执行时，用 `parallel_execute` 一次性并发完成，比逐个调用更快。
+
+**适用场景**：
+- 批量删除/查询多个文件（如清理多个草稿、并行检索多份资料）
+- 同时对多个**不同**文件做互不影响的编辑
+
+**调用格式**：`parallel_execute(tasks=[{{"type": ..., "description": ..., "params": {{...}}}}, ...])`
+- 支持的 type：`edit_file`、`delete_file`、`query_files`、`hybrid_search`、`write_chapter`
+- 每个 task 的 params 与对应单体工具一致（如 edit_file 用 `id`+`edits`）
+- 最多 5 个任务
+
+**严格约束**：
+- 任务之间**必须独立**——一个任务的结果不能作为另一个任务的输入；有先后依赖时**不要**用它，改为逐步调用
+- 需要 `<file>` 流式写入正文的**新章节创作**仍用单体 `create_file`（parallel 的 write_chapter 不走流式，仅适合一次性短内容）
+- 若有空文件尚未写入内容，parallel_execute 会被拒绝——先完成该文件
 
 ### 文件 ID 使用规则 [非常重要]
 - 永远不要编造/猜测 id

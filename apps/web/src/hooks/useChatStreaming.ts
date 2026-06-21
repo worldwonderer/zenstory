@@ -554,6 +554,13 @@ export function useChatStreaming(): UseChatStreamingReturn {
   const lastFlushTimeRef = useRef(0);
 
   /**
+   * Maps a parallel_execute sub-task id to its description, captured on
+   * task-start so task-end (which omits the description) can render a
+   * meaningful per-task completion line.
+   */
+  const parallelTaskDescRef = useRef<Map<string, string>>(new Map());
+
+  /**
    * Throttled flush function to update state from ref.
    * Limits state updates to at most once per STREAM_UPDATE_THROTTLE_MS,
    * reducing re-renders while ensuring the latest state is eventually flushed.
@@ -1064,9 +1071,15 @@ export function useChatStreaming(): UseChatStreamingReturn {
         ) => {
           if (
             status === "success" &&
-            ["create_file", "update_file", "delete_file", "edit_file"].includes(
-              toolName
-            )
+            [
+              "create_file",
+              "update_file",
+              "delete_file",
+              "edit_file",
+              // parallel_execute may create/edit/delete files across its
+              // sub-tasks, so its completion must also refresh the tree.
+              "parallel_execute",
+            ].includes(toolName)
           ) {
             // Coalesce multiple tool/file events into one refresh.
             scheduleFileTreeRefresh();
@@ -1278,21 +1291,40 @@ export function useChatStreaming(): UseChatStreamingReturn {
 
         onParallelTaskStart: (
           _executionId: string,
-          _taskId: string,
+          taskId: string,
           _taskType: string,
-          _description: string
+          description: string
         ) => {
-          // No-op: per-task status is verbose; keep summary events only.
+          // Remember the description so task-end can render a labeled line.
+          parallelTaskDescRef.current.set(taskId, description);
         },
 
         onParallelTaskEnd: (
           _executionId: string,
-          _taskId: string,
-          _status: string,
+          taskId: string,
+          status: string,
           _result?: unknown,
-          _error?: string
+          error?: string
         ) => {
-          // No-op: per-task status is verbose; keep summary events only.
+          const description =
+            parallelTaskDescRef.current.get(taskId) || taskId;
+          parallelTaskDescRef.current.delete(taskId);
+          const content =
+            status === "failed"
+              ? t('chat:workflow.parallelTaskFailed', {
+                  description,
+                  error: error || '',
+                })
+              : t('chat:workflow.parallelTaskCompleted', { description });
+          updateStreamItems((prev) => [
+            ...prev,
+            {
+              type: "thinking_status",
+              id: generateUniqueId("parallel-task-end"),
+              content,
+              timestamp: new Date(),
+            },
+          ]);
         },
 
         onParallelEnd: (_executionId: string, total: number, completed: number, failed: number, _durationMs: number) => {

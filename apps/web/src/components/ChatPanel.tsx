@@ -829,6 +829,8 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
     conflicts,
     error,
     errorCode,
+    sessionId,
+    sendSteeringMessage,
   } = useAgentStream(currentProjectId!, {
     // Lifecycle callbacks
     onStart: () => {
@@ -1166,6 +1168,22 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
     // Start streaming
     startStream(request);
   }, [isStreaming, selectedItem?.id, selectedItem?.type, selectedItem?.title, attachedFileIds, attachedLibraryMaterials, quotes, generationMode, startStream, clearDraft, setAiSuggestions, currentProjectId]);
+
+  /**
+   * Send a steering (follow-up) instruction while the agent is generating.
+   * The backend queues it and the agent picks it up at its next step, so the
+   * toast sets that expectation ("applies at the next step").
+   */
+  const handleSteer = useCallback(async (message: string) => {
+    if (!message.trim() || !isStreaming) return;
+    try {
+      await sendSteeringMessage(message);
+      toast.success(t("chat:input.steerSent"));
+    } catch (err) {
+      console.error("Failed to send steering message", err);
+      toast.error(t("chat:input.steerFailed"));
+    }
+  }, [isStreaming, sendSteeringMessage, t]);
 
   const handleIterationAssistAction = useCallback(
     (action: 'continue' | 'split' | 'manual') => {
@@ -1720,6 +1738,10 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
             disabled={isLoadingHistory}
             sendDisabled={isStreaming || isThinking || isLoadingHistory}
             onCancel={isStreaming ? handleCancel : undefined}
+            // Steering: while streaming with an active session, the user can send
+            // a follow-up instruction that the agent picks up at its next step.
+            onSteer={handleSteer}
+            canSteer={isStreaming && !!sessionId}
             placeholder={
               isStreaming || isThinking
                 ? t("chat:input.placeholderWhileProcessing")

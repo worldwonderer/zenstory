@@ -176,6 +176,14 @@ interface MessageInputProps {
   sendDisabled?: boolean;
   /** Callback to cancel an ongoing operation (shows cancel button when disabled) */
   onCancel?: () => void;
+  /**
+   * Callback to send a steering (follow-up) message while the agent is
+   * streaming. When provided together with `canSteer`, typing during
+   * generation and sending dispatches a steering message instead of a new turn.
+   */
+  onSteer?: (message: string) => void | Promise<void>;
+  /** Whether steering is currently available (agent streaming + active session). */
+  canSteer?: boolean;
   /** Custom placeholder text (defaults to i18n "chat:input.placeholder") */
   placeholder?: string;
   /** AI-generated context-aware suggestions to display */
@@ -268,6 +276,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   disabled = false,
   sendDisabled,
   onCancel,
+  onSteer,
+  canSteer = false,
   placeholder,
   aiSuggestions = [],
   suggestionDisplayState = aiSuggestions.length > 0 ? "ready" : "fallback",
@@ -285,6 +295,10 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   const textareaMinHeightPx = isMobile ? 44 : TEXTAREA_MIN_HEIGHT_PX;
   const effectiveSendDisabled = sendDisabled ?? disabled;
   const inputDisabled = disabled;
+  // Steering is offered while the agent is generating: the textarea stays
+  // editable and submitting dispatches a follow-up instruction instead of a
+  // brand-new turn.
+  const steerActive = canSteer && !!onSteer && !inputDisabled;
 
   const allStaticSuggestions = useMemo(() => {
     const raw = t("chat:input.staticSuggestions", { returnObjects: true }) as unknown;
@@ -529,10 +543,25 @@ export const MessageInput: React.FC<MessageInputProps> = ({
         return;
       }
     }
-    // Enter 发送
+    // Enter 发送（生成中且可追加时，发送补充指令）
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      if (steerActive) {
+        handleSteer();
+      } else {
+        handleSubmit();
+      }
+    }
+  };
+
+  const handleSteer = () => {
+    const trimmed = input.trim();
+    if (!trimmed || !onSteer) return;
+    void onSteer(trimmed);
+    setInput("");
+    setSkillTriggers([]);
+    if (textareaRef.current && layout === "auto") {
+      textareaRef.current.style.height = "auto";
     }
   };
 
@@ -575,7 +604,9 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     setTimeout(adjustHeight, 0);
   };
 
-  const displayPlaceholder = placeholder ?? t("chat:input.placeholder");
+  const displayPlaceholder = steerActive
+    ? t("chat:input.steerPlaceholder")
+    : (placeholder ?? t("chat:input.placeholder"));
   const generationModeLabel =
     generationMode === "fast" ? t("chat:input.mode.fast") : t("chat:input.mode.quality");
   const generationModeHint =
@@ -804,6 +835,16 @@ export const MessageInput: React.FC<MessageInputProps> = ({
         accessoryRows
       )}
 
+      {/* Steering hint: shown while the agent is generating and steering is available */}
+      {steerActive ? (
+        <div
+          className="text-xs text-[hsl(var(--text-secondary))] px-1"
+          data-testid="steer-hint"
+        >
+          {t("chat:input.steerHint")}
+        </div>
+      ) : null}
+
       {/* Input row */}
       <div
         className={
@@ -866,7 +907,18 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           data-testid="chat-input"
         />
 
-        {onCancel && effectiveSendDisabled ? (
+        {steerActive && input.trim() ? (
+          <button
+            onClick={handleSteer}
+            disabled={!input.trim()}
+            className={`shrink-0 flex items-center justify-center bg-[hsl(var(--accent-primary))] hover:bg-[hsl(var(--accent-dark))] disabled:bg-[hsl(var(--bg-tertiary))] disabled:cursor-not-allowed text-white rounded-lg transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_hsl(var(--bg-primary)),_0_0_0_4px_hsl(var(--accent-primary))] ${isMobile ? 'w-11 h-11' : 'w-9 h-9'}`}
+            title={t("chat:input.steerButton")}
+            aria-label={t("chat:input.steerButton")}
+            data-testid="steer-button"
+          >
+            <Send size={16} />
+          </button>
+        ) : onCancel && effectiveSendDisabled ? (
           <button
             onClick={handleCancel}
             className={`shrink-0 flex items-center justify-center bg-[hsl(var(--error))] hover:bg-[hsl(var(--error))] text-white rounded-lg transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_hsl(var(--bg-primary)),_0_0_0_4px_hsl(var(--error))] ${isMobile ? 'w-11 h-11' : 'w-9 h-9'}`}

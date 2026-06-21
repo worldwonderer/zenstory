@@ -459,6 +459,7 @@ class AgentService:
         # Initialize tracking variables before try block for exception safety
         all_tool_calls: list[dict[str, Any]] = []
         tool_call_index_by_id: dict[str, int] = {}
+        consumed_steering: list[str] = []
         assistant_response = ""
         reasoning_content = ""
         assistant_stop_reason: str | None = None
@@ -704,7 +705,14 @@ class AgentService:
             async def get_steering_messages():
                 """Get pending steering messages for agent loop."""
                 messages = await steering_queue.get_pending()
-                return [{"id": m.id, "content": m.content} for m in messages]
+                payload = [{"id": m.id, "content": m.content} for m in messages]
+                # Record what the run actually consumed so it can be persisted to
+                # chat history (otherwise node-boundary steering is lost on the
+                # next request).
+                consumed_steering.extend(
+                    str(item["content"]) for item in payload if item.get("content")
+                )
+                return payload
 
             try:
                 # Process through workflow stream
@@ -829,6 +837,7 @@ class AgentService:
                     assistant_stop_reason=assistant_stop_reason,
                     assistant_usage=assistant_usage,
                     assistant_status_cards=assistant_status_cards or None,
+                    steering_messages=consumed_steering or None,
                 )
                 if pending_done_payload is not None:
                     refs_candidate = pending_done_payload.get("refs")

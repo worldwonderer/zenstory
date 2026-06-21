@@ -28,6 +28,11 @@
   "input": {
     "placeholder": "Describe the character, scene, or plot you want to create...",
     "placeholderWhileProcessing": "AI is generating — you can type now and send when it finishes…",
+    "steerPlaceholder": "Add a follow-up instruction — applied at the next step…",
+    "steerButton": "Add instruction",
+    "steerHint": "AI is generating: what you send becomes a follow-up instruction, applied at the next step",
+    "steerSent": "Added — it will apply at the next step",
+    "steerFailed": "Failed to add, please retry",
     "mode": {
       "label": "Mode",
       "fast": "Fast",
@@ -133,6 +138,8 @@
     "stopReason": "Reason: {{reason}}",
     "handoffMessage": "Handing off to {{agent}}: {{reason}}",
     "parallelStart": "Starting {{count}} parallel tasks",
+    "parallelTaskCompleted": "✓ {{description}}",
+    "parallelTaskFailed": "✗ {{description}}: {{error}}",
     "parallelEnd": "Parallel execution complete: {{completed}}/{{total}} done, {{failed}} failed",
     "steeringReceived": "Supplementary instruction received: {{preview}}"
   },
@@ -143,6 +150,8 @@
     "delete_file": "Delete File",
     "query_files": "Query Files",
     "update_project": "Update Project Status",
+    "parallel_execute": "Parallel Execution",
+    "parallel_summary": "Ran {{total}} tasks in parallel: {{completed}} succeeded, {{failed}} failed",
     "processing": "Processing",
     "processing_ellipsis": "Processing...",
     "created": "Created {{type}}",
