@@ -8,6 +8,7 @@ Provides FastAPI router for agent endpoints:
 """
 
 import asyncio
+import contextlib
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 from services.auth import get_current_active_user
 from sqlmodel import Session
 
+from agent.core.events import error_event
 from agent.service import get_agent_service
 from core.error_codes import ErrorCode
 from core.error_handler import APIException
@@ -244,6 +246,20 @@ async def stream_request(
             except Exception:
                 unexpected_exception = True
                 billing_reason = "internal_exception"
+                # An exception escaping process_stream (e.g. a pre-stream setup
+                # failure resolving the chat session or a Redis/DB outage) would
+                # otherwise tear down the SSE connection with no terminal frame,
+                # leaving the client's stream consumer hung on a stuck spinner.
+                # Emit a terminal error frame first (only if none was sent yet)
+                # so the frontend always receives a definitive end-of-stream.
+                if not saw_terminal_event:
+                    saw_terminal_event = True
+                    with contextlib.suppress(Exception):
+                        yield error_event(
+                            "生成回复时发生错误，请重试",
+                            code="INTERNAL_ERROR",
+                            retryable=True,
+                        ).to_sse()
                 raise
             finally:
                 should_refund = False
@@ -266,6 +282,15 @@ async def stream_request(
                                 current_user.id,
                             )
                         else:
+                            # The shared request session may be in a failed
+                            # transaction state from the error that aborted the
+                            # stream. Reset it before the compensating refund;
+                            # otherwise release_ai_conversation's refresh/commit
+                            # raises PendingRollbackError, the refund silently
+                            # no-ops, and the user is over-charged for a run that
+                            # failed internally.
+                            with contextlib.suppress(Exception):
+                                session.rollback()
                             refund_applied = quota_service.release_ai_conversation(session, current_user.id)
                     except Exception as refund_error:
                         log_with_context(
