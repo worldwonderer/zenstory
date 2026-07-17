@@ -633,9 +633,14 @@ async def run_writing_workflow_streaming(
                 has_explicit_handoff = True
                 pending_next_agent = next_agent
                 pending_handoff_event_data = explicit_handoff_event_data
-                # Remove from workflow_agents if it was planned
+                # An explicit handoff JUMPS to the target: any earlier-planned
+                # stages are skipped, not deferred to run after it. Truncate up
+                # to AND including the target so leftover earlier-stage agents
+                # (e.g. hook_designer when planner hands straight to writer)
+                # don't later run out of order via the planned-handoff branch.
                 if next_agent in workflow_agents:
-                    workflow_agents.remove(next_agent)
+                    idx = workflow_agents.index(next_agent)
+                    del workflow_agents[: idx + 1]
                 if handoff_packet and handoff_packet.get("context"):
                     handoff_context = str(handoff_packet.get("context", ""))
             elif workflow_agents:

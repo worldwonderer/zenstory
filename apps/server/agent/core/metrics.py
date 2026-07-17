@@ -109,6 +109,12 @@ class Gauge:
         self.value -= amount
 
 
+# Cap retained histogram samples so a long-lived process can't grow an
+# unbounded list. Trimming is amortized O(1): we only slice when the list
+# reaches twice the cap, keeping the most recent HISTOGRAM_MAX_VALUES samples.
+HISTOGRAM_MAX_VALUES = 10000
+
+
 @dataclass
 class Histogram:
     """A histogram for tracking value distributions."""
@@ -118,6 +124,9 @@ class Histogram:
 
     def observe(self, value: float) -> None:
         self.values.append(value)
+        if len(self.values) > HISTOGRAM_MAX_VALUES * 2:
+            # Keep only the most recent samples (bounded memory over process life).
+            del self.values[:-HISTOGRAM_MAX_VALUES]
 
     def summary(self) -> dict[str, float]:
         """Get histogram summary statistics."""
