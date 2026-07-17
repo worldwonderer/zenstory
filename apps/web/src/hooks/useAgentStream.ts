@@ -349,9 +349,18 @@ export function useAgentStream(
     }
   }, []);
 
-  // Cleanup timers on unmount to avoid setState after unmount.
+  // Cleanup on unmount: abort the in-flight SSE stream and invalidate the epoch
+  // so no late callbacks fire, and clear pending timers. Without the abort, the
+  // fetch/ReadableStream reader keeps running after unmount (e.g. navigating away
+  // mid-stream), holding the connection open and keeping the backend agent run
+  // alive — wasted tokens/compute for the rest of the run.
   useEffect(() => {
     return () => {
+      streamEpochRef.current += 1;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
       clearFlushTimer();
       if (errorTimeoutRef.current) {
         clearTimeout(errorTimeoutRef.current);
