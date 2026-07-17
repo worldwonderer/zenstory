@@ -837,10 +837,40 @@ def _format_tool_result_overflow_backfill_context(backfills: list[dict[str, Any]
     return "\n".join(lines)
 
 
+def _extract_created_empty_file_id(result: dict[str, Any]) -> str:
+    """Pull the new file id out of a successful create_file MCP result envelope."""
+    try:
+        content = result.get("content") if isinstance(result, dict) else None
+        if not isinstance(content, list) or not content:
+            return ""
+        text = content[0].get("text", "") if isinstance(content[0], dict) else ""
+        payload = json.loads(text) if text else {}
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return ""
+        data = payload.get("data")
+        return data.get("id", "") if isinstance(data, dict) else ""
+    except Exception:
+        return ""
+
+
 async def create_file(args: dict[str, Any]) -> dict[str, Any]:
     """创建新文件。"""
     if _should_offload_tool_execution():
-        return await asyncio.to_thread(_run_sync_tool_with_owned_session_cleanup, _create_file_sync, args)
+        result = await asyncio.to_thread(
+            _run_sync_tool_with_owned_session_cleanup, _create_file_sync, args
+        )
+        # The pending-empty-file marker is a ContextVar. On the Postgres offload
+        # path _create_file_sync runs inside asyncio.to_thread, which executes in
+        # a COPIED context, so the marker it sets there never reaches this
+        # (event-loop) context. Re-apply it here so the consecutive-empty-file
+        # guard and the writing_graph abandoned-empty-file correction loop — both
+        # of which read has_pending_empty_file() in the main context — work in
+        # production, not just under SQLite (where no offload happens).
+        if not args.get("content", ""):
+            file_id = _extract_created_empty_file_id(result)
+            if file_id:
+                ToolContext.set_pending_empty_file(file_id, args.get("title", ""))
+        return result
     return _create_file_sync(args)
 
 
