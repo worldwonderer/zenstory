@@ -23,6 +23,12 @@ logger = get_logger(__name__)
 FILE_START_MARKER = "<file>"
 FILE_END_MARKER = "</file>"
 
+# Upper bound on the length of a (whitespace/case) marker variant, e.g.
+# "<  /  file  >". We retain this many trailing chars as "possibly part of an
+# end marker" so a variant split across stream chunks is never flushed as file
+# content before it can be reassembled and matched.
+MAX_MARKER_LEN = 32
+
 # 容错正则表达式 - 匹配各种 <file> 变体（避免误匹配 <filex>/<filename>）
 FILE_START_PATTERN = re.compile(
     r'<\s*[Ff][Ii][Ll][Ee]\b(?:\s+[^>]*)?>',
@@ -113,6 +119,10 @@ class StreamState(StrEnum):
     IDLE = "idle"
     WAITING_START = "waiting_start"
     WRITING = "writing"
+    # After a >1MB file body was force-completed we keep consuming (and
+    # discarding) the rest of the body until </file>, so the overflow tail is
+    # NOT rerouted into the chat transcript.
+    DRAINING = "draining"
 
 
 @dataclass
@@ -214,15 +224,23 @@ class StreamProcessor:
         if self.state == StreamState.WRITING:
             return self._process_writing(content)
 
+        if self.state == StreamState.DRAINING:
+            return self._process_draining(content)
+
         return StreamResult(conversation_content=content)
 
     def _process_waiting_start(self, content: str) -> StreamResult:
         """Process content while waiting for <file> marker."""
         self.temp_buffer += content
 
-        if FILE_START_MARKER in self.temp_buffer:
-            # Found start marker - split content
-            before_marker, after_marker = self.temp_buffer.split(FILE_START_MARKER, 1)
+        # Match against the accumulated buffer with the fault-tolerant regex (not
+        # the exact literal), so a case/whitespace variant marker split across
+        # chunks (e.g. "<FI" + "LE>") is still detected once reassembled.
+        start_match = FILE_START_PATTERN.search(self.temp_buffer)
+        if start_match:
+            # Found start marker - split content around the matched span
+            before_marker = self.temp_buffer[: start_match.start()]
+            after_marker = self.temp_buffer[start_match.end():]
 
             # Transition to writing state
             self.state = StreamState.WRITING
@@ -270,10 +288,10 @@ class StreamProcessor:
         """Process content while writing file."""
         self.temp_buffer += content
 
-        # 检测嵌套的 <file> 标记（异常情况）
+        # 检测嵌套的 <file> 标记（异常情况），容忍大小写/空白变体
         # 这可能是 LLM 幻觉或用户在内容中讨论 XML 标签
-        if FILE_START_MARKER in self.temp_buffer:
-            nested_count = self.temp_buffer.count(FILE_START_MARKER)
+        if FILE_START_PATTERN.search(self.temp_buffer):
+            nested_count = len(FILE_START_PATTERN.findall(self.temp_buffer))
             log_with_context(
                 logger,
                 30,  # WARNING
@@ -283,23 +301,27 @@ class StreamProcessor:
                 user_id=self.user_id,
                 file_id=self.file_id,
             )
-            # 替换所有嵌套的开始标记（不带 count 参数会替换所有）
-            self.temp_buffer = self.temp_buffer.replace(FILE_START_MARKER, '&lt;file&gt;')
+            # 转义所有嵌套的开始标记变体
+            self.temp_buffer = FILE_START_PATTERN.sub('&lt;file&gt;', self.temp_buffer)
 
-        if FILE_END_MARKER in self.temp_buffer:
-            return self._handle_end_marker()
+        end_match = FILE_END_PATTERN.search(self.temp_buffer)
+        if end_match:
+            return self._handle_end_marker(end_match)
 
-        # No end marker yet - check if we have safe content to send
-        marker_len = len(FILE_END_MARKER)
-        if len(self.temp_buffer) > marker_len:
-            return self._send_safe_content(marker_len)
+        # No end marker yet - check if we have safe content to send. Reserve a
+        # full marker-variant's worth of trailing chars (not just len('</file>'))
+        # so a split whitespace variant like "< /file >" is never flushed before
+        # it can be reassembled and matched.
+        if len(self.temp_buffer) > MAX_MARKER_LEN:
+            return self._send_safe_content(MAX_MARKER_LEN)
 
         # Buffer too small, just accumulate
         return StreamResult()
 
-    def _handle_end_marker(self) -> StreamResult:
+    def _handle_end_marker(self, end_match: "re.Match[str]") -> StreamResult:
         """Handle finding the </file> end marker."""
-        before_marker, after_marker = self.temp_buffer.split(FILE_END_MARKER, 1)
+        before_marker = self.temp_buffer[: end_match.start()]
+        after_marker = self.temp_buffer[end_match.end():]
 
         # Add remaining content to buffers
         if before_marker:
@@ -334,9 +356,9 @@ class StreamProcessor:
             conversation_content_after_file=after_marker if after_marker else "",
         )
 
-    def _send_safe_content(self, marker_len: int) -> StreamResult:
+    def _send_safe_content(self, reserve: int) -> StreamResult:
         """Send content that's safe (not potentially part of end marker)."""
-        safe_content = self.temp_buffer[:-marker_len]
+        safe_content = self.temp_buffer[:-reserve]
 
         # Check content_buffer size limit
         new_content_size = len(self.content_buffer) + len(safe_content)
@@ -350,12 +372,14 @@ class StreamProcessor:
                 buffer_size=new_content_size,
                 max_size=BUFFER_MAX_SIZE,
             )
-            # Return what we have and reset
+            # Force-complete the file at the size cap, then DRAIN the rest of the
+            # body until </file> instead of resetting to IDLE — a reset would
+            # reroute the (still-streaming) overflow tail into the chat transcript.
             final_content = self.content_buffer + safe_content
             content_length = len(final_content)
             file_id = self.file_id
 
-            self.reset()
+            self._begin_draining()
 
             return StreamResult(
                 file_content=safe_content,
@@ -369,12 +393,42 @@ class StreamProcessor:
         # Add to buffers and keep remaining in temp
         self.content_buffer += safe_content
         self.history_buffer += safe_content
-        self.temp_buffer = self.temp_buffer[-marker_len:]
+        self.temp_buffer = self.temp_buffer[-reserve:]
 
         return StreamResult(
             file_content=safe_content,
             file_id=self.file_id,
         )
+
+    def _begin_draining(self) -> None:
+        """Enter DRAINING after a force-completed (oversized) file.
+
+        The file content is already persisted up to the cap; from here we only
+        need enough tail buffer to detect the closing </file>.
+        """
+        self.state = StreamState.DRAINING
+        self.content_buffer = ""
+        self.history_buffer = ""
+        self.temp_buffer = ""
+
+    def _process_draining(self, content: str) -> StreamResult:
+        """Swallow the overflow tail of a force-completed file until </file>.
+
+        Content here is the discarded remainder of an oversized body; only text
+        AFTER the closing </file> is surfaced as normal conversation, so nothing
+        leaks into the chat transcript.
+        """
+        self.temp_buffer += content
+        end_match = FILE_END_PATTERN.search(self.temp_buffer)
+        if end_match:
+            after_marker = self.temp_buffer[end_match.end():]
+            self.reset()
+            return StreamResult(conversation_content=after_marker or "")
+
+        # Bound the drain buffer — only the tail is needed to spot a split </file>.
+        if len(self.temp_buffer) > MAX_MARKER_LEN:
+            self.temp_buffer = self.temp_buffer[-MAX_MARKER_LEN:]
+        return StreamResult()
 
     def finalize_on_stream_end(self) -> StreamResult:
         """
@@ -385,6 +439,12 @@ class StreamProcessor:
         - WRITING: auto-complete file content even without </file>
         """
         if self.state == StreamState.IDLE:
+            return StreamResult()
+
+        if self.state == StreamState.DRAINING:
+            # File was already force-completed at the size cap; discard the
+            # remaining (unterminated) overflow tail rather than leaking it.
+            self.reset()
             return StreamResult()
 
         if self.state == StreamState.WAITING_START:

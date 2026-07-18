@@ -207,15 +207,24 @@ class StreamAdapter:
         Yields:
             SSE StreamEvent objects for frontend consumption
         """
-        async for event in events:
-            if self._fatal_stream_error:
-                break
-            async for sse_event in self._process_workflow_event(event):
-                yield sse_event
+        try:
+            async for event in events:
                 if self._fatal_stream_error:
                     break
-            if self._fatal_stream_error:
-                break
+                async for sse_event in self._process_workflow_event(event):
+                    yield sse_event
+                    if self._fatal_stream_error:
+                        break
+                if self._fatal_stream_error:
+                    break
+        finally:
+            # Deterministically close the upstream generator (e.g. when we break
+            # early on a fatal stream error) so the runner's finally — which
+            # cancels its background pump task — runs now instead of at GC time.
+            aclose = getattr(events, "aclose", None)
+            if aclose is not None:
+                with contextlib.suppress(Exception):
+                    await aclose()
 
         # Flush pending <file> state when upstream stream ends unexpectedly.
         if (
