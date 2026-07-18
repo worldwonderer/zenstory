@@ -5,18 +5,28 @@ import React from "react";
 import type { PendingEdit } from "../../types";
 import { DiffReviewSplitView } from "../DiffReviewSplitView";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (_key: string, fallback?: string, options?: Record<string, unknown>) => {
-      if (!fallback) return _key;
-      if (!options) return fallback;
-      return Object.entries(options).reduce(
-        (acc, [k, v]) => acc.replaceAll(`{{${k}}}`, String(v)),
-        fallback
-      );
-    },
-  }),
-}));
+// Resolve against the real editor translation resources so titles/labels
+// match what users actually see. The component calls `t(key, options)` with
+// keys namespaced as `editor:<key>`.
+vi.mock("react-i18next", async () => {
+  const editorMessages = (
+    await import("../../../public/locales/zh/editor.json")
+  ).default as Record<string, string>;
+
+  return {
+    useTranslation: () => ({
+      t: (key: string, options?: Record<string, unknown>) => {
+        const bareKey = key.includes(":") ? key.split(":").pop()! : key;
+        const template = editorMessages[bareKey] ?? key;
+        if (!options) return template;
+        return Object.entries(options).reduce(
+          (acc, [k, v]) => acc.replaceAll(`{{${k}}}`, String(v)),
+          template
+        );
+      },
+    }),
+  };
+});
 
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({

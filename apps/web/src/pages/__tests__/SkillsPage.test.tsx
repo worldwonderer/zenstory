@@ -396,8 +396,10 @@ describe('SkillsPage', () => {
         expect(screen.getByText('Skills')).toBeInTheDocument()
       })
 
-      // Click on a category
-      const writingCategory = screen.getByRole('button', { name: 'Writing' })
+      // Click on a category. Use findByRole so the query waits for the category
+      // buttons to render — they can appear after the "Skills" heading, which made
+      // the synchronous getByRole flake on slower (CI) runs.
+      const writingCategory = await screen.findByRole('button', { name: 'Writing' })
       await userEvent.click(writingCategory)
 
       // API should be called with category filter

@@ -34,6 +34,17 @@ vi.mock('react-router-dom', () => ({
 }))
 
 // Mock react-i18next
+// The Header component calls t() with bare keys (no inline fallback string),
+// so resolve the keys the tests assert on to their real translation values
+// (see public/locales), matching the map convention used by sibling tests
+// like PublicHeader.test.tsx and BottomTabs.test.tsx.
+const headerTranslations: Record<string, string> = {
+  'editor:header.projectDashboard': '项目统计',
+  'editor:header.helpDocs': '帮助文档',
+  'common:feedback.entry': '问题反馈',
+  'dashboard:billing.ctaUpgradePro': '升级专业版',
+}
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (
@@ -51,7 +62,7 @@ vi.mock('react-i18next', () => ({
           ? fallbackOrOptions
           : typeof options.defaultValue === 'string'
             ? options.defaultValue
-            : key
+            : headerTranslations[key] ?? key
 
       return Object.keys(options).reduce((result, optionKey) => {
         return result.replace(new RegExp(`{{\\s*${optionKey}\\s*}}`, 'g'), String(options[optionKey]))
