@@ -13,6 +13,23 @@ text anchors in content even when there are minor differences.
 import unicodedata
 from difflib import SequenceMatcher
 
+# --- Approximate-match safety limits -------------------------------------
+# Approximate (character-level fuzzy) matching is a best-effort *tertiary*
+# fallback used only after exact and punctuation-insensitive fuzzy matching
+# both fail. Its sliding-window + SequenceMatcher scan is O(windows × N × P),
+# which on a full novel chapter can spin the CPU for seconds to minutes and,
+# in the default SQLite deployment, block the asyncio event loop (stalling the
+# SSE stream). When the input is too large we skip it and let the caller fall
+# through to the helpful "copy a longer/unique snippet" error instead.
+MAX_APPROX_CONTENT_LEN = 5000  # normalized chars; skip approximate scan above this
+MAX_APPROX_WORK = 800_000  # ceiling on window_count × len(norm_content)
+
+# Minimum score gap between the best window and the best *non-overlapping*
+# runner-up. If a different, distant passage scores nearly as high, the match
+# is ambiguous and we refuse to auto-apply it (which would silently overwrite
+# the wrong passage). Mirrors find_unique_line_span's min_gap.
+MIN_APPROX_GAP = 0.08
+
 
 def normalize_for_fuzzy_match(
     s: str,
@@ -151,40 +168,89 @@ def find_approximate_match(
         return None
 
     pattern_len = len(norm_pattern)
-    best_match: tuple[int, int, float, str] | None = None
-    best_score = 0.0
 
     # Sliding window with some tolerance for length variation
     window_min = max(min_pattern_len, int(pattern_len * 0.7))
     window_max = int(pattern_len * 1.3)
+    window_count = max(0, window_max - window_min + 1)
+
+    # Safety guard: approximate matching is a best-effort fallback. On large
+    # inputs the scan is prohibitively expensive (and would block the event
+    # loop), so bail out and let the caller surface the helpful
+    # "copy a longer/unique snippet" error instead of hanging.
+    if (
+        len(norm_content) > MAX_APPROX_CONTENT_LEN
+        or window_count * len(norm_content) > MAX_APPROX_WORK
+    ):
+        return None
+
+    pattern_char_set = set(norm_pattern)
+    min_common = len(pattern_char_set) * 0.5
+    min_similarity = 1.0 - max_error_rate
+
+    # Reuse a single SequenceMatcher with a fixed second sequence so its
+    # autojunk/b2j index is built once instead of per-window, and gate the
+    # expensive ratio() behind the cheap real_quick_ratio()/quick_ratio()
+    # upper bounds.
+    matcher = SequenceMatcher(None)
+    matcher.set_seq2(norm_pattern)
+
+    # Collect every window at/above the similarity threshold, then decide the best
+    # window and its best NON-OVERLAPPING runner-up AFTER the scan. The gate must
+    # prune only below-threshold windows (not below the running best) — otherwise a
+    # genuine near-tie runner-up would be gated out and the ambiguity guard would
+    # never see it. Deciding after the scan also makes the runner-up order-
+    # independent (a shifted window of the true match no longer inflates it).
+    candidates: list[tuple[tuple[int, int], float]] = []  # ((start, end), score)
 
     for window_size in range(window_min, window_max + 1):
         for i in range(len(norm_content) - window_size + 1):
             window = norm_content[i:i + window_size]
 
             # Quick pre-filter: check if at least some characters overlap
-            common = set(norm_pattern) & set(window)
-            if len(common) < len(set(norm_pattern)) * 0.5:
+            if len(pattern_char_set & set(window)) < min_common:
                 continue
 
-            # Calculate similarity
-            score = SequenceMatcher(None, norm_pattern, window).ratio()
+            matcher.set_seq1(window)
+            # Cheap upper bounds first: skip windows that cannot even reach the
+            # similarity threshold (quick_ratio/real_quick_ratio are upper bounds).
+            if (
+                matcher.real_quick_ratio() < min_similarity
+                or matcher.quick_ratio() < min_similarity
+            ):
+                continue
 
-            if score > best_score:
-                best_score = score
-                # Map back to original positions
-                start_orig = map_content[i]
-                end_idx = min(i + window_size - 1, len(map_content) - 1)
-                end_orig = map_content[end_idx] + 1
-                matched_text = content[start_orig:end_orig]
-                best_match = (start_orig, end_orig, score, matched_text)
+            score = matcher.ratio()
+            if score >= min_similarity:
+                candidates.append(((i, i + window_size), score))
 
-    # Only return if similarity is above threshold
-    min_similarity = 1.0 - max_error_rate
-    if best_match and best_match[2] >= min_similarity:
-        return best_match
+    if not candidates:
+        return None
 
-    return None
+    best_span, best_score = max(candidates, key=lambda c: c[1])
+
+    # Best score among windows that do NOT overlap the chosen best window.
+    def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
+        return a[0] < b[1] and b[0] < a[1]
+
+    second_best_score = 0.0
+    for span, score in candidates:
+        if span == best_span:
+            continue
+        if not _overlaps(span, best_span):
+            second_best_score = max(second_best_score, score)
+
+    # Refuse ambiguous matches: if a different, distant passage scores nearly as
+    # high, auto-applying would risk silently overwriting the wrong text.
+    if (best_score - second_best_score) < MIN_APPROX_GAP:
+        return None
+
+    start_i, end_i = best_span
+    start_orig = map_content[start_i]
+    end_idx = min(end_i - 1, len(map_content) - 1)
+    end_orig = map_content[end_idx] + 1
+    matched_text = content[start_orig:end_orig]
+    return (start_orig, end_orig, best_score, matched_text)
 
 
 def build_span_previews(

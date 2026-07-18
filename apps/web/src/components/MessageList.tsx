@@ -1288,6 +1288,9 @@ export const MessageList = React.memo(
   if (prevProps.streamingMessageId !== nextProps.streamingMessageId) return false;
   if (prevProps.onUndo !== nextProps.onUndo) return false;
   if (prevProps.onSubmitFeedback !== nextProps.onSubmitFeedback) return false;
+  // The iteration-exhausted action buttons call this; omitting it here let the
+  // buttons keep invoking a stale closure after the parent re-created it.
+  if (prevProps.onIterationAssistAction !== nextProps.onIterationAssistAction) return false;
   if (prevProps.feedbackPendingMessageId !== nextProps.feedbackPendingMessageId) return false;
   if (prevProps.streamingThinkingContent !== nextProps.streamingThinkingContent) return false;
   if (prevProps.isThinking !== nextProps.isThinking) return false;

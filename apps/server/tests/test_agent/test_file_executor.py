@@ -1306,3 +1306,117 @@ def test_delete_file_with_no_children(executor, test_project, db_session):
 
     db_session.refresh(file)
     assert file.is_deleted is True
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: exact-match branch must honour the same uniqueness /
+# occurrence guards as the fuzzy path (previously it silently edited the first
+# of several occurrences and ignored `occurrence`).
+# ---------------------------------------------------------------------------
+
+
+def test_edit_insert_after_ambiguous_exact_anchor_aborts(executor, test_project, db_session):
+    """Repeated exact anchor without occurrence must abort, not edit the first."""
+    file = File(
+        project_id=test_project.id,
+        title="Draft",
+        file_type="draft",
+        content="第一章\n内容A\n第一章\n内容B\n第一章\n内容C",
+    )
+    db_session.add(file)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="多个位置"):
+        executor.edit_file(
+            id=file.id,
+            edits=[{"op": "insert_after", "anchor": "第一章", "text": "X"}],
+        )
+
+    # File must be untouched.
+    db_session.refresh(file)
+    assert file.content == "第一章\n内容A\n第一章\n内容B\n第一章\n内容C"
+
+
+def test_edit_insert_after_exact_anchor_honours_occurrence(executor, test_project, db_session):
+    """occurrence=2 must target the second exact occurrence, not the first."""
+    file = File(
+        project_id=test_project.id,
+        title="Draft",
+        file_type="draft",
+        content="AAA-1 MARK AAA-2 MARK AAA-3",
+    )
+    db_session.add(file)
+    db_session.commit()
+
+    result = executor.edit_file(
+        id=file.id,
+        edits=[{"op": "insert_after", "anchor": "MARK", "text": "[X]", "occurrence": 2}],
+    )
+
+    assert result["edits_applied"] == 1
+    db_session.refresh(file)
+    # Inserted after the SECOND "MARK".
+    assert file.content == "AAA-1 MARK AAA-2 MARK[X] AAA-3"
+
+
+def test_edit_replace_ambiguous_exact_aborts(executor, test_project, db_session):
+    """Non-replace_all exact replace with multiple matches must abort."""
+    file = File(
+        project_id=test_project.id,
+        title="Draft",
+        file_type="draft",
+        content="repeat token here and repeat token there",
+    )
+    db_session.add(file)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="多个位置"):
+        executor.edit_file(
+            id=file.id,
+            edits=[{"op": "replace", "old": "repeat token", "new": "X"}],
+        )
+
+    db_session.refresh(file)
+    assert file.content == "repeat token here and repeat token there"
+
+
+def test_edit_replace_all_still_replaces_every_exact_match(executor, test_project, db_session):
+    """replace_all remains the escape hatch for repeated exact text."""
+    file = File(
+        project_id=test_project.id,
+        title="Draft",
+        file_type="draft",
+        content="dup and dup and dup",
+    )
+    db_session.add(file)
+    db_session.commit()
+
+    result = executor.edit_file(
+        id=file.id,
+        edits=[{"op": "replace", "old": "dup", "new": "X", "replace_all": True}],
+    )
+
+    assert result["edits_applied"] == 1
+    db_session.refresh(file)
+    assert file.content == "X and X and X"
+
+
+def test_edit_delete_ambiguous_exact_aborts(executor, test_project, db_session):
+    """Exact delete with multiple matches must abort instead of deleting the first."""
+    file = File(
+        project_id=test_project.id,
+        title="Draft",
+        file_type="draft",
+        content="keep DELME keep DELME keep",
+    )
+    db_session.add(file)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="多个位置"):
+        executor.edit_file(
+            id=file.id,
+            edits=[{"op": "delete", "old": "DELME"}],
+        )
+
+    db_session.refresh(file)
+    assert file.content == "keep DELME keep DELME keep"

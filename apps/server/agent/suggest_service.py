@@ -390,6 +390,35 @@ class SuggestService:
             if msg.role in ("user", "assistant")
         ]
 
+    @staticmethod
+    def _coerce_suggestions(data: Any) -> list:
+        """Extract the suggestion list from either an object or a bare array."""
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            got = data.get("suggestions", [])
+            return got if isinstance(got, list) else []
+        return []
+
+    @staticmethod
+    def _extract_json_blob(response: str) -> str | None:
+        """Locate the first JSON object or array blob in a (possibly noisy) response.
+
+        Prefers an object when present (``{"suggestions": [...]}``); otherwise
+        falls back to a bare top-level array (``[...]``).
+        """
+        obj_start = response.find("{")
+        obj_end = response.rfind("}")
+        if obj_start >= 0 and obj_end > obj_start:
+            return response[obj_start : obj_end + 1]
+
+        arr_start = response.find("[")
+        arr_end = response.rfind("]")
+        if arr_start >= 0 and arr_end > arr_start:
+            return response[arr_start : arr_end + 1]
+
+        return None
+
     def _parse_json_suggestions(self, response: str) -> list[str]:
         """
         Parse suggestions from LLM JSON response with repair.
@@ -405,13 +434,14 @@ class SuggestService:
 
         # Try standard JSON parsing first
         try:
-            # Extract JSON from response (may be surrounded by text)
-            json_start = response.find("{")
-            json_end = response.rfind("}")
-            if json_start >= 0 and json_end > json_start:
-                json_str = response[json_start : json_end + 1]
+            # Extract JSON from response (may be surrounded by text). Accept both
+            # an object ({"suggestions": [...]}) and a bare top-level array
+            # ([...]) — the prompt's example invites the array shape, which was
+            # previously discarded (list has no .get -> canned fallback).
+            json_str = self._extract_json_blob(response)
+            if json_str:
                 data = json.loads(json_str)
-                suggestions = data.get("suggestions", [])
+                suggestions = self._coerce_suggestions(data)
                 valid = self._validate_suggestions(suggestions)
                 if valid:
                     log_with_context(
@@ -435,7 +465,7 @@ class SuggestService:
 
             repaired = repair_json(response)
             data = json.loads(repaired)
-            suggestions = data.get("suggestions", [])
+            suggestions = self._coerce_suggestions(data)
             valid = self._validate_suggestions(suggestions)
             if valid:
                 log_with_context(

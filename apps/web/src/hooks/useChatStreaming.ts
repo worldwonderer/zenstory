@@ -12,7 +12,7 @@
  * @module hooks/useChatStreaming
  */
 
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
   AgentContextItem,
@@ -662,6 +662,22 @@ export function useChatStreaming(): UseChatStreamingReturn {
   const fileTreeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+
+  // Clear pending timers on unmount so a queued throttle flush or debounced
+  // file-tree refresh can't fire (and touch state / trigger a refetch) after
+  // the consumer has unmounted.
+  useEffect(() => {
+    return () => {
+      if (throttleTimeoutRef.current) {
+        clearTimeout(throttleTimeoutRef.current);
+        throttleTimeoutRef.current = null;
+      }
+      if (fileTreeRefreshTimerRef.current) {
+        clearTimeout(fileTreeRefreshTimerRef.current);
+        fileTreeRefreshTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // ========================================
   // Utility functions

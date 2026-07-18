@@ -936,6 +936,14 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
     try {
       const historyMessages = await getRecentMessages(projectId, 50);
 
+      // A slow request for a previous project must not clobber the now-active
+      // project's messages. Every sibling async path guards on this ref; this
+      // one previously did not, so a late-resolving fetch could render the wrong
+      // project's conversation under the newly-selected project.
+      if (currentProjectIdRef.current !== projectId) {
+        return [];
+      }
+
       // Convert to Message format
       const loadedMessages: Message[] = historyMessages.map((msg) => {
         const feedback = parseMessageFeedbackFromMetadata(msg.metadata);
@@ -959,6 +967,11 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
       return loadedMessages;
     } catch (err) {
       logger.error("Failed to load chat history:", err);
+      // Don't clear the active project's messages if this failure belongs to a
+      // stale (previous-project) request.
+      if (currentProjectIdRef.current !== projectId) {
+        return [];
+      }
       // Don't show error to user, just start fresh
       setMessages([]);
       setFeedbackPendingMessageId(null);
@@ -1202,7 +1215,8 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
 
   // Check for inspiration from Dashboard and auto-send
   const inspirationProcessedRef = useRef<Set<string>>(new Set());
-  
+  const inspirationSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!currentProjectId || isLoadingHistory || isStreaming) return;
     
@@ -1220,23 +1234,33 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
         const isRecent = Date.now() - timestamp < 5 * 60 * 1000;
         
         if (isRecent && content) {
-          // Mark as processed and clear storage
-          inspirationProcessedRef.current.add(currentProjectId);
-          localStorage.removeItem(inspirationKey);
-          
           // Build prompt with actual user inspiration content
-          const typeLabel = projectType === 'novel' ? t('chat:projectType.novel.name') 
-            : projectType === 'short' ? t('chat:projectType.short.name') 
+          const typeLabel = projectType === 'novel' ? t('chat:projectType.novel.name')
+            : projectType === 'short' ? t('chat:projectType.short.name')
             : t('chat:projectType.screenplay.name');
-          
+
           const prompt = t('chat:message.createProject', {
             type: typeLabel,
             typeLabel,
             content,
           });
-          
-          // Delay slightly to ensure UI is ready
-          setTimeout(() => {
+
+          // Delay slightly to ensure UI is ready. Tracked in a ref so it can be
+          // cleared on unmount/deps-change, otherwise a stray auto-send could
+          // fire after the user has navigated away.
+          // The "processed" mark and localStorage removal are deferred to the
+          // timer callback: if this effect re-runs within the 500ms window (e.g.
+          // handleSendMessage is recreated), the cleanup clears the pending timer
+          // and the re-run must be able to reschedule — marking processed up front
+          // would permanently drop the auto-send.
+          const projectIdForSend = currentProjectId;
+          if (inspirationSendTimerRef.current) {
+            clearTimeout(inspirationSendTimerRef.current);
+          }
+          inspirationSendTimerRef.current = setTimeout(() => {
+            inspirationSendTimerRef.current = null;
+            inspirationProcessedRef.current.add(projectIdForSend);
+            localStorage.removeItem(inspirationKey);
             handleSendMessage(prompt);
           }, 500);
         } else {
@@ -1248,6 +1272,13 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
         localStorage.removeItem(inspirationKey);
       }
     }
+
+    return () => {
+      if (inspirationSendTimerRef.current) {
+        clearTimeout(inspirationSendTimerRef.current);
+        inspirationSendTimerRef.current = null;
+      }
+    };
   }, [currentProjectId, isLoadingHistory, isStreaming, handleSendMessage, t]);
 
   /**

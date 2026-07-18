@@ -1111,3 +1111,71 @@ async def test_request_clarification_requires_question():
     payload = _parse_payload(result)
     assert payload["status"] == "error"
     assert "question is required" in payload["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_create_empty_file_sets_pending_marker_on_offload_path(db_session):
+    """Regression: the pending-empty-file marker must survive the Postgres-style
+    offload path.
+
+    _create_file_sync sets the marker via a ContextVar. When create_file offloads
+    it with asyncio.to_thread (production/Postgres), that runs in a COPIED context
+    so the marker is lost in the caller's context — disabling the
+    consecutive-empty-file guard and the writing_graph correction loop. The async
+    wrapper must re-apply it here.
+    """
+    from agent.tools.mcp_tools import ToolContext
+    from models import File, Project, User
+
+    suffix = uuid4().hex[:8]
+    user = User(
+        email=f"mcp-empty-{suffix}@example.com",
+        username=f"mcp_empty_{suffix}",
+        hashed_password="hashed",
+        email_verified=True,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    project = Project(
+        name=f"MCP Empty File Project {suffix}",
+        owner_id=user.id,
+        project_type="novel",
+    )
+    db_session.add(project)
+    db_session.commit()
+    db_session.refresh(project)
+
+    ToolContext.set_context(
+        session=db_session,
+        user_id=user.id,
+        project_id=project.id,
+        session_id="sess-empty",
+    )
+    ToolContext.clear_pending_empty_file()
+    try:
+        # Force the offload branch so the sync impl runs inside asyncio.to_thread
+        # (a copied context), reproducing the production Postgres path.
+        with patch(
+            "agent.tools.mcp_tools._should_offload_tool_execution",
+            return_value=True,
+        ):
+            result = await create_file({
+                "title": "空章节",
+                "file_type": "draft",
+                "content": "",  # empty -> expects <file>…</file> streaming to follow
+            })
+
+        payload = _parse_payload(result)
+        assert payload["status"] == "success"
+        # The marker must be visible in THIS (caller/event-loop) context.
+        assert ToolContext.has_pending_empty_file() is True
+        pending = ToolContext.get_pending_empty_file()
+        assert pending is not None
+        assert pending["file_id"] == payload["data"]["id"]
+    finally:
+        ToolContext.clear_pending_empty_file()
+        ToolContext.clear_context()

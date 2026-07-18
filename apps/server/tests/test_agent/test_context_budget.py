@@ -417,10 +417,16 @@ class TestTokenBudget:
         assert budget.get_budget(ContextPriority.INSPIRATION) == 0
 
     def test_select_items_partial_priority_group(self):
-        """Test selecting when only part of a priority group fits."""
+        """Test selecting when only part of a priority group fits the total budget.
+
+        CRITICAL is the must-include tier and may draw on the whole budget when
+        no lower-priority items compete for it, so the total content must exceed
+        ``max_tokens`` (not merely CRITICAL's nominal share) to force partial
+        selection.
+        """
         budget = TokenBudget(max_tokens=100)
 
-        # Create items that won't all fit in CRITICAL budget (30 tokens)
+        # Total ~150 tokens of CRITICAL content against a 100-token budget.
         items = [
             ContextItem.from_outline(
                 id=str(i),
@@ -428,16 +434,16 @@ class TestTokenBudget:
                 content="x" * 40,  # ~10 tokens each
                 is_focus=True,
             )
-            for i in range(5)  # Total ~50 tokens, budget is 30
+            for i in range(15)
         ]
 
         selected, budget_used = budget.select_items(items)
 
         # Should select some but not all items
         assert len(selected) >= 2
-        assert len(selected) < 5
-        # CRITICAL budget should be mostly used
-        assert budget_used[ContextPriority.CRITICAL] <= 30 * 1.2
+        assert len(selected) < 15
+        # CRITICAL may use up to the full budget when nothing else competes.
+        assert budget_used[ContextPriority.CRITICAL] <= 100 * 1.2
 
     def test_select_items_continues_after_oversized_item(self):
         """Test selecting continues scanning when an early item doesn't fit."""

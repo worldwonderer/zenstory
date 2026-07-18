@@ -13,7 +13,7 @@ Extracted from the monolithic file_executor.py for better maintainability.
 from typing import Any
 
 from services.file_version import FileVersionService
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from agent.tools.permissions import check_project_ownership
 from config.datetime_utils import utcnow
@@ -33,6 +33,19 @@ from .text_matching import (
 )
 
 logger = get_logger(__name__)
+
+
+def _exact_spans(content: str, sub: str, limit: int = 3) -> list[tuple[int, int]]:
+    """Return up to ``limit`` non-overlapping (start, end) spans of ``sub``."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while len(spans) < limit:
+        k = content.find(sub, start)
+        if k < 0:
+            break
+        spans.append((k, k + len(sub)))
+        start = k + len(sub)
+    return spans
 
 
 class FileEditor:
@@ -98,8 +111,20 @@ class FileEditor:
             ValueError: If file not found or edit operation fails
             PermissionError: If user doesn't have permission
         """
-        # Get file
-        file = self.session.get(File, id)
+        # Get file. On PostgreSQL take a row lock so concurrent edit_file tasks
+        # (parallel_execute runs each on its own session) targeting the SAME file
+        # serialize: the second SELECT ... FOR UPDATE blocks until the first
+        # commits and then re-reads the updated content, preventing a lost update
+        # where the later commit overwrites the earlier edit. SQLite has no row
+        # locking (and its file lock already serializes writers), so fall back.
+        from database import is_postgres
+
+        if is_postgres:
+            file = self.session.exec(
+                select(File).where(File.id == id).with_for_update()
+            ).first()
+        else:
+            file = self.session.get(File, id)
 
         if not file or file.is_deleted:
             # Do not leak internal IDs to end users
@@ -269,6 +294,57 @@ class FileEditor:
             "warnings": warnings,
         }
 
+    @staticmethod
+    def _select_exact_occurrence_start(
+        content: str,
+        sub: str,
+        occurrence: Any,
+        match_count: int,
+        edit_index: int,
+        *,
+        label: str,
+    ) -> int:
+        """Resolve the start index for an exact-substring op.
+
+        Enforces the same uniqueness/occurrence guards the fuzzy path already
+        applies, so the exact-match fast path can no longer silently edit the
+        first of several occurrences or ignore a caller-supplied ``occurrence``:
+
+        - ``occurrence`` is None and ``sub`` appears more than once -> abort
+          (ambiguous) instead of editing the first occurrence.
+        - ``occurrence`` provided -> validate its range and select that
+          (1-based, non-overlapping) occurrence.
+        """
+        if occurrence is None:
+            if match_count > 1:
+                previews = build_span_previews(content, _exact_spans(content, sub))
+                raise ValueError(
+                    f"Edit {edit_index}: {label}匹配到多个位置（{match_count}处），"
+                    f"为避免定位到错误位置已中止。请提供更长且更唯一的{label}，"
+                    f"或指定 occurrence。候选片段: {previews}"
+                )
+            return content.find(sub)
+
+        try:
+            occ = int(occurrence)
+        except Exception as e:
+            raise ValueError(
+                f"Edit {edit_index}: occurrence must be an integer when provided"
+            ) from e
+        if occ <= 0 or occ > match_count:
+            raise ValueError(
+                f"Edit {edit_index}: occurrence out of range (1..{match_count})"
+            )
+
+        start = -1
+        search_from = 0
+        for _ in range(occ):
+            start = content.find(sub, search_from)
+            if start < 0:
+                break
+            search_from = start + len(sub)
+        return start
+
     def _apply_replace(
         self,
         content: str,
@@ -306,10 +382,21 @@ class FileEditor:
                     "count": count,
                 })
             else:
+                match_count = content.count(old_text)
+                if match_count > 1:
+                    # Mirror the fuzzy path: refuse an ambiguous single replace
+                    # instead of silently replacing the first occurrence.
+                    previews = build_span_previews(content, _exact_spans(content, old_text))
+                    raise ValueError(
+                        f"Edit {edit_index}: 原文片段匹配到多个位置（{match_count}处），"
+                        f"为避免误改已中止。请提供更长且更唯一的原文，或设置 replace_all=true。"
+                        f"候选片段: {previews}"
+                    )
                 content = content.replace(old_text, new_text, 1)
                 applied_edits.append({
                     "op": "replace",
                     "match_mode": "exact",
+                    "match_count": match_count,
                     "old_preview": old_text[:200] + ("..." if len(old_text) > 200 else ""),
                     "new_preview": new_text[:200] + ("..." if len(new_text) > 200 else ""),
                 })
@@ -412,7 +499,10 @@ class FileEditor:
 
         if anchor in content:
             match_count = content.count(anchor)
-            pos = content.find(anchor) + len(anchor)
+            start = self._select_exact_occurrence_start(
+                content, anchor, occurrence, match_count, edit_index, label="锚点"
+            )
+            pos = start + len(anchor)
             content = content[:pos] + text + content[pos:]
             applied_edits.append({
                 "op": "insert_after",
@@ -542,7 +632,9 @@ class FileEditor:
 
         if anchor in content:
             match_count = content.count(anchor)
-            pos = content.find(anchor)
+            pos = self._select_exact_occurrence_start(
+                content, anchor, occurrence, match_count, edit_index, label="锚点"
+            )
             content = content[:pos] + text + content[pos:]
             applied_edits.append({
                 "op": "insert_before",
@@ -670,10 +762,20 @@ class FileEditor:
             return content
 
         if old_text in content:
+            match_count = content.count(old_text)
+            if match_count > 1:
+                # Mirror the fuzzy path: refuse an ambiguous delete instead of
+                # silently deleting the first occurrence.
+                previews = build_span_previews(content, _exact_spans(content, old_text))
+                raise ValueError(
+                    f"Edit {edit_index}: 删除片段匹配到多个位置（{match_count}处），"
+                    f"为避免误删已中止。请提供更长且更唯一的原文。候选片段: {previews}"
+                )
             content = content.replace(old_text, "", 1)
             applied_edits.append({
                 "op": "delete",
                 "match_mode": "exact",
+                "match_count": match_count,
                 "deleted_preview": old_text[:200] + ("..." if len(old_text) > 200 else ""),
             })
         else:

@@ -7,7 +7,7 @@ to fit within prompt limits.
 
 from typing import Any
 
-from agent.utils.token_utils import CHARS_PER_TOKEN, estimate_text_tokens
+from agent.utils.token_utils import _chars_per_token_for, estimate_text_tokens
 
 from ..schemas.context import ContextItem, ContextPriority
 
@@ -236,10 +236,42 @@ class TokenBudget:
                     priority_groups[p] = []
                 priority_groups[p].append(item)
 
-        # Process each priority level in order
-        for priority in ContextPriority.priority_order():
+        order = ContextPriority.priority_order()
+
+        # Each priority's actual demand (how much it would use if unconstrained).
+        demand: dict[ContextPriority, int] = {
+            p: sum(self.estimate_item_tokens(it) for it in priority_groups.get(p, []))
+            for p in order
+        }
+
+        # Process each priority level in order (highest first).
+        #
+        # CRITICAL is the "must include" tier: it holds the focus file, user
+        # text quotes, and user-attached files/materials. Previously it was
+        # hard-capped at its nominal share (30%), so explicitly-attached content
+        # was truncated or dropped even when the rest of the budget sat empty.
+        # Let CRITICAL draw on whatever lower tiers won't use — reserving each
+        # lower tier only up to the smaller of its share and its real demand, so
+        # they stay protected and the total can never exceed max_tokens.
+        #
+        # Lower tiers keep their fixed per-share caps here (unchanged behaviour);
+        # generalising the pooling to them requires also budgeting formatting
+        # overhead and is intentionally left as a follow-up.
+        for priority in order:
             group_items = priority_groups.get(priority, [])
-            budget = self.get_budget(priority)
+
+            if priority == ContextPriority.CRITICAL:
+                reserved_for_lower = sum(
+                    min(self.get_budget(p), demand[p])
+                    for p in order
+                    if p != ContextPriority.CRITICAL
+                )
+                budget = max(
+                    self.get_budget(priority),
+                    self.max_tokens - reserved_for_lower,
+                )
+            else:
+                budget = self.get_budget(priority)
             used = 0
 
             for item in group_items:
@@ -289,14 +321,30 @@ class TokenBudget:
         if content_tokens < 20:
             return None
 
-        # Truncate content
-        max_chars = content_tokens * CHARS_PER_TOKEN
+        # Truncate content using the SAME language-aware chars/token ratio the
+        # estimator uses (~2 chars/token for CJK, ~4 for Latin). A fixed ratio
+        # of 4 would keep ~2x too many characters for Chinese content, so the
+        # "truncated" item would still overflow the budget it was told to fit.
+        cpt = _chars_per_token_for(item.content)
+        max_chars = max(1, int(content_tokens * cpt))
         content = item.content[:max_chars]
 
-        # Try to cut at a sentence or word boundary
+        # Guard against estimator/heuristic mismatch (tiktoken's true CJK ratio
+        # is lower than the heuristic): shrink until it actually measures within
+        # the token budget.
+        guard = 0
+        while (
+            content
+            and self.estimate_tokens(f"{item.title}\n{content}") > max_tokens
+            and guard < 40
+        ):
+            content = content[: max(1, int(len(content) * 0.85))]
+            guard += 1
+
+        # Try to cut at a sentence or word boundary near the end.
         for sep in ["。", ".", "！", "!", "？", "?", "\n", "，", ",", " "]:
             last_sep = content.rfind(sep)
-            if last_sep > max_chars * 0.6:
+            if last_sep > len(content) * 0.6:
                 content = content[:last_sep + 1]
                 break
 

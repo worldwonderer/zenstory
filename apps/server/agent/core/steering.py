@@ -355,9 +355,14 @@ class RedisSteeringQueue:
 
         client = get_redis_client()
         # Atomically read all queued messages and clear them in one transaction.
+        # get_pending() is polled at every node/tool boundary, so refreshing the
+        # owner key's TTL here acts as a poll-driven heartbeat that keeps the
+        # session alive for the whole stream instead of letting it expire after
+        # the fixed 1h TTL mid-run (which would 404 subsequent steering posts).
         pipe = client.pipeline(transaction=True)
         pipe.lrange(_msgs_key(self.session_id), 0, -1)
         pipe.delete(_msgs_key(self.session_id))
+        pipe.expire(_owner_key(self.session_id), _STEERING_TTL_S)
         results = pipe.execute()
         return list(results[0] or [])
 

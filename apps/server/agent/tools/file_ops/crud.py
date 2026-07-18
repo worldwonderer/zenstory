@@ -27,6 +27,7 @@ from models import File
 from models.file_version import (
     CHANGE_SOURCE_AI,
     CHANGE_TYPE_AI_EDIT,
+    CHANGE_TYPE_CREATE,
 )
 from utils.logger import get_logger, log_with_context
 from utils.title_sequence import (
@@ -406,6 +407,18 @@ class FileCRUD:
         self.session.add(file)
         self.session.commit()
         self.session.refresh(file)
+
+        # Snapshot the initial content so the pre-first-edit original is
+        # recoverable via version history, mirroring update_file/edit_file.
+        # Empty create + streaming is unaffected: it gets version 1 from the
+        # subsequent update_file that writes the streamed body.
+        if content:
+            self._create_version(
+                file.id,
+                content,
+                change_type=CHANGE_TYPE_CREATE,
+                change_summary="创建文件",
+            )
 
         # Fire-and-forget vector index upsert (do not block)
         self._schedule_index_upsert(file, metadata)
@@ -926,8 +939,15 @@ class FileCRUD:
             return None
         return json.dumps(metadata)
 
-    def _create_version(self, file_id: str, content: str) -> None:
-        """Create version history for AI edit using an independent session.
+    def _create_version(
+        self,
+        file_id: str,
+        content: str,
+        *,
+        change_type: str = CHANGE_TYPE_AI_EDIT,
+        change_summary: str = "AI 更新文件内容",
+    ) -> None:
+        """Create version history using an independent session.
 
         Uses a separate database session to avoid SQLAlchemy state-machine
         conflicts when ``parallel_execute`` runs multiple tasks concurrently
@@ -943,15 +963,15 @@ class FileCRUD:
                     session=version_session,
                     file_id=file_id,
                     new_content=content,
-                    change_type=CHANGE_TYPE_AI_EDIT,
+                    change_type=change_type,
                     change_source=CHANGE_SOURCE_AI,
-                    change_summary="AI 更新文件内容",
+                    change_summary=change_summary,
                 )
             finally:
                 version_session.close()
         except Exception as e:
-            # Don't fail the update if version creation fails
-            logger.warning(f"Failed to create version for update_file: {e}")
+            # Don't fail the operation if version creation fails
+            logger.warning(f"Failed to create version: {e}")
 
     def _schedule_index_upsert(
         self,

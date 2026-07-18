@@ -138,12 +138,11 @@ class SkillContextInjector:
         if not skills:
             return None
 
-        if len(skills) > max_skills:
-            return None
-
-        total_instruction_chars = sum(len(s["instructions"] or "") for s in skills)
-        if total_instruction_chars > max_instruction_chars:
-            return None
+        # Graceful degradation: never drop the ENTIRE reference just because
+        # there are too many skills or one is oversized. Include as many as fit,
+        # truncating an individual overlong skill's instructions rather than
+        # aborting the whole section (which would strip every skill's guidance).
+        skills = skills[:max_skills]
 
         lines = [
             "## 技能参考手册",
@@ -152,10 +151,20 @@ class SkillContextInjector:
             "",
         ]
 
+        remaining = max_instruction_chars
+        included = 0
         for skill in skills:
+            instructions = (skill["instructions"] or "").strip()
+            if not instructions:
+                continue
+            if remaining <= 0:
+                break
+            if len(instructions) > remaining:
+                instructions = instructions[:remaining].rstrip() + "…"
+            remaining -= len(instructions)
+
             name = skill["name"]
             desc = skill["description"] or ""
-            instructions = skill["instructions"]
 
             lines.extend([
                 f"### {name}",
@@ -168,6 +177,10 @@ class SkillContextInjector:
 
             lines.append(instructions)
             lines.extend(["", "---", ""])
+            included += 1
+
+        if included == 0:
+            return None
 
         return "\n".join(lines)
 

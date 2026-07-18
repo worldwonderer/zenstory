@@ -119,12 +119,15 @@ class AhoCorasickMatcher:
 
 def select_longest_non_ambiguous_matches(matches: list[MatchSpan]) -> list[MatchSpan]:
     """
-    Keep one longest match per overlap group; drop ties as ambiguous.
+    Keep every span that is strictly the longest at its own location.
 
-    Rules:
-    - Overlapping matches form a group.
-    - Keep the unique longest span in a group.
-    - If multiple spans share max length in a group, discard the group.
+    A span is kept iff it is strictly longer than *every* span it overlaps;
+    a span that overlaps an equal-length span is ambiguous and dropped, and a
+    span that overlaps a strictly longer span loses to it. This is per-span
+    interval logic — unlike a running-max-end "group" merge, it does NOT
+    transitively chain non-overlapping spans through a shared neighbour, so two
+    non-overlapping local winners (e.g. A[0,6] and C[6,12] both bridged by
+    B[3,8]) are both retained while only the dominated/ambiguous B is dropped.
     """
     if not matches:
         return []
@@ -137,28 +140,23 @@ def select_longest_non_ambiguous_matches(matches: list[MatchSpan]) -> list[Match
     if not ordered:
         return []
 
-    groups: list[list[MatchSpan]] = []
-    current_group: list[MatchSpan] = [ordered[0]]
-    current_end = ordered[0].end
+    # A span is kept iff it is strictly longer than every span it overlaps.
+    # `ordered` is sorted by start, so every overlapping pair (i, j) with i < j
+    # has ordered[j].start < ordered[i].end — a forward sweep that stops once a
+    # later span starts at/after the current span's end visits each overlapping
+    # pair exactly once (near-linear when matches rarely overlap, e.g. a term
+    # that recurs many times), instead of the O(n^2) all-pairs comparison.
+    n = len(ordered)
+    keep = [True] * n
+    for i in range(n):
+        mi = ordered[i]
+        j = i + 1
+        while j < n and ordered[j].start < mi.end:
+            mj = ordered[j]  # overlaps mi (start_i <= start_j < end_i)
+            if mj.length >= mi.length:
+                keep[i] = False
+            if mi.length >= mj.length:
+                keep[j] = False
+            j += 1
 
-    for match in ordered[1:]:
-        if match.start < current_end:
-            current_group.append(match)
-            current_end = max(current_end, match.end)
-            continue
-
-        groups.append(current_group)
-        current_group = [match]
-        current_end = match.end
-
-    groups.append(current_group)
-
-    selected: list[MatchSpan] = []
-    for group in groups:
-        max_length = max(match.length for match in group)
-        winners = [match for match in group if match.length == max_length]
-        if len(winners) != 1:
-            continue
-        selected.append(winners[0])
-
-    return sorted(selected, key=lambda m: (m.start, m.end, m.term))
+    return [m for idx, m in enumerate(ordered) if keep[idx]]

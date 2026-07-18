@@ -301,6 +301,12 @@ async def run_writing_workflow_streaming(
 
             current_agent_type = get_next_node(router_result)
             workflow_agents = list(router_result.get("workflow_agents", []))
+            # Drop any leading planned agents equal to the initial agent. A router
+            # output where initial == workflow_agents[0] would otherwise pop itself
+            # on the next boundary and trip the invalid-self-handoff stop AFTER
+            # content was already produced; treat it as a normal single-agent start.
+            while workflow_agents and workflow_agents[0] == current_agent_type:
+                workflow_agents.pop(0)
             workflow_plan = router_result.get("workflow_plan", "quick")
             routing_metadata = router_result.get("routing_metadata", {})
         except (ValueError, KeyError) as validation_error:
@@ -360,6 +366,13 @@ async def run_writing_workflow_streaming(
             router_strategy=router_strategy,
             enable_graph_auto_review=enable_graph_auto_review,
         )
+
+        # Set when the loop exits via a terminal break (WORKFLOW_COMPLETE /
+        # WORKFLOW_STOPPED / clarification / invalid handoff / tool-call
+        # exhaustion). Used to suppress the collaboration ITERATION_EXHAUSTED
+        # emit when the turn already ended on the final iteration, which would
+        # otherwise produce two contradictory terminal events.
+        terminated_via_break = False
 
         while current_agent_type and iteration < max_iterations:
             iteration += 1
@@ -612,12 +625,15 @@ async def run_writing_workflow_streaming(
 
             # Structured clarification stop is canonical and must block planned/auto handoff.
             if clarification_stopped:
+                terminated_via_break = True
                 break
             # Invalid explicit handoff should stop collaboration to prevent self-loop.
             if invalid_handoff_stopped:
+                terminated_via_break = True
                 break
             # Tool-call exhaustion should stop workflow; never continue with planned/auto handoff.
             if tool_call_exhausted:
+                terminated_via_break = True
                 break
 
             # Determine upcoming handoff after stop checks.
@@ -633,9 +649,14 @@ async def run_writing_workflow_streaming(
                 has_explicit_handoff = True
                 pending_next_agent = next_agent
                 pending_handoff_event_data = explicit_handoff_event_data
-                # Remove from workflow_agents if it was planned
+                # An explicit handoff JUMPS to the target: any earlier-planned
+                # stages are skipped, not deferred to run after it. Truncate up
+                # to AND including the target so leftover earlier-stage agents
+                # (e.g. hook_designer when planner hands straight to writer)
+                # don't later run out of order via the planned-handoff branch.
                 if next_agent in workflow_agents:
-                    workflow_agents.remove(next_agent)
+                    idx = workflow_agents.index(next_agent)
+                    del workflow_agents[: idx + 1]
                 if handoff_packet and handoff_packet.get("context"):
                     handoff_context = str(handoff_packet.get("context", ""))
             elif workflow_agents:
@@ -654,6 +675,7 @@ async def run_writing_workflow_streaming(
                             "target_agent": next_planned,
                         },
                     )
+                    terminated_via_break = True
                     break
                 handoff_context = f"按照工作流计划，从 {current_agent_type} 自动交接"
                 handoff_packet = {
@@ -787,6 +809,7 @@ async def run_writing_workflow_streaming(
                     )
 
                     # 终止工作流
+                    terminated_via_break = True
                     break
 
             # The target agent only runs if another collaboration iteration remains.
@@ -810,7 +833,7 @@ async def run_writing_workflow_streaming(
 
         ToolContext.set_current_agent(None)
 
-        if iteration >= max_iterations:
+        if iteration >= max_iterations and not terminated_via_break:
             log_with_context(
                 logger,
                 30,  # WARNING

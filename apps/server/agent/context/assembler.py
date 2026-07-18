@@ -23,10 +23,16 @@ from utils.logger import get_logger, log_with_context
 from ..schemas.context import ContextData, ContextItem, ContextPriority
 from ..tools.permissions import ForbiddenError, NotFoundError, check_project_ownership
 from ..utils.aho_corasick import AhoCorasickMatcher, select_longest_non_ambiguous_matches
+from ..utils.token_utils import estimate_text_tokens
 from .budget import TokenBudget
 from .prioritizer import ContextPrioritizer
 
 logger = get_logger(__name__)
+
+# Floor for the item-selection token budget after reserving header/framing
+# overhead, so a large project-status + inventory header can never starve the
+# priority-selected items down to nothing.
+MIN_ITEM_TOKEN_BUDGET = 512
 
 
 class ContextAssembler:
@@ -185,8 +191,17 @@ class ContextAssembler:
         # 6. Query-aware recall ranking
         items = self._apply_query_recall_ranking(items, query)
 
-        # 7. Prioritize and select within budget
-        budget = TokenBudget(max_tokens=max_tokens)
+        # 7. Prioritize and select within budget.
+        # Reserve tokens for the always-present framing (project-status +
+        # file-inventory blocks and section separators) so max_tokens bounds the
+        # WHOLE assembled block, not just the priority-selected items — otherwise
+        # the unbudgeted header overhead pushed the formatted context past
+        # max_tokens. Never starve item selection below a small floor.
+        header_tokens = estimate_text_tokens(
+            self._format_context([], file_inventory, project_status)
+        )
+        item_token_budget = max(MIN_ITEM_TOKEN_BUDGET, max_tokens - header_tokens)
+        budget = TokenBudget(max_tokens=item_token_budget)
         prioritized = self.prioritizer.prioritize(items)
         groups = self.prioritizer.group_by_priority(prioritized)
         selected, budget_used = budget.select_items(prioritized, groups)
