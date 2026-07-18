@@ -920,12 +920,10 @@ class StreamAdapter:
         skill_source = "builtin"
         matched_trigger = "AI选择"
 
-        for skill in get_builtin_skills_fn():
-            if skill.name == skill_name:
-                skill_id = skill.id
-                skill_source = "builtin"
-                break
-
+        # Resolve in the same precedence the injector/explicit resolver use:
+        # a user's own skill (or an added public skill) that shares a builtin's
+        # display name is the one that was actually injected, so it must win.
+        # Builtin is the last-resort fallback.
         if not skill_id and self.config.user_id:
             user_skills = get_user_skills_fn(session, self.config.user_id)
             for skill in user_skills:
@@ -949,6 +947,15 @@ class StreamAdapter:
                 if display_name == skill_name:
                     skill_id = public.id
                     skill_source = "added"
+                    break
+
+        # Builtin is the last-resort fallback (a user/added skill of the same
+        # display name would have matched above and correctly won).
+        if not skill_id:
+            for skill in get_builtin_skills_fn():
+                if skill.name == skill_name:
+                    skill_id = skill.id
+                    skill_source = "builtin"
                     break
 
         if not skill_id:

@@ -467,4 +467,13 @@ async def execute_parallel(
     # survives the stream adapter, which drops `data` for non-success tool
     # results. Partial/total failure is conveyed by data.any_failed / data.failed
     # and per-task status+error, which both the LLM and the UI card read.
-    return _make_result({"status": "success", "data": result_data})
+    #
+    # Route through the shared MCP payload builder so the aggregate is subject to
+    # the same TOOL_RESULT_MAX_CHARS guardrail (+ overflow_ref) as every other
+    # tool — the concatenated per-task results can otherwise be arbitrarily large.
+    from agent.tools.mcp_tools import _make_result as _mcp_make_result
+
+    return _mcp_make_result(
+        {"status": "success", "data": result_data},
+        tool_name="parallel_execute",
+    )

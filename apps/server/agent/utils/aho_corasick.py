@@ -119,12 +119,15 @@ class AhoCorasickMatcher:
 
 def select_longest_non_ambiguous_matches(matches: list[MatchSpan]) -> list[MatchSpan]:
     """
-    Keep one longest match per overlap group; drop ties as ambiguous.
+    Keep every span that is strictly the longest at its own location.
 
-    Rules:
-    - Overlapping matches form a group.
-    - Keep the unique longest span in a group.
-    - If multiple spans share max length in a group, discard the group.
+    A span is kept iff it is strictly longer than *every* span it overlaps;
+    a span that overlaps an equal-length span is ambiguous and dropped, and a
+    span that overlaps a strictly longer span loses to it. This is per-span
+    interval logic — unlike a running-max-end "group" merge, it does NOT
+    transitively chain non-overlapping spans through a shared neighbour, so two
+    non-overlapping local winners (e.g. A[0,6] and C[6,12] both bridged by
+    B[3,8]) are both retained while only the dominated/ambiguous B is dropped.
     """
     if not matches:
         return []
@@ -137,28 +140,18 @@ def select_longest_non_ambiguous_matches(matches: list[MatchSpan]) -> list[Match
     if not ordered:
         return []
 
-    groups: list[list[MatchSpan]] = []
-    current_group: list[MatchSpan] = [ordered[0]]
-    current_end = ordered[0].end
-
-    for match in ordered[1:]:
-        if match.start < current_end:
-            current_group.append(match)
-            current_end = max(current_end, match.end)
-            continue
-
-        groups.append(current_group)
-        current_group = [match]
-        current_end = match.end
-
-    groups.append(current_group)
+    def _overlaps(a: MatchSpan, b: MatchSpan) -> bool:
+        return a.start < b.end and b.start < a.end
 
     selected: list[MatchSpan] = []
-    for group in groups:
-        max_length = max(match.length for match in group)
-        winners = [match for match in group if match.length == max_length]
-        if len(winners) != 1:
+    for match in ordered:
+        conflicts = [o for o in ordered if o is not match and _overlaps(match, o)]
+        # Loses to a strictly longer overlapping span.
+        if any(o.length > match.length for o in conflicts):
             continue
-        selected.append(winners[0])
+        # Ambiguous with an equally long overlapping span.
+        if any(o.length == match.length for o in conflicts):
+            continue
+        selected.append(match)
 
     return sorted(selected, key=lambda m: (m.start, m.end, m.term))
