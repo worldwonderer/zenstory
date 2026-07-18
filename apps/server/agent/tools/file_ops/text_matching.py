@@ -195,14 +195,13 @@ def find_approximate_match(
     matcher = SequenceMatcher(None)
     matcher.set_seq2(norm_pattern)
 
-    best_match: tuple[int, int, float, str] | None = None
-    best_score = 0.0
-    best_span: tuple[int, int] | None = None  # (start, end) in normalized coords
-    # Best score among windows that do NOT overlap the current best window.
-    second_best_score = 0.0
-
-    def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
-        return a[0] < b[1] and b[0] < a[1]
+    # Collect every window at/above the similarity threshold, then decide the best
+    # window and its best NON-OVERLAPPING runner-up AFTER the scan. The gate must
+    # prune only below-threshold windows (not below the running best) — otherwise a
+    # genuine near-tie runner-up would be gated out and the ambiguity guard would
+    # never see it. Deciding after the scan also makes the runner-up order-
+    # independent (a shifted window of the true match no longer inflates it).
+    candidates: list[tuple[tuple[int, int], float]] = []  # ((start, end), score)
 
     for window_size in range(window_min, window_max + 1):
         for i in range(len(norm_content) - window_size + 1):
@@ -213,38 +212,45 @@ def find_approximate_match(
                 continue
 
             matcher.set_seq1(window)
-            # Cheap upper bounds first: if even the optimistic bound can't beat
-            # the current best (or reach the threshold), skip the full ratio().
-            floor = max(best_score, min_similarity)
-            if matcher.real_quick_ratio() < floor or matcher.quick_ratio() < floor:
+            # Cheap upper bounds first: skip windows that cannot even reach the
+            # similarity threshold (quick_ratio/real_quick_ratio are upper bounds).
+            if (
+                matcher.real_quick_ratio() < min_similarity
+                or matcher.quick_ratio() < min_similarity
+            ):
                 continue
 
             score = matcher.ratio()
-            span = (i, i + window_size)
+            if score >= min_similarity:
+                candidates.append(((i, i + window_size), score))
 
-            if score > best_score:
-                # Demote the previous best to the non-overlapping runner-up.
-                if best_span is not None and not _overlaps(span, best_span):
-                    second_best_score = max(second_best_score, best_score)
-                best_score = score
-                best_span = span
-                start_orig = map_content[i]
-                end_idx = min(i + window_size - 1, len(map_content) - 1)
-                end_orig = map_content[end_idx] + 1
-                matched_text = content[start_orig:end_orig]
-                best_match = (start_orig, end_orig, score, matched_text)
-            elif best_span is not None and not _overlaps(span, best_span):
-                second_best_score = max(second_best_score, score)
-
-    if not best_match or best_match[2] < min_similarity:
+    if not candidates:
         return None
 
-    # Refuse ambiguous matches: if a different, distant passage scores nearly
-    # as high, auto-applying would risk silently overwriting the wrong text.
-    if (best_match[2] - second_best_score) < MIN_APPROX_GAP:
+    best_span, best_score = max(candidates, key=lambda c: c[1])
+
+    # Best score among windows that do NOT overlap the chosen best window.
+    def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
+        return a[0] < b[1] and b[0] < a[1]
+
+    second_best_score = 0.0
+    for span, score in candidates:
+        if span == best_span:
+            continue
+        if not _overlaps(span, best_span):
+            second_best_score = max(second_best_score, score)
+
+    # Refuse ambiguous matches: if a different, distant passage scores nearly as
+    # high, auto-applying would risk silently overwriting the wrong text.
+    if (best_score - second_best_score) < MIN_APPROX_GAP:
         return None
 
-    return best_match
+    start_i, end_i = best_span
+    start_orig = map_content[start_i]
+    end_idx = min(end_i - 1, len(map_content) - 1)
+    end_orig = map_content[end_idx] + 1
+    matched_text = content[start_orig:end_orig]
+    return (start_orig, end_orig, best_score, matched_text)
 
 
 def build_span_previews(

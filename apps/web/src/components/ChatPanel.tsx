@@ -1234,29 +1234,33 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
         const isRecent = Date.now() - timestamp < 5 * 60 * 1000;
         
         if (isRecent && content) {
-          // Mark as processed and clear storage
-          inspirationProcessedRef.current.add(currentProjectId);
-          localStorage.removeItem(inspirationKey);
-          
           // Build prompt with actual user inspiration content
-          const typeLabel = projectType === 'novel' ? t('chat:projectType.novel.name') 
-            : projectType === 'short' ? t('chat:projectType.short.name') 
+          const typeLabel = projectType === 'novel' ? t('chat:projectType.novel.name')
+            : projectType === 'short' ? t('chat:projectType.short.name')
             : t('chat:projectType.screenplay.name');
-          
+
           const prompt = t('chat:message.createProject', {
             type: typeLabel,
             typeLabel,
             content,
           });
-          
+
           // Delay slightly to ensure UI is ready. Tracked in a ref so it can be
           // cleared on unmount/deps-change, otherwise a stray auto-send could
           // fire after the user has navigated away.
+          // The "processed" mark and localStorage removal are deferred to the
+          // timer callback: if this effect re-runs within the 500ms window (e.g.
+          // handleSendMessage is recreated), the cleanup clears the pending timer
+          // and the re-run must be able to reschedule — marking processed up front
+          // would permanently drop the auto-send.
+          const projectIdForSend = currentProjectId;
           if (inspirationSendTimerRef.current) {
             clearTimeout(inspirationSendTimerRef.current);
           }
           inspirationSendTimerRef.current = setTimeout(() => {
             inspirationSendTimerRef.current = null;
+            inspirationProcessedRef.current.add(projectIdForSend);
+            localStorage.removeItem(inspirationKey);
             handleSendMessage(prompt);
           }, 500);
         } else {

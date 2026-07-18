@@ -49,3 +49,12 @@ def test_disjoint_spans_all_kept():
 
 def test_empty_input():
     assert select_longest_non_ambiguous_matches([]) == []
+
+
+def test_many_non_overlapping_same_term_all_kept():
+    # A term recurring many times (non-overlapping) must all be kept, and the
+    # sweep must handle it efficiently (near-linear, not O(n^2) all-pairs).
+    spans = [MatchSpan(term="t", start=i * 10, end=i * 10 + 4) for i in range(500)]
+    kept = select_longest_non_ambiguous_matches(spans)
+    assert len(kept) == 500
+    assert _terms(kept) == _terms(spans)

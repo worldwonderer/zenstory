@@ -102,6 +102,31 @@ Task param conventions:
 }
 
 
+# Per-task result body cap. Keeps the aggregate small enough that the unified
+# tool-result guardrail (TOOL_RESULT_MAX_CHARS, default 200k) is not tripped —
+# which would otherwise replace the whole `data` object (including any_failed /
+# failed / per-task status+error) with a truncation stub and silently swallow
+# failures. The full content is persisted and streamed via separate file events.
+_MAX_TASK_RESULT_CHARS = 4000
+
+
+def _bound_task_result(result: Any) -> Any:
+    """Cap an individual task's result payload while preserving its shape."""
+    if result is None:
+        return None
+    try:
+        text = json.dumps(result, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = str(result)
+    if len(text) <= _MAX_TASK_RESULT_CHARS:
+        return result
+    return {
+        "truncated": True,
+        "original_length": len(text),
+        "preview": text[:_MAX_TASK_RESULT_CHARS],
+    }
+
+
 def _make_result(data: Any) -> dict[str, Any]:
     """Create a tool result in MCP format."""
     return {
@@ -440,7 +465,13 @@ async def execute_parallel(
                 "type": t.task_type,
                 "description": t.description,
                 "status": t.status,
-                "result": t.result,
+                # Cap each task's result body so the aggregate stays under the
+                # tool-result guardrail (a write_chapter task echoes the full
+                # chapter body here). This keeps id/type/description/status/error
+                # verbatim, so the failure signal + per-task breakdown always
+                # survive even when a task's content is large — the full content
+                # is already persisted and streamed via separate file events.
+                "result": _bound_task_result(t.result),
                 "error": t.error,
             }
             for t in completed_tasks

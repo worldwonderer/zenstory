@@ -54,3 +54,31 @@ def test_large_content_is_guarded_and_fast():
 def test_short_pattern_is_ignored():
     """Patterns below min_pattern_len are not matched approximately."""
     assert find_approximate_match("some content here", "abc", min_pattern_len=8) is None
+
+
+def test_near_tie_through_quick_ratio_gate_is_rejected():
+    """A near-tie runner-up must not be hidden by the perf gate.
+
+    The earlier passage becomes `best` first; the runner-up's optimistic
+    quick_ratio bound is below best, but it must still be scored and counted so
+    the ambiguity guard sees the small gap and rejects (no silent wrong match).
+    """
+    pattern = "the quick brown fox jumps over"
+    a = "the quick brown fox jumps over"       # identical -> 1.0
+    b = "the quick brown fox jumped over!!"    # near tie
+    content = a + "\n\n" + ("z" * 50) + "\n\n" + b
+    assert find_approximate_match(content, pattern, max_error_rate=0.30, min_pattern_len=8) is None
+
+
+def test_shifted_window_does_not_inflate_runner_up():
+    """A unique passage with no distant competitor still matches (order-independent).
+
+    A shifted window of the same true match must not be recorded as a runner-up
+    and cause a false rejection.
+    """
+    content = ("q" * 80) + "\n\n" + "the quick brown fox jumps over the fence" + "\n\n" + ("w" * 80)
+    result = find_approximate_match(
+        content, "the quick brown fox jumps over the fence", max_error_rate=0.25, min_pattern_len=8
+    )
+    assert result is not None
+    assert result[2] >= 0.9

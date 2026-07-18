@@ -15,6 +15,7 @@ from agent.tools.parallel_executor import (
     PARALLEL_EXECUTE_TOOL,
     PARALLEL_TASK_TYPES,
     SubagentTask,
+    _bound_task_result,
     _make_error,
     _make_result,
     execute_parallel,
@@ -632,3 +633,34 @@ class TestParallelExecutionResults:
                 assert parsed["data"]["total_duration_ms"] >= 0
         finally:
             ToolContext.clear_context()
+
+
+@pytest.mark.unit
+class TestBoundTaskResult:
+    """The per-task result cap keeps the aggregate under the size guardrail."""
+
+    def test_small_result_passthrough(self):
+        result = {"id": "f1", "content": "short"}
+        assert _bound_task_result(result) is result
+
+    def test_none_passthrough(self):
+        assert _bound_task_result(None) is None
+
+    def test_large_result_is_capped_with_signal(self):
+        big = {"id": "f1", "content": "x" * 20000}
+        bounded = _bound_task_result(big)
+        assert bounded["truncated"] is True
+        assert bounded["original_length"] > 20000
+        assert len(bounded["preview"]) <= 4000
+
+    def test_bounded_aggregate_preserves_failure_signal_shape(self):
+        # A large successful body must not force the whole aggregate over the
+        # guardrail; the top-level failure signal stays intact and small.
+        tasks = [
+            {"id": "a", "status": "failed", "error": "boom", "result": _bound_task_result(None)},
+            {"id": "b", "status": "completed", "error": None,
+             "result": _bound_task_result({"content": "y" * 500000})},
+        ]
+        payload = {"any_failed": True, "failed": 1, "tasks": tasks}
+        assert len(json.dumps(payload, ensure_ascii=False)) < 100000
+        assert payload["any_failed"] is True

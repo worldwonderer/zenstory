@@ -140,18 +140,23 @@ def select_longest_non_ambiguous_matches(matches: list[MatchSpan]) -> list[Match
     if not ordered:
         return []
 
-    def _overlaps(a: MatchSpan, b: MatchSpan) -> bool:
-        return a.start < b.end and b.start < a.end
+    # A span is kept iff it is strictly longer than every span it overlaps.
+    # `ordered` is sorted by start, so every overlapping pair (i, j) with i < j
+    # has ordered[j].start < ordered[i].end — a forward sweep that stops once a
+    # later span starts at/after the current span's end visits each overlapping
+    # pair exactly once (near-linear when matches rarely overlap, e.g. a term
+    # that recurs many times), instead of the O(n^2) all-pairs comparison.
+    n = len(ordered)
+    keep = [True] * n
+    for i in range(n):
+        mi = ordered[i]
+        j = i + 1
+        while j < n and ordered[j].start < mi.end:
+            mj = ordered[j]  # overlaps mi (start_i <= start_j < end_i)
+            if mj.length >= mi.length:
+                keep[i] = False
+            if mi.length >= mj.length:
+                keep[j] = False
+            j += 1
 
-    selected: list[MatchSpan] = []
-    for match in ordered:
-        conflicts = [o for o in ordered if o is not match and _overlaps(match, o)]
-        # Loses to a strictly longer overlapping span.
-        if any(o.length > match.length for o in conflicts):
-            continue
-        # Ambiguous with an equally long overlapping span.
-        if any(o.length == match.length for o in conflicts):
-            continue
-        selected.append(match)
-
-    return sorted(selected, key=lambda m: (m.start, m.end, m.term))
+    return [m for idx, m in enumerate(ordered) if keep[idx]]
