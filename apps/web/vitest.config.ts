@@ -34,18 +34,22 @@ export default defineConfig({
       '**/e2e/**',
       '**/playwright.config.ts',
     ],
-    pool: 'threads',
+    // Run each test file in its own forked process with isolation. The previous
+    // shared single-thread pool with top-level `isolate: false` let global state
+    // leak across files (module mocks like react-i18next, the i18n singleton),
+    // which caused hundreds of order-dependent failures — files passed alone but
+    // failed in the full suite. Per-file process isolation removes that coupling
+    // (and is faster here, since files run in parallel).
+    pool: 'forks',
     poolOptions: {
-      threads: {
-        singleThread: true,
-        isolate: true, // Enable isolation for stability
+      forks: {
+        isolate: true,
       },
     },
     testTimeout: 10000,
     hookTimeout: 10000,
     teardownTimeout: 20000, // Increase teardown timeout
-    isolate: false,
-    maxConcurrency: 1,
+    isolate: true,
     benchmark: {
       include: ['**/*'],
       exclude: ['node_modules', 'dist', '.idea', '.git', '.cache'],

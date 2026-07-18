@@ -1,3 +1,9 @@
+// Pin the timezone so the quota `reset_at` (UTC midnight) formats to a stable
+// calendar date. Without this, `Intl.DateTimeFormat` uses the host timezone, so
+// "2026-05-01T00:00:00Z" renders as 2026/04/30 in timezones behind UTC (e.g. CI
+// running in America/Los_Angeles) and 2026/05/01 in UTC+8 where the test was authored.
+process.env.TZ = "UTC";
+
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";

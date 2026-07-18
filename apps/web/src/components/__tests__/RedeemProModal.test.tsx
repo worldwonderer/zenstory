@@ -16,9 +16,17 @@ vi.mock('../../lib/pointsApi', () => ({
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (_key: string, defaultValue: string, options?: Record<string, unknown>) => {
+    t: (key: string, defaultValue?: string, options?: Record<string, unknown>) => {
+      // Namespaced keys used by shared components (e.g. the Modal close button)
+      // are called without a default value, so resolve them explicitly.
+      const namespaced: Record<string, string> = {
+        'common:closeModal': 'Close modal',
+      }
+      if (namespaced[key]) {
+        return namespaced[key]
+      }
       if (options) {
-        return defaultValue.replace(/{{\s*\w+\s*}}/g, (_, name) => String(options[name] ?? ''))
+        return defaultValue!.replace(/{{\s*\w+\s*}}/g, (_, name) => String(options[name] ?? ''))
       }
       return defaultValue
     },

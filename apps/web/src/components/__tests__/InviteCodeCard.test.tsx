@@ -3,6 +3,31 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { InviteCodeCard } from '../referral/InviteCodeCard'
 import type { InviteCode } from '@/types/referral'
 
+// Mock react-i18next so the `referral` namespace resolves to the same strings
+// the app ships in public/locales/zh/referral.json (the `card.*` keys).
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: { count?: number; code?: string }) => {
+      const translations: Record<string, string> = {
+        'card.inviteCode': '邀请码',
+        'card.copyInviteCode': '复制邀请码',
+        'card.shareInviteCode': '分享邀请码',
+        'card.used': '已使用:',
+        'card.expired': '已过期',
+        'card.expiresTomorrow': '明天过期',
+        'card.expiresInDays': `${options?.count ?? 0}天后过期`,
+        'card.disabled': '已停用',
+        'card.exhausted': '已用完',
+        'card.available': '可用',
+        'card.shareTitle': 'zenstory写作 - 邀请码',
+        'card.shareText': `邀请码: ${options?.code ?? ''}`,
+      }
+      return translations[key] ?? key
+    },
+    i18n: { language: 'zh', changeLanguage: vi.fn() },
+  }),
+}))
+
 // Mock clipboard API
 const mockClipboardWrite = vi.fn().mockResolvedValue(undefined)
 

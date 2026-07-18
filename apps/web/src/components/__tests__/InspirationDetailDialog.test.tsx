@@ -28,6 +28,8 @@ vi.mock('react-i18next', () => ({
         'copied': '已复制',
         'copying': '复制中...',
         'useThis': '使用此模板',
+        // Namespaced key used by the shared Modal component (useTranslation() with no ns)
+        'common:closeModal': 'Close modal',
       }
       return translations[key] ?? (typeof options === 'string' ? options : key)
     },

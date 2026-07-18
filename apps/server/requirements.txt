@@ -5,8 +5,13 @@ sqlmodel>=0.0.14
 python-multipart>=0.0.6
 pydantic-settings>=2.0.0
 
-# DeepSeek OpenAI-compatible API client and Agents SDK
-openai>=1.3.0
+# DeepSeek OpenAI-compatible API client and Agents SDK.
+# Cap openai: 2.44+ made openai.types.responses InputTokensDetails.cache_write_tokens
+# a required field, but openai-agents 0.17.6 builds it without that field, so newer
+# openai raises a pydantic ValidationError while parsing token usage on every LLM
+# response. The unbounded >=1.3.0 let CI/prod resolve to that broken newer release.
+# openai-agents 0.17.6 requires openai>=2.36.0,<3; 2.43.x is the verified-working range.
+openai>=2.36.0,<2.44
 openai-agents>=0.17.6,<0.18
 
 

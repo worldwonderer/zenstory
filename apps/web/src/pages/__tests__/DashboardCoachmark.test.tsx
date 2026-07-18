@@ -44,6 +44,9 @@ vi.mock('react-i18next', () => ({
         'nav.inspirations': 'Inspirations',
         'nav.skills': 'Skills',
         'nav.billing': 'Billing',
+        'dashboardTour.common.skip': '跳过引导',
+        'dashboardTour.common.next': '下一步',
+        'dashboardTour.common.finish': '开始使用',
       };
       return translations[key] || options?.defaultValue || key;
     },
@@ -69,7 +72,9 @@ vi.mock('../../contexts/AuthContext', () => ({
       email: 'test@example.com',
       avatar_url: null,
       is_superuser: false,
-      created_at: '2026-04-28T00:00:00Z',
+      // Keep the account "new" (within the 7-day window) relative to the
+      // current date so the tour stays eligible regardless of when the test runs.
+      created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
     },
     logout: mockLogout,
   }),
