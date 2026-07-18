@@ -270,7 +270,7 @@ async def _inject_initial_steering(
         )
 
 
-async def _pump_sdk_events(result: Any, run_queue: "asyncio.Queue[tuple[str, Any]]") -> None:
+async def _pump_sdk_events(result: Any, run_queue: asyncio.Queue[tuple[str, Any]]) -> None:
     """Forward SDK stream events onto the shared run queue, tagged by kind.
 
     Runs as a background task so the consumer can interleave live in-tool

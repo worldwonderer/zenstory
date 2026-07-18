@@ -26,7 +26,8 @@ Design notes:
 from __future__ import annotations
 
 import contextvars
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # A context-local "emit this event" callback installed by the runner.
 _progress_emitter: contextvars.ContextVar[Callable[[Any], None] | None] = (
