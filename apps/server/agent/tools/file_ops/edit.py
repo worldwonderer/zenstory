@@ -13,7 +13,7 @@ Extracted from the monolithic file_executor.py for better maintainability.
 from typing import Any
 
 from services.file_version import FileVersionService
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from agent.tools.permissions import check_project_ownership
 from config.datetime_utils import utcnow
@@ -111,8 +111,20 @@ class FileEditor:
             ValueError: If file not found or edit operation fails
             PermissionError: If user doesn't have permission
         """
-        # Get file
-        file = self.session.get(File, id)
+        # Get file. On PostgreSQL take a row lock so concurrent edit_file tasks
+        # (parallel_execute runs each on its own session) targeting the SAME file
+        # serialize: the second SELECT ... FOR UPDATE blocks until the first
+        # commits and then re-reads the updated content, preventing a lost update
+        # where the later commit overwrites the earlier edit. SQLite has no row
+        # locking (and its file lock already serializes writers), so fall back.
+        from database import is_postgres
+
+        if is_postgres:
+            file = self.session.exec(
+                select(File).where(File.id == id).with_for_update()
+            ).first()
+        else:
+            file = self.session.get(File, id)
 
         if not file or file.is_deleted:
             # Do not leak internal IDs to end users

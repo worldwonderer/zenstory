@@ -269,8 +269,14 @@ class LLMClient:
             model: Model to use
             temperature: Sampling temperature
             max_tokens: Maximum tokens
-            thinking_enabled: Whether to enable reasoning/thinking mode (default True).
-                             Set to False for simple tasks that don't need reasoning.
+            thinking_enabled: Reserved reasoning hint. NOTE: currently a no-op on
+                             the DeepSeek Chat Completions endpoint, which does not
+                             expose a first-class reasoning toggle for
+                             deepseek-chat / deepseek-v4-flash — sending a guessed
+                             field risks a 400/422 (see openai_agents/runner.py).
+                             The parameter is kept so callers can express intent and
+                             so the lever can be wired up once DeepSeek confirms the
+                             field, but it does NOT disable reasoning today.
 
         Returns:
             Generated text
@@ -288,7 +294,10 @@ class LLMClient:
             thinking_enabled=thinking_enabled,
         )
 
-        extra_body = {}
+        # Intentionally empty: no provider-supported reasoning toggle for this
+        # endpoint yet (see docstring + openai_agents/runner.py). thinking_enabled
+        # is a documented no-op rather than a silently-dropped promise.
+        extra_body: dict[str, object] = {}
 
         try:
             response = await self.async_client.chat.completions.create(
