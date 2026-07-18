@@ -304,6 +304,16 @@ async def test_runner_streams_through_openai_compatible_http_endpoint(monkeypatc
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy-local-test-key")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", f"http://127.0.0.1:{port}")
+    # The OpenAI SDK's httpx client trusts proxy env vars. If CI has an HTTP(S)
+    # proxy configured, the loopback request to our local test server would be
+    # routed through it and never arrive ("endpoint was not called"), even though
+    # the server is up. Exempt loopback so the SDK connects directly.
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    monkeypatch.delenv("ALL_PROXY", raising=False)
+    monkeypatch.delenv("all_proxy", raising=False)
     reset_deepseek_sdk_cache()
 
     state = {"user_message": "请输出 smoke", "messages": [], "system_prompt": "base"}
@@ -322,7 +332,11 @@ async def test_runner_streams_through_openai_compatible_http_endpoint(monkeypatc
         reset_deepseek_sdk_cache()
 
     assert server_errors == []
-    assert requests, "local OpenAI-compatible endpoint was not called"
+    assert requests, (
+        "local OpenAI-compatible endpoint was not called. "
+        f"event_types={[getattr(e, 'type', None) for e in events]}; "
+        f"event_data={[getattr(e, 'data', None) for e in events][:6]}"
+    )
     assert requests[0]["model"] == "deepseek-v4-flash"
     assert [event.type for event in events] == [
         StreamEventType.MESSAGE_START,
