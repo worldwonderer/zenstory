@@ -13,14 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 复制依赖文件
 COPY apps/server/requirements.txt .
 
-# 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 安装 Prefect 和数据库驱动
-# importlib-metadata is required by prefect 3.4.19 on Python < 3.12. requirements.txt
-# pulls a newer prefect, and downgrading here to 3.4.19 can leave it uninstalled, so
-# install it explicitly to avoid the worker crashing with ModuleNotFoundError.
-RUN pip install --no-cache-dir prefect==3.4.19 psycopg2-binary asyncpg importlib-metadata
+# 安装 Python 依赖。Prefect 和数据库驱动已在 requirements.txt 中声明；必须在
+# 同一次解析中安装，避免先安装新版 Prefect、再降级后形成新旧文件混装。
+# 构建时执行 CLI，使损坏的 Prefect 安装在部署前直接失败。
+RUN pip install --no-cache-dir -r requirements.txt \
+    && prefect version
 
 # 复制应用代码
 COPY apps/server/ .

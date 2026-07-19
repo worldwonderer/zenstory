@@ -15,8 +15,13 @@ openai>=2.36.0,<2.44
 openai-agents>=0.17.6,<0.18
 
 
-# Prefect for workflow orchestration
-prefect>=3.4.0
+# Prefect for workflow orchestration. Keep this aligned with prefect.yaml and the
+# Prefect server image: the worker must not install a newer release and then
+# downgrade it, because that can leave incompatible package files behind.
+prefect==3.4.19
+# Prefect 3.4.19 imports this backport in its worker CLI on Python 3.11 even though
+# its package metadata only declares it for older Python versions.
+importlib-metadata>=4.4
 
 # Zhipu AI (embeddings)
 # Provides `from zai import ZhipuAiClient`
