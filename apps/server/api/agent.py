@@ -204,6 +204,14 @@ async def stream_request(
                 detail=f"AI conversation quota exceeded ({used}/{limit}). Please upgrade your plan.",
             )
 
+        # SSE 可能持续数分钟，而鉴权/权限校验的 SELECT 会让请求级 session 一直
+        # 保持事务打开（Postgres 上表现为 idle in transaction，连接被整个流式
+        # 期间占用）。此处主动结束事务把连接还回连接池；后续对该 session 的
+        # 使用（如 finally 中的 refund）会惰性开启新事务。rollback 会 expire
+        # ORM 实例，流式期间只能使用已提前取出的标量（user_id），不要再触碰
+        # current_user。
+        session.rollback()
+
         async def event_generator():
             agent_ctx_tokens = bind_request_context(agent_run_id=agent_run_id)
             saw_any_event = False
@@ -279,7 +287,7 @@ async def stream_request(
                         if _should_offload_session_work(session):
                             refund_applied = await asyncio.to_thread(
                                 _release_ai_conversation_sync,
-                                current_user.id,
+                                user_id,
                             )
                         else:
                             # The shared request session may be in a failed
@@ -291,7 +299,7 @@ async def stream_request(
                             # failed internally.
                             with contextlib.suppress(Exception):
                                 session.rollback()
-                            refund_applied = quota_service.release_ai_conversation(session, current_user.id)
+                            refund_applied = quota_service.release_ai_conversation(session, user_id)
                     except Exception as refund_error:
                         log_with_context(
                             logger,

@@ -448,3 +448,60 @@ class TestSteeringIntegration:
                 await create_steering_queue_async(session_id, "intruder-user")
         finally:
             await cleanup_steering_queue_async(session_id)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestSteeringRunOwnership:
+    """并发 stream run 共享同一 session 队列时的 run 级归属（内存路径）。"""
+
+    async def test_first_finishing_run_does_not_delete_other_runs_queue(self):
+        """先结束的 run 只释放自己的持有，另一个 run 的队列必须继续可用。"""
+        session_id = "run-ownership-session"
+        await cleanup_steering_queue_async(session_id)
+
+        try:
+            await create_steering_queue_async(session_id, "user-1", run_id="run-a")
+            await create_steering_queue_async(session_id, "user-1", run_id="run-b")
+
+            queue = await get_steering_queue_for_user_async(session_id, "user-1")
+            await queue.add("run B 还在跑，别删我的消息")
+
+            # run A 先结束：队列仍被 run B 持有，不能删除
+            await cleanup_steering_queue_async(session_id, run_id="run-a")
+
+            surviving = await get_steering_queue_for_user_async(session_id, "user-1")
+            pending = await surviving.peek()
+            assert [m.content for m in pending] == ["run B 还在跑，别删我的消息"]
+
+            # 最后一个持有者退出后才真正删除
+            await cleanup_steering_queue_async(session_id, run_id="run-b")
+            with pytest.raises(KeyError):
+                await get_steering_queue_for_user_async(session_id, "user-1")
+        finally:
+            await cleanup_steering_queue_async(session_id)
+
+    async def test_cleanup_without_run_id_removes_queue_unconditionally(self):
+        """不带 run_id 的 cleanup 保持旧语义：无条件删除。"""
+        session_id = "run-ownership-legacy-cleanup"
+        await cleanup_steering_queue_async(session_id)
+
+        await create_steering_queue_async(session_id, "user-1", run_id="run-a")
+        await cleanup_steering_queue_async(session_id)
+
+        with pytest.raises(KeyError):
+            await get_steering_queue_for_user_async(session_id, "user-1")
+
+    async def test_cleanup_unknown_run_id_keeps_active_holders(self):
+        """释放一个从未注册的 run_id 不应删除仍被持有的队列。"""
+        session_id = "run-ownership-unknown-run"
+        await cleanup_steering_queue_async(session_id)
+
+        try:
+            await create_steering_queue_async(session_id, "user-1", run_id="run-a")
+            await cleanup_steering_queue_async(session_id, run_id="run-zombie")
+
+            queue = await get_steering_queue_for_user_async(session_id, "user-1")
+            assert isinstance(queue, SteeringQueue)
+        finally:
+            await cleanup_steering_queue_async(session_id)

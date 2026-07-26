@@ -92,7 +92,9 @@ class AgentService:
         )
 
     @staticmethod
-    def _schedule_background_cleanup(coro: Any, *, description: str, session_id: str | None) -> None:
+    def _schedule_background_cleanup(
+        coro: Any, *, description: str, session_id: str | None
+    ) -> asyncio.Task:
         """Run async cleanup out of band when generator cancellation makes awaiting risky."""
         task = asyncio.create_task(coro)
 
@@ -111,6 +113,7 @@ class AgentService:
                 )
 
         task.add_done_callback(_log_task_result)
+        return task
 
     @staticmethod
     def _should_offload_session_work(session: Session) -> bool:
@@ -180,15 +183,24 @@ class AgentService:
                     ).all()
 
                     changed = False
-                    if not candidate.is_active:
-                        candidate.is_active = True
-                        changed = True
-
+                    deactivated = False
                     for stale in other_actives:
                         if stale.is_active:
                             stale.is_active = False
                             session.add(stale)
                             changed = True
+                            deactivated = True
+
+                    if not candidate.is_active:
+                        # 部分唯一索引 (user_id, project_id) WHERE is_active=true
+                        # 非延迟约束，而 SQLAlchemy 对同一 mapper 的 UPDATE 按主键
+                        # 排序下发；必须先把旧活跃会话的去激活刷到数据库，再激活
+                        # candidate，否则 candidate 主键较小时会瞬时出现两行
+                        # active 触发 IntegrityError。
+                        if deactivated:
+                            session.flush()
+                        candidate.is_active = True
+                        changed = True
 
                     candidate.updated_at = utcnow()
                     session.add(candidate)
@@ -453,8 +465,13 @@ class AgentService:
         else:
             session_id = requested_session_id or str(uuid.uuid4())
 
-        # Initialize steering queue for this session
-        steering_queue = await create_steering_queue_async(session_id, user_id)
+        # Initialize steering queue for this session. 同一 chat session 的并发
+        # run 共享同一组队列键，队列生命周期以 run 为单位计数：cleanup 只在
+        # 最后一个持有 run 退出时才真正删除队列。
+        steering_run_id = uuid.uuid4().hex
+        steering_queue = await create_steering_queue_async(
+            session_id, user_id, run_id=steering_run_id
+        )
 
         # Initialize tracking variables before try block for exception safety
         all_tool_calls: list[dict[str, Any]] = []
@@ -469,6 +486,41 @@ class AgentService:
         had_stream_error = False
         request_failed = False
         stream_cancelled = False
+        history_saved = False
+        history_save_task: asyncio.Task | None = None
+        cancellation_save_task: asyncio.Task | None = None
+
+        # Steering callback for the agent loop. 定义在 try 之前：取消/失败
+        # 路径的兜底 drain 也依赖它，不能等到工作流启动处才可用。
+        async def get_steering_messages():
+            """Get pending steering messages for agent loop."""
+            steering_pending = await steering_queue.get_pending()
+            payload = [{"id": m.id, "content": m.content} for m in steering_pending]
+            # Record what the run actually consumed so it can be persisted to
+            # chat history (otherwise node-boundary steering is lost on the
+            # next request).
+            consumed_steering.extend(
+                str(item["content"]) for item in payload if item.get("content")
+            )
+            return payload
+
+        def _save_partial_history_sync() -> None:
+            """用独立 session 落库部分历史（取消/失败路径，绕开共享 session）。"""
+            recovery_manager = MessageManager(
+                project_id=project_id,
+                user_id=user_id,
+            )
+            with create_session() as recovery_session:
+                recovery_manager._save_messages_with_session(
+                    recovery_session,
+                    session_id,
+                    message,
+                    assistant_response,
+                    all_tool_calls if all_tool_calls else None,
+                    reasoning_content if reasoning_content else None,
+                    assistant_status_cards=assistant_status_cards or None,
+                    steering_messages=consumed_steering or None,
+                )
 
         try:
             lang = (language or "").strip().lower() or "zh"
@@ -614,22 +666,17 @@ class AgentService:
             #
             # Assembled context (assembler ~6k) and chat history (~6k) used to be
             # budgeted independently and both injected (~12k+). Now they compete
-            # within ONE shared ceiling: subtract the already-known prompt costs
-            # (system prompt + skill catalog/reference + assembled context) from
-            # the ledger ceiling, then shrink the history window to whatever room
-            # remains. The DB-history persistence contract and the configured
+            # within ONE shared ceiling: subtract the already-known prompt cost
+            # from the ledger ceiling, then shrink the history window to whatever
+            # room remains. The DB-history persistence contract and the configured
             # dual budgets are unchanged — this only trims what is *loaded*.
+            #
+            # system_prompt 已由 build_system_prompt 内嵌 skill catalog /
+            # skill reference / assembled context，台账只按最终 prompt 计费一次，
+            # 避免同一段文本重复扣减历史预算。
             from agent.utils.token_utils import estimate_text_tokens
 
-            assembled_context_text = (
-                context_data.context if context_data and context_data.context else ""
-            )
-            reserved_prompt_tokens = (
-                estimate_text_tokens(system_prompt or "")
-                + estimate_text_tokens(skill_catalog or "")
-                + estimate_text_tokens(skill_reference or "")
-                + estimate_text_tokens(assembled_context_text or "")
-            )
+            reserved_prompt_tokens = estimate_text_tokens(system_prompt or "")
             effective_history_budget = compute_history_token_budget(
                 configured_history_budget=AGENT_CHAT_HISTORY_TOKEN_BUDGET,
                 reserved_prompt_tokens=reserved_prompt_tokens,
@@ -700,19 +747,6 @@ class AgentService:
                 user_id=user_id,
                 process_file_markers=True,
             )
-
-            # Add steering callback to agent loop
-            async def get_steering_messages():
-                """Get pending steering messages for agent loop."""
-                messages = await steering_queue.get_pending()
-                payload = [{"id": m.id, "content": m.content} for m in messages]
-                # Record what the run actually consumed so it can be persisted to
-                # chat history (otherwise node-boundary steering is lost on the
-                # next request).
-                consumed_steering.extend(
-                    str(item["content"]) for item in payload if item.get("content")
-                )
-                return payload
 
             try:
                 # Process through workflow stream
@@ -826,19 +860,54 @@ class AgentService:
                         tool_calls=len(all_tool_calls) if all_tool_calls else 0,
                     )
 
-                # Save to history
-                assistant_message_id = await message_manager.save_messages(
-                    session,
-                    session_id,
-                    message,
-                    assistant_response,
-                    all_tool_calls if all_tool_calls else None,
-                    reasoning_content if reasoning_content else None,
-                    assistant_stop_reason=assistant_stop_reason,
-                    assistant_usage=assistant_usage,
-                    assistant_status_cards=assistant_status_cards or None,
-                    steering_messages=consumed_steering or None,
-                )
+                # 工作流结束后队列里可能仍有未被任何消费点取走的 steering
+                # （协作轮数耗尽、或最后一轮 agent 收尾窗口才到达的消息）。
+                # 保存历史前统一取出，保证 /agent/steer 已确认 queued 的输入
+                # 随本轮落库，而不是被随后的 cleanup 静默删除。
+                try:
+                    await get_steering_messages()
+                except Exception as exc:
+                    log_with_context(
+                        logger,
+                        30,  # WARNING
+                        "Failed to drain remaining steering messages before history save",
+                        session_id=session_id,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                    )
+
+                # Save to history。落库放进独立任务并 shield：PG 下
+                # save_messages 内部走 asyncio.to_thread，工作线程一旦启动就
+                # 无法取消（awaiting 侧抛 CancelledError，线程照样 commit）。
+                # shield 保证取消不会打断这次落库，且 history_saved 只在真正
+                # 写完后置位，取消分支据此跳过补偿保存，避免整轮历史写两遍。
+                async def _save_history_once() -> str | None:
+                    nonlocal history_saved
+                    saved_id = await message_manager.save_messages(
+                        session,
+                        session_id,
+                        message,
+                        assistant_response,
+                        all_tool_calls if all_tool_calls else None,
+                        reasoning_content if reasoning_content else None,
+                        assistant_stop_reason=assistant_stop_reason,
+                        assistant_usage=assistant_usage,
+                        assistant_status_cards=assistant_status_cards or None,
+                        steering_messages=consumed_steering or None,
+                    )
+                    history_saved = True
+                    return saved_id
+
+                def _consume_history_save_error(done_task: asyncio.Task) -> None:
+                    # 取消路径下可能没人再取这个任务的结果，先消费掉异常避免
+                    # "exception was never retrieved"；失败仍会由下面的 await
+                    # 传播成 error 事件。
+                    if not done_task.cancelled():
+                        done_task.exception()
+
+                history_save_task = asyncio.create_task(_save_history_once())
+                history_save_task.add_done_callback(_consume_history_save_error)
+                assistant_message_id = await asyncio.shield(history_save_task)
                 if pending_done_payload is not None:
                     refs_candidate = pending_done_payload.get("refs")
                     refs = refs_candidate if isinstance(refs_candidate, list) else None
@@ -863,6 +932,41 @@ class AgentService:
 
         except asyncio.CancelledError:
             stream_cancelled = True
+            # 前端取消/断连时事件循环正在退栈，此处任何 await 都会被同一个
+            # cancel 再次打断，且共享 session 会随请求关闭；因此与
+            # had_stream_error 分支同样保留部分历史（用户消息 + 已生成的
+            # assistant 内容 + 已完成 tool_calls + 已消费 steering），但改用
+            # 后台任务 + 独立 session 落库，随后原样向上传播取消。取消瞬间
+            # 队列里可能还有已确认 queued 但未消费的 steering，落库前先在
+            # 后台任务里 drain 进 consumed_steering，避免它们随队列清理丢失。
+            if user_id and not history_saved:
+
+                async def _drain_then_save_partial_history() -> None:
+                    # 取消可能恰好落在 save_messages 期间：它被 shield 保护会
+                    # 继续跑完，所以补偿保存前必须等它的真实结果，已落库就直接
+                    # 返回，否则同一轮 user/steering/assistant 会被重复写入。
+                    if history_save_task is not None:
+                        await asyncio.wait({history_save_task})
+                        if history_saved:
+                            return
+                    try:
+                        await get_steering_messages()
+                    except Exception as exc:
+                        log_with_context(
+                            logger,
+                            30,  # WARNING
+                            "Failed to drain steering queue before cancellation save",
+                            session_id=session_id,
+                            error=str(exc),
+                            error_type=type(exc).__name__,
+                        )
+                    await asyncio.to_thread(_save_partial_history_sync)
+
+                cancellation_save_task = self._schedule_background_cleanup(
+                    _drain_then_save_partial_history(),
+                    description="save_partial_history_after_cancellation",
+                    session_id=session_id,
+                )
             raise
         except Exception as e:
             request_failed = True
@@ -879,10 +983,20 @@ class AgentService:
             yield error_event(str(e)).to_sse()
 
         finally:
-            # Cleanup steering queue
+            # Cleanup steering queue（只释放本 run 的持有，并发 run 不受影响）
             if stream_cancelled:
+
+                async def _cleanup_after_cancellation_save() -> None:
+                    # 先等部分历史落库（其中包含 drain 出的 steering）再释放
+                    # 队列，避免清理任务抢先删掉尚未落库的消息。asyncio.wait
+                    # 不会向外抛保存任务的异常/取消，失败已由其 done callback
+                    # 记录，这里无论如何都要继续清理。
+                    if isinstance(cancellation_save_task, asyncio.Task):
+                        await asyncio.wait({cancellation_save_task})
+                    await cleanup_steering_queue_async(session_id, run_id=steering_run_id)
+
                 self._schedule_background_cleanup(
-                    cleanup_steering_queue_async(session_id),
+                    _cleanup_after_cancellation_save(),
                     description="cleanup_steering_queue_async",
                     session_id=session_id,
                 )
@@ -893,7 +1007,34 @@ class AgentService:
                     session_id=session_id,
                 )
             else:
-                await cleanup_steering_queue_async(session_id)
+                # cleanup 会连消息一起删除队列：先兜底取出仍未消费的
+                # steering（正常路径在保存历史前已 drain 过，这里主要覆盖
+                # 请求失败、未走到保存点的情况），有未落库的消费记录时连同
+                # 本轮用户消息一起补存，保证已确认 queued 的输入不会凭空消失。
+                try:
+                    await get_steering_messages()
+                except Exception as exc:
+                    log_with_context(
+                        logger,
+                        30,  # WARNING
+                        "Failed to drain steering queue before cleanup",
+                        session_id=session_id,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                    )
+                if user_id and not history_saved and consumed_steering:
+                    try:
+                        await asyncio.to_thread(_save_partial_history_sync)
+                    except Exception as exc:
+                        log_with_context(
+                            logger,
+                            30,  # WARNING
+                            "Failed to persist steering messages after stream failure",
+                            session_id=session_id,
+                            error=str(exc),
+                            error_type=type(exc).__name__,
+                        )
+                await cleanup_steering_queue_async(session_id, run_id=steering_run_id)
 
             total_duration = int((utcnow() - start_time).total_seconds() * 1000)
             metrics.observe_histogram(AGENT_REQUESTS_DURATION_MS, total_duration)

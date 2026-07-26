@@ -1,5 +1,6 @@
 """Tests for MCP tool wrappers."""
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -710,7 +711,10 @@ async def test_edit_file_forwards_continue_on_error():
     mock_executor = MagicMock()
     mock_executor.edit_file.return_value = {"id": "f-1", "edits_applied": 1}
 
-    with patch("agent.tools.mcp_tools.ToolContext.get_executor", return_value=mock_executor):
+    with patch("agent.tools.mcp_tools.ToolContext.get_executor", return_value=mock_executor), patch(
+        "agent.tools.mcp_tools.ToolContext._get_context",
+        return_value={"project_id": "proj-1"},
+    ):
         result = await edit_file({
             "id": "f-1",
             "edits": [{"op": "append", "text": "x"}],
@@ -733,7 +737,10 @@ async def test_edit_file_accepts_file_id_alias():
     mock_executor = MagicMock()
     mock_executor.edit_file.return_value = {"id": "f-1", "edits_applied": 1}
 
-    with patch("agent.tools.mcp_tools.ToolContext.get_executor", return_value=mock_executor):
+    with patch("agent.tools.mcp_tools.ToolContext.get_executor", return_value=mock_executor), patch(
+        "agent.tools.mcp_tools.ToolContext._get_context",
+        return_value={"project_id": "proj-1"},
+    ):
         result = await edit_file({
             "file_id": "f-1",
             "edits": [{"op": "append", "text": "x"}],
@@ -787,6 +794,9 @@ async def test_tool_result_payload_is_truncated_when_exceeding_limit():
     }
 
     with patch("agent.tools.mcp_tools.ToolContext.get_executor", return_value=mock_executor), patch(
+        "agent.tools.mcp_tools.ToolContext._get_context",
+        return_value={"project_id": "proj-1"},
+    ), patch(
         "agent.tools.mcp_tools.TOOL_RESULT_MAX_CHARS",
         180,
     ):
@@ -888,6 +898,9 @@ async def test_tool_error_payload_is_truncated_when_exceeding_limit():
     mock_executor.edit_file.side_effect = ValueError("boom-" + ("x" * 2000))
 
     with patch("agent.tools.mcp_tools.ToolContext.get_executor", return_value=mock_executor), patch(
+        "agent.tools.mcp_tools.ToolContext._get_context",
+        return_value={"project_id": "proj-1"},
+    ), patch(
         "agent.tools.mcp_tools.TOOL_RESULT_MAX_CHARS",
         180,
     ):
@@ -1119,14 +1132,14 @@ async def test_create_empty_file_sets_pending_marker_on_offload_path(db_session)
     """Regression: the pending-empty-file marker must survive the Postgres-style
     offload path.
 
-    _create_file_sync sets the marker via a ContextVar. When create_file offloads
-    it with asyncio.to_thread (production/Postgres), that runs in a COPIED context
-    so the marker is lost in the caller's context — disabling the
-    consecutive-empty-file guard and the writing_graph correction loop. The async
-    wrapper must re-apply it here.
+    When create_file offloads _create_file_sync with asyncio.to_thread
+    (production/Postgres), the sync impl runs in a COPIED context. The marker it
+    sets there must still be visible in the caller's (event-loop) context —
+    otherwise the consecutive-empty-file guard and the writing_graph correction
+    loop are both disabled in production.
     """
     from agent.tools.mcp_tools import ToolContext
-    from models import File, Project, User
+    from models import Project, User
 
     suffix = uuid4().hex[:8]
     user = User(
@@ -1176,6 +1189,214 @@ async def test_create_empty_file_sets_pending_marker_on_offload_path(db_session)
         pending = ToolContext.get_pending_empty_file()
         assert pending is not None
         assert pending["file_id"] == payload["data"]["id"]
+    finally:
+        ToolContext.clear_pending_empty_file()
+        ToolContext.clear_context()
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_consecutive_empty_create_file_rejected_across_tool_tasks(db_session):
+    """连续创建第二个空文件必须被拦截 — 即使两次 create_file 分别运行在
+    SDK 为每次工具调用包的独立 asyncio 子任务里。
+
+    第一个空文件的 pending 标记若只存在于子任务的 contextvars 副本中，第二次
+    create_file（另一个子任务）就看不到守卫，stream_adapter 会无条件覆盖捕获
+    目标，第一个文件已流出的正文被静默丢弃。
+    """
+    from agent.tools.mcp_tools import ToolContext
+    from models import Project, User
+
+    suffix = uuid4().hex[:8]
+    user = User(
+        email=f"mcp-guard-{suffix}@example.com",
+        username=f"mcp_guard_{suffix}",
+        hashed_password="hashed",
+        email_verified=True,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    project = Project(
+        name=f"MCP Guard Project {suffix}",
+        owner_id=user.id,
+        project_type="novel",
+    )
+    db_session.add(project)
+    db_session.commit()
+    db_session.refresh(project)
+
+    ToolContext.set_context(
+        session=db_session,
+        user_id=user.id,
+        project_id=project.id,
+        session_id="sess-guard",
+    )
+    try:
+        first = await asyncio.create_task(create_file({
+            "title": "第1章",
+            "file_type": "draft",
+            "content": "",
+        }))
+        first_payload = _parse_payload(first)
+        assert first_payload["status"] == "success"
+        # 子任务里设置的标记必须在父上下文可见
+        assert ToolContext.has_pending_empty_file() is True
+
+        second = await asyncio.create_task(create_file({
+            "title": "第2章",
+            "file_type": "draft",
+            "content": "",
+        }))
+        second_payload = _parse_payload(second)
+        assert second_payload["status"] == "error"
+        assert "第1章" in second_payload["error"]
+    finally:
+        ToolContext.clear_pending_empty_file()
+        ToolContext.clear_context()
+
+
+def _make_user_and_project(db_session, tag: str):
+    """建一个可用于 create_file 的真实 user + novel project。"""
+    from models import Project, User
+
+    suffix = uuid4().hex[:8]
+    user = User(
+        email=f"mcp-{tag}-{suffix}@example.com",
+        username=f"mcp_{tag}_{suffix}",
+        hashed_password="hashed",
+        email_verified=True,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    project = Project(
+        name=f"MCP {tag} Project {suffix}",
+        owner_id=user.id,
+        project_type="novel",
+    )
+    db_session.add(project)
+    db_session.commit()
+    db_session.refresh(project)
+    return user, project
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_create_folder_does_not_set_pending_empty_file_marker(db_session):
+    """创建文件夹不得置 pending-empty-file 标记，否则本轮后续建档被永久阻断。
+
+    create_file 的 schema 没有 content 参数（content 恒为 ""），文件夹又永远不会
+    收到 <file>…</file> 正文，所以标记一旦置上就没有清除路径：分卷/分章结构
+    （先建「第一卷」文件夹再在其下建章节）会在第二次 create_file 上直接报错。
+    """
+    from agent.tools.mcp_tools import ToolContext
+
+    user, project = _make_user_and_project(db_session, "folder")
+
+    ToolContext.set_context(
+        session=db_session,
+        user_id=user.id,
+        project_id=project.id,
+        session_id="sess-folder",
+    )
+    try:
+        folder = await asyncio.create_task(create_file({
+            "title": "第一卷",
+            "file_type": "folder",
+        }))
+        folder_payload = _parse_payload(folder)
+        assert folder_payload["status"] == "success"
+        assert folder_payload["data"]["file_type"] == "folder"
+        assert ToolContext.has_pending_empty_file() is False
+
+        chapter = await asyncio.create_task(create_file({
+            "title": "第1章",
+            "file_type": "draft",
+            "parent_id": folder_payload["data"]["id"],
+        }))
+        chapter_payload = _parse_payload(chapter)
+        assert chapter_payload["status"] == "success"
+        assert chapter_payload["data"]["parent_id"] == folder_payload["data"]["id"]
+
+        # 章节（真正等待流式正文的文件）仍然要置标记
+        pending = ToolContext.get_pending_empty_file()
+        assert pending is not None
+        assert pending["file_id"] == chapter_payload["data"]["id"]
+        assert pending["title"] == "第1章"
+    finally:
+        ToolContext.clear_pending_empty_file()
+        ToolContext.clear_context()
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_create_folder_marker_free_on_offload_path(db_session):
+    """Postgres 卸载路径（asyncio.to_thread）同样不得给文件夹置标记。"""
+    from agent.tools.mcp_tools import ToolContext
+
+    user, project = _make_user_and_project(db_session, "folderoff")
+
+    ToolContext.set_context(
+        session=db_session,
+        user_id=user.id,
+        project_id=project.id,
+        session_id="sess-folder-offload",
+    )
+    try:
+        with patch(
+            "agent.tools.mcp_tools._should_offload_tool_execution",
+            return_value=True,
+        ):
+            folder = await create_file({
+                "title": "第二卷",
+                "file_type": "folder",
+            })
+        assert _parse_payload(folder)["status"] == "success"
+        assert ToolContext.has_pending_empty_file() is False
+    finally:
+        ToolContext.clear_pending_empty_file()
+        ToolContext.clear_context()
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_create_folder_still_blocked_while_file_awaits_content(db_session):
+    """已有待写入正文的文件时，建文件夹仍被拦截（保留防内容丢失的守卫）。
+
+    stream_adapter 会把最近一次 create_file 的返回无条件设为流式捕获目标，
+    因此在正文写完前插入任何 create_file（含文件夹）都会让前一个文件的正文写错
+    位置；这里的拦截是可恢复的：写完正文后标记清除，建文件夹即可继续。
+    """
+    from agent.tools.mcp_tools import ToolContext
+
+    user, project = _make_user_and_project(db_session, "folderguard")
+
+    ToolContext.set_context(
+        session=db_session,
+        user_id=user.id,
+        project_id=project.id,
+        session_id="sess-folder-guard",
+    )
+    try:
+        chapter = await create_file({"title": "第1章", "file_type": "draft"})
+        assert _parse_payload(chapter)["status"] == "success"
+        assert ToolContext.has_pending_empty_file() is True
+
+        blocked = await create_file({"title": "第一卷", "file_type": "folder"})
+        blocked_payload = _parse_payload(blocked)
+        assert blocked_payload["status"] == "error"
+        assert "第1章" in blocked_payload["error"]
+
+        # 正文写入后（stream_adapter 清除标记）文件夹可以正常创建
+        ToolContext.clear_pending_empty_file()
+        folder = await create_file({"title": "第一卷", "file_type": "folder"})
+        assert _parse_payload(folder)["status"] == "success"
+        assert ToolContext.has_pending_empty_file() is False
     finally:
         ToolContext.clear_pending_empty_file()
         ToolContext.clear_context()

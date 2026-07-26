@@ -102,6 +102,7 @@ const streamCallbacks = {
 vi.mock('../../hooks/useChatStreaming', () => ({
   useChatStreaming: () => ({
     streamRenderItems: [],
+    clearStreamItems: vi.fn(),
     editProgress: null,
     setEditProgress: vi.fn(),
     aiSuggestions: [],
@@ -109,6 +110,7 @@ vi.mock('../../hooks/useChatStreaming', () => ({
     isRefreshingSuggestions: false,
     setIsRefreshingSuggestions: vi.fn(),
     matchedSkills: [],
+    setMatchedSkills: vi.fn(),
     getStreamCallbacks: vi.fn(() => streamCallbacks),
     clearIdleTimer: vi.fn(),
   }),

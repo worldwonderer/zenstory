@@ -84,6 +84,7 @@ def find_fuzzy_spans(
     casefold: bool = True,
     min_normalized_len: int = 6,
     max_matches: int = 20,
+    stats: dict[str, int] | None = None,
 ) -> list[tuple[int, int]]:
     """Find match spans in original content, ignoring punctuation/whitespace.
 
@@ -97,11 +98,17 @@ def find_fuzzy_spans(
         casefold: If True, perform case-insensitive matching
         min_normalized_len: Minimum normalized pattern length to search
         max_matches: Maximum number of matches to return
+        stats: Optional dict receiving match diagnostics; "boundary_rejected"
+            counts candidates dropped because the span started/ended inside an
+            NFKC-expanded original character
 
     Returns:
         List of (start_index, end_index) tuples in the ORIGINAL content.
         Spans are non-overlapping and sorted by position.
     """
+    if stats is not None:
+        stats["boundary_rejected"] = 0
+
     normalized_content, map_content = normalize_for_fuzzy_match(
         content,
         ignore_punct_whitespace=ignore_punct_whitespace,
@@ -119,14 +126,31 @@ def find_fuzzy_spans(
         return []
 
     spans: list[tuple[int, int]] = []
+    boundary_rejected = 0
     pos = 0
     while pos < len(normalized_content):
         found = normalized_content.find(normalized_pattern, pos)
         if found < 0:
             break
 
+        last = found + len(normalized_pattern) - 1
+        # NFKC can expand one original char into several normalized chars
+        # (Ⅻ→xii, ﬁ→fi, ㎞→km); index_map maps all of them back to the same
+        # original index. A span starting/ending inside such an expansion
+        # would pull the WHOLE original char into the span and destroy its
+        # unmatched remainder, so only accept spans whose normalized
+        # boundaries align with original-char boundaries.
+        start_aligned = found == 0 or map_content[found] != map_content[found - 1]
+        end_aligned = (
+            last + 1 >= len(map_content) or map_content[last] != map_content[last + 1]
+        )
+        if not (start_aligned and end_aligned):
+            boundary_rejected += 1
+            pos = found + 1
+            continue
+
         start_orig = map_content[found]
-        end_orig = map_content[found + len(normalized_pattern) - 1] + 1
+        end_orig = map_content[last] + 1
         spans.append((start_orig, end_orig))
 
         if len(spans) >= max_matches:
@@ -135,6 +159,8 @@ def find_fuzzy_spans(
         # Non-overlapping by default for stability
         pos = found + len(normalized_pattern)
 
+    if stats is not None:
+        stats["boundary_rejected"] = boundary_rejected
     return spans
 
 
@@ -246,9 +272,19 @@ def find_approximate_match(
         return None
 
     start_i, end_i = best_span
+    end_i = min(end_i, len(map_content))
+    # Snap the window to original-char boundaries: a boundary landing inside
+    # an NFKC expansion (Ⅻ→xii etc.) would otherwise swallow the whole
+    # original char including its unmatched remainder, so shrink the span to
+    # exclude partially-covered chars instead.
+    while start_i < end_i and start_i > 0 and map_content[start_i] == map_content[start_i - 1]:
+        start_i += 1
+    while end_i > start_i and end_i < len(map_content) and map_content[end_i - 1] == map_content[end_i]:
+        end_i -= 1
+    if start_i >= end_i:
+        return None
     start_orig = map_content[start_i]
-    end_idx = min(end_i - 1, len(map_content) - 1)
-    end_orig = map_content[end_idx] + 1
+    end_orig = map_content[end_i - 1] + 1
     matched_text = content[start_orig:end_orig]
     return (start_orig, end_orig, best_score, matched_text)
 

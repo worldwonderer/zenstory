@@ -2,6 +2,8 @@
 Unit tests for ToolContext with contextvars isolation.
 """
 
+import asyncio
+
 import pytest
 
 from agent.tools.mcp_tools import ToolContext
@@ -85,6 +87,81 @@ class TestToolContextPendingFile:
 
         # 待写入文件应该被清除
         assert ToolContext.has_pending_empty_file() is False
+
+
+class TestToolContextCrossTask:
+    """待写入空文件标记必须跨 asyncio 任务可见。
+
+    openai-agents SDK 为 run loop 和每次 function tool 调用各包一层
+    asyncio.create_task，create_task 只拷贝 contextvars 快照，因此标记
+    不能依赖子任务里的 ContextVar 重绑定传递。
+    """
+
+    @pytest.mark.asyncio
+    async def test_pending_flag_set_in_nested_task_visible_in_parent(self):
+        """两层嵌套子任务（模拟 SDK run-loop task + tool task）里设置的标记，父上下文必须可见"""
+        ToolContext.set_context(None, "user-1", "project-1", None)
+        try:
+
+            async def tool_task():
+                ToolContext.set_pending_empty_file("file-1", "第1章.md")
+
+            async def run_loop_task():
+                await asyncio.create_task(tool_task())
+
+            await asyncio.create_task(run_loop_task())
+
+            assert ToolContext.has_pending_empty_file() is True
+            pending = ToolContext.get_pending_empty_file()
+            assert pending == {"file_id": "file-1", "title": "第1章.md"}
+        finally:
+            ToolContext.clear_context()
+
+    @pytest.mark.asyncio
+    async def test_clear_in_parent_visible_in_later_child_task(self):
+        """父上下文清除标记后，后续子任务（如下一次 create_file 工具调用）必须读到已清除"""
+        ToolContext.set_context(None, "user-1", "project-1", None)
+        try:
+
+            async def set_task():
+                ToolContext.set_pending_empty_file("file-1", "第1章.md")
+
+            await asyncio.create_task(set_task())
+            assert ToolContext.has_pending_empty_file() is True
+
+            ToolContext.clear_pending_empty_file()
+
+            seen: list[bool] = []
+
+            async def read_task():
+                seen.append(ToolContext.has_pending_empty_file())
+
+            await asyncio.create_task(read_task())
+            assert seen == [False]
+            assert ToolContext.has_pending_empty_file() is False
+        finally:
+            ToolContext.clear_context()
+
+    @pytest.mark.asyncio
+    async def test_pending_flag_set_in_gather_subtask_visible_to_siblings_and_parent(self):
+        """asyncio.gather 子任务里设置的标记，兄弟任务与父上下文都必须可见"""
+        ToolContext.set_context(None, "user-1", "project-1", None)
+        try:
+            sibling_saw: list[bool] = []
+
+            async def setter():
+                ToolContext.set_pending_empty_file("file-a", "并行文件.md")
+
+            async def reader():
+                await asyncio.sleep(0.05)
+                sibling_saw.append(ToolContext.has_pending_empty_file())
+
+            await asyncio.gather(setter(), reader())
+
+            assert sibling_saw == [True]
+            assert ToolContext.has_pending_empty_file() is True
+        finally:
+            ToolContext.clear_context()
 
 
 class TestToolContextSession:

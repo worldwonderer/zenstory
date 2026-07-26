@@ -12,7 +12,8 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from sqlmodel import Session
+from sqlalchemy import create_engine, text
+from sqlmodel import Session, SQLModel, select
 
 from agent.service import AgentService
 from config.datetime_utils import utcnow
@@ -166,3 +167,61 @@ class TestAgentServiceSessionIdResolution:
         assert foreign_row is not None
         assert foreign_row.user_id == user2.id
         assert foreign_row.project_id == project2.id
+
+    def test_reactivates_requested_session_under_partial_unique_index(self, tmp_path):
+        """
+        Postgres enforces uq_chat_session_user_project_active (partial unique on
+        user_id+project_id WHERE is_active). Reactivating a candidate whose
+        primary key sorts BEFORE the currently-active session must not trip the
+        index: the stale deactivation has to reach the DB before the activation.
+        """
+        engine = create_engine(
+            f"sqlite:///{tmp_path / 'partial_unique.db'}",
+            connect_args={"check_same_thread": False},
+        )
+        SQLModel.metadata.create_all(engine)
+        with engine.begin() as conn:
+            # 与 database.py POSTGRES_PERFORMANCE_INDEX_SQL 中的定义保持一致
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX uq_chat_session_user_project_active "
+                    "ON chat_session (user_id, project_id) WHERE is_active = true"
+                )
+            )
+
+        with Session(engine) as session:
+            candidate = ChatSession(
+                id="aaaa-candidate",
+                user_id="user-partial-idx",
+                project_id="proj-partial-idx",
+                title="Old inactive",
+                is_active=False,
+                message_count=0,
+                created_at=utcnow() - timedelta(minutes=10),
+                updated_at=utcnow() - timedelta(minutes=10),
+            )
+            current = ChatSession(
+                id="zzzz-current",
+                user_id="user-partial-idx",
+                project_id="proj-partial-idx",
+                title="Current active",
+                is_active=True,
+                message_count=0,
+            )
+            session.add_all([candidate, current])
+            session.commit()
+
+            service = AgentService(context_assembler=MagicMock())
+            resolved = service._resolve_or_create_chat_session_id(
+                session,
+                project_id="proj-partial-idx",
+                user_id="user-partial-idx",
+                requested_session_id="aaaa-candidate",
+            )
+
+            assert resolved == "aaaa-candidate"
+
+            actives = session.exec(
+                select(ChatSession).where(ChatSession.is_active)
+            ).all()
+            assert [s.id for s in actives] == ["aaaa-candidate"]

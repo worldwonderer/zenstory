@@ -172,6 +172,83 @@ async def test_runner_maps_sdk_text_tool_handoff_and_message_end():
     assert state["messages"][-2]["content"][0]["text"] == "正文"
 
 
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_runner_consumes_steering_at_tool_output_boundary():
+    """SDK run 进行中无法注入消息，工具输出边界必须消费 steering：
+    向前端发确认事件，并把内容作为用户消息写回 state 供下一次迭代使用。"""
+    from agent.core.workflow_events import StreamEventType
+    from agent.openai_agents.runner import run_openai_agents_streaming_agent
+
+    class FakeResult:
+        raw_responses = []
+
+        async def stream_events(self):
+            yield SimpleNamespace(
+                type="run_item_stream_event",
+                name="tool_called",
+                item=SimpleNamespace(
+                    raw_item={
+                        "name": "query_files",
+                        "call_id": "call-1",
+                        "arguments": json.dumps({"query": "第一章"}, ensure_ascii=False),
+                    }
+                ),
+            )
+            yield SimpleNamespace(
+                type="run_item_stream_event",
+                name="tool_output",
+                item=SimpleNamespace(
+                    raw_item={"call_id": "call-1"},
+                    output=json.dumps({"status": "success", "data": []}, ensure_ascii=False),
+                ),
+            )
+            yield SimpleNamespace(
+                type="raw_response_event",
+                data=SimpleNamespace(type="response.output_text.delta", delta="正文"),
+            )
+
+    steering_calls = {"n": 0}
+
+    async def fake_get_steering_messages():
+        steering_calls["n"] += 1
+        # 第 1 次：run 开始前的初始注入（队列为空）；
+        # 第 2 次：工具输出边界（用户在生成期间发来了引导）。
+        if steering_calls["n"] == 2:
+            return [{"id": "steer-1", "content": "改成第一人称"}]
+        return []
+
+    state = {"user_message": "写一章", "messages": [], "system_prompt": "base"}
+
+    with (
+        patch("agent.openai_agents.runner._build_agent", return_value=object()),
+        patch("agents.Runner.run_streamed", return_value=FakeResult()),
+    ):
+        events = [
+            event
+            async for event in run_openai_agents_streaming_agent(
+                state=state,
+                agent_type="writer",
+                system_prompt="system",
+                get_steering_messages=fake_get_steering_messages,
+            )
+        ]
+
+    assert steering_calls["n"] >= 2, "工具输出边界必须轮询 steering 队列"
+
+    type_values = [getattr(event.type, "value", "") for event in events]
+    message_start_idx = type_values.index(StreamEventType.MESSAGE_START.value)
+    steering_indexes = [
+        idx for idx, value in enumerate(type_values) if value == "steering_received"
+    ]
+    assert steering_indexes, "消费到的 steering 必须向前端发确认事件"
+    assert all(idx > message_start_idx for idx in steering_indexes)
+    assert events[steering_indexes[0]].data["preview"] == "改成第一人称"
+
+    # run 结束后引导内容进入会话消息，供 graph 的下一次迭代注入模型
+    assert state["messages"][-1] == {"role": "user", "content": "改成第一人称"}
+
+
 def _wait_until_serving(host: str, port: int, timeout: float = 5.0) -> None:
     """Block until the local server accepts a TCP connection (or timeout)."""
     deadline = time.monotonic() + timeout

@@ -9,6 +9,8 @@ Unit tests for the file version management service, covering:
 - Edge cases and error handling
 """
 
+import random
+
 import pytest
 from sqlmodel import Session
 
@@ -589,6 +591,148 @@ class TestFileVersionServiceRollback:
                 file_id=test_file_with_project.id,
                 version_number=999,
                 user_id="test-user",
+            )
+
+
+@pytest.mark.unit
+class TestFileVersionServiceDiffReplay:
+    """Tests for diff replay when content lines look like diff headers.
+
+    Deleted lines starting with "--" (e.g. Markdown "---" separators) and
+    added lines starting with "++" produce diff lines that share a prefix
+    with unified diff file headers, and must not be skipped during replay.
+    """
+
+    def _roundtrip(self, db_session, service, file, contents):
+        """Create a version per content, then reconstruct each and compare."""
+        versions = [
+            service.create_version(
+                session=db_session,
+                file_id=file.id,
+                new_content=content,
+            )
+            for content in contents
+        ]
+        for version, expected in zip(versions, contents, strict=True):
+            actual = service.get_content_at_version(
+                session=db_session,
+                file_id=file.id,
+                version_number=version.version_number,
+            )
+            assert actual == expected, (
+                f"Version {version.version_number} replayed incorrectly:\n"
+                f"expected: {expected!r}\nactual: {actual!r}"
+            )
+        return versions
+
+    def test_delete_markdown_separator_line(self, db_session: Session, file_version_service, test_file_with_project):
+        """Deleting a '---' separator line must survive delta replay."""
+        versions = self._roundtrip(
+            db_session,
+            file_version_service,
+            test_file_with_project,
+            [
+                "章节开头\n---\n结尾\n",
+                "章节开头\n***\n结尾\n",
+            ],
+        )
+        assert versions[1].is_base_version is False
+
+    def test_add_line_starting_with_plus_plus(self, db_session: Session, file_version_service, test_file_with_project):
+        """Adding a line starting with '++' must survive delta replay."""
+        versions = self._roundtrip(
+            db_session,
+            file_version_service,
+            test_file_with_project,
+            [
+                "第一行\n第二行\n",
+                "第一行\n++重点标记\n第二行\n",
+            ],
+        )
+        assert versions[1].is_base_version is False
+
+    def test_remove_frontmatter_block(self, db_session: Session, file_version_service, test_file_with_project):
+        """Removing a YAML frontmatter block deletes '---' delimiter lines."""
+        versions = self._roundtrip(
+            db_session,
+            file_version_service,
+            test_file_with_project,
+            [
+                "---\ntitle: 第一章\ntags: 修仙\n---\n\n正文开始\n",
+                "正文开始\n",
+                "---\ntitle: 第一章（修订）\n---\n\n正文开始\n",
+            ],
+        )
+        assert versions[1].is_base_version is False
+        assert versions[2].is_base_version is False
+
+    def test_rollback_restores_content_with_separator(self, db_session: Session, file_version_service, test_file_with_project):
+        """Rollback across a '---' deletion must restore exact content."""
+        v1_content = "章节开头\n---\n结尾\n"
+        file_version_service.create_version(
+            session=db_session,
+            file_id=test_file_with_project.id,
+            new_content=v1_content,
+        )
+        v2 = file_version_service.create_version(
+            session=db_session,
+            file_id=test_file_with_project.id,
+            new_content="章节开头\n***\n结尾\n",
+        )
+        assert v2.is_base_version is False
+
+        file, _ = file_version_service.rollback_to_version(
+            session=db_session,
+            file_id=test_file_with_project.id,
+            version_number=v2.version_number,
+            user_id="test-user",
+        )
+        assert file.content == "章节开头\n***\n结尾\n"
+
+    def test_create_apply_diff_fuzz_roundtrip(self, file_version_service):
+        """_create_diff -> _apply_diff must round-trip arbitrary content."""
+        rng = random.Random(20260726)
+        line_pool = [
+            "---",
+            "----",
+            "+++",
+            "++++",
+            "--",
+            "++",
+            "-",
+            "+",
+            "-- 注释风格",
+            "++重点",
+            "@@ -1,2 +1,2 @@",
+            "@@",
+            "普通的一行",
+            "another plain line",
+            "",
+            "  缩进行",
+            "***",
+        ]
+
+        for _ in range(100):
+            old_lines = [rng.choice(line_pool) for _ in range(rng.randint(0, 15))]
+            # Mutate: random deletions, insertions, replacements
+            new_lines = list(old_lines)
+            for _ in range(rng.randint(0, 6)):
+                op = rng.choice(["insert", "delete", "replace"])
+                if op == "insert":
+                    new_lines.insert(rng.randint(0, len(new_lines)), rng.choice(line_pool))
+                elif op == "delete" and new_lines:
+                    new_lines.pop(rng.randrange(len(new_lines)))
+                elif op == "replace" and new_lines:
+                    new_lines[rng.randrange(len(new_lines))] = rng.choice(line_pool)
+
+            old_content = "\n".join(old_lines) + ("\n" if rng.random() < 0.7 else "")
+            new_content = "\n".join(new_lines) + ("\n" if rng.random() < 0.7 else "")
+
+            diff = file_version_service._create_diff(old_content, new_content)
+            result = file_version_service._apply_diff(old_content, diff)
+            assert result == new_content, (
+                f"Round-trip failed:\nold: {old_content!r}\n"
+                f"new: {new_content!r}\ngot: {result!r}"
             )
 
 

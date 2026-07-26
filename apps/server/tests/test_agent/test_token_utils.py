@@ -1,7 +1,12 @@
 """Tests for token estimation utilities."""
 
 
-from agent.utils.token_utils import estimate_message_tokens, estimate_text_tokens
+from agent.utils.token_utils import (
+    _chars_per_token_for,
+    _cjk_fraction,
+    estimate_message_tokens,
+    estimate_text_tokens,
+)
 
 # ---------------------------------------------------------------------------
 # estimate_text_tokens
@@ -112,3 +117,41 @@ def test_empty_content_returns_zero_or_one():
     msg = {"role": "user", "content": ""}
     # Empty content — result is 0 or 1 (max(1, ...) guard might not fire for empty)
     assert estimate_message_tokens(msg) >= 0
+
+
+def test_assistant_thinking_blocks_do_not_consume_history_budget():
+    """Thinking blocks are dropped before replay, so they must not be billed."""
+    text_block = {"type": "text", "text": "Final answer for the user."}
+    with_thinking = {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "reasoning " * 500},
+            text_block,
+        ],
+    }
+    text_only = {"role": "assistant", "content": [text_block]}
+
+    assert estimate_message_tokens(with_thinking) == estimate_message_tokens(text_only)
+
+
+# ---------------------------------------------------------------------------
+# _cjk_fraction / _chars_per_token_for
+# ---------------------------------------------------------------------------
+
+
+def test_cjk_extension_b_counts_as_cjk():
+    assert _cjk_fraction(chr(0x20000) * 10) == 1.0
+    assert _cjk_fraction(chr(0x2A6DF) * 10) == 1.0
+
+
+def test_general_punctuation_and_symbols_are_not_cjk():
+    # Curly quotes, em dash, ellipsis, arrow, for-all — all inside U+2001..U+2A6D
+    assert _cjk_fraction("‘’“”—…→∀") == 0.0
+
+
+def test_chars_per_token_uses_cjk_ratio_for_extension_b_text():
+    assert _chars_per_token_for(chr(0x20000) * 20) == 2.0
+
+
+def test_chars_per_token_keeps_latin_ratio_for_symbol_heavy_text():
+    assert _chars_per_token_for("‘’“”—…→∀") == 4.0

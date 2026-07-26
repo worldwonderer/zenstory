@@ -249,6 +249,73 @@ class TestChatAPI:
         assert data[1]["role"] == "assistant"
         assert data[1]["content"] == "I'm doing well, thank you!"
 
+    async def test_get_session_messages_returns_latest_when_over_limit(
+        self, client: AsyncClient, db_session: Session
+    ):
+        """当消息数超过 limit 时应返回最近的 limit 条（升序输出），而非最旧的一页。"""
+        from datetime import timedelta
+
+        from config.datetime_utils import utcnow
+
+        user = User(
+            username="testuser4b",
+            email="testuser4b@example.com",
+            hashed_password=hash_password("password123"),
+            name="Test User 4b",
+            email_verified=True,
+            is_active=True,
+        )
+        db_session.add(user)
+        db_session.commit()
+
+        project = Project(
+            id="proj-test-4b",
+            owner_id=user.id,
+            name="Test Project",
+            description="Test Description",
+        )
+        db_session.add(project)
+        db_session.commit()
+
+        session = ChatSession(
+            user_id=user.id,
+            project_id=project.id,
+            title="Test Session",
+            is_active=True,
+            message_count=5,
+        )
+        db_session.add(session)
+        db_session.commit()
+
+        base = utcnow()
+        for i in range(5):
+            db_session.add(
+                ChatMessage(
+                    session_id=session.id,
+                    role="user" if i % 2 == 0 else "assistant",
+                    content=f"message-{i}",
+                    created_at=base + timedelta(seconds=i),
+                )
+            )
+        db_session.commit()
+
+        response = await client.post(
+            "/api/auth/login",
+            data={"username": "testuser4b", "password": "password123"},
+        )
+        assert response.status_code == 200
+        token = response.json()["access_token"]
+
+        response = await client.get(
+            f"/api/v1/chat/session/{project.id}/messages",
+            params={"limit": 2},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert [msg["content"] for msg in data] == ["message-3", "message-4"]
+
     async def test_clear_session_success(
         self, client: AsyncClient, db_session: Session
     ):

@@ -270,6 +270,42 @@ async def _inject_initial_steering(
         )
 
 
+async def _consume_boundary_steering(
+    collected: list[str],
+    get_steering_messages: Callable[[], Any] | None,
+) -> AsyncIterator[StreamEvent]:
+    """Consume steering that arrived while the SDK run is executing.
+
+    openai-agents 不支持向进行中的 run 注入消息，工具输出边界只做消费与
+    前端确认；内容暂存 collected，run 结束后写回 state.messages，由 graph
+    决定是否追加一轮 writer 让引导在本次请求内生效。
+    """
+    if get_steering_messages is None:
+        return
+    try:
+        steering_msgs = await get_steering_messages()
+    except Exception as exc:
+        log_with_context(
+            logger,
+            40,  # ERROR
+            "Failed to retrieve steering messages at tool boundary",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return
+    for msg in steering_msgs or []:
+        content = str(msg.get("content") or "") if isinstance(msg, dict) else ""
+        if not content:
+            continue
+        collected.append(content)
+        from agent.core.events import steering_received_event
+
+        yield steering_received_event(
+            message_id=str(msg.get("id") or "") if isinstance(msg, dict) else "",
+            preview=content[:50],
+        )
+
+
 async def _pump_sdk_events(result: Any, run_queue: asyncio.Queue[tuple[str, Any]]) -> None:
     """Forward SDK stream events onto the shared run queue, tagged by kind.
 
@@ -307,6 +343,7 @@ async def run_openai_agents_streaming_agent(
     tool_uses: list[dict[str, Any]] = []
     tool_inputs_by_call_id: dict[str, dict[str, Any]] = {}
     tool_names_by_call_id: dict[str, str] = {}
+    mid_run_steering: list[str] = []
     artifact_refs_accumulated: list[str] = []
     handoff_event_data: dict[str, Any] | None = None
     clarification_event_data: dict[str, Any] | None = None
@@ -525,6 +562,13 @@ async def run_openai_agents_streaming_agent(
                             "details": normalize_str_list(result_data.get("details")),
                         }
                         result.cancel(mode="after_turn")
+
+                    # 工具输出边界是 run 内唯一能消费 steering 的时机（SDK 事件
+                    # 消费循环的其余位置都在等模型流式输出）。
+                    async for steering_event in _consume_boundary_steering(
+                        mid_run_steering, get_steering_messages
+                    ):
+                        yield steering_event
         except MaxTurnsExceeded:
             yield StreamEvent(
                 type=StreamEventType.ITERATION_EXHAUSTED,
@@ -593,3 +637,9 @@ async def run_openai_agents_streaming_agent(
             thinking_text="".join(thinking_text_parts),
             tool_uses=tool_uses,
         )
+        if mid_run_steering:
+            # 工具边界消费的 steering 作为用户消息进入后续迭代的输入
+            # （本次 SDK run 已经无法注入）。
+            state["messages"] = list(state.get("messages") or []) + [
+                {"role": "user", "content": content} for content in mid_run_steering
+            ]

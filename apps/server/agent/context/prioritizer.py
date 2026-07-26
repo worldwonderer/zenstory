@@ -24,12 +24,52 @@ class ContextPrioritizer:
         """Initialize prioritizer with default rules."""
         pass
 
-    def classify_priority(self, item: ContextItem) -> ContextPriority:
+    @staticmethod
+    def _is_user_attached(item: ContextItem) -> bool:
+        """Whether the user explicitly attached/quoted this item."""
+        metadata = item.metadata or {}
+        return bool(metadata.get("attached") or metadata.get("is_quote"))
+
+    @classmethod
+    def _intent_rank(cls, item: ContextItem) -> int:
+        """
+        Ordering rank inside a priority group: user intent before relevance.
+
+        组内顺序决定预算耗尽时谁被截断/丢弃，因此焦点文件必须排在最前
+        （否则 query recall 加成可能把相关度抬到 1.0 以上的其他条目排到
+        焦点之前），其次是用户显式附加/引用的内容。
+        """
+        if item.is_focus:
+            return 0
+        return 1 if cls._is_user_attached(item) else 2
+
+    @classmethod
+    def _allows_parent_upgrade(cls, items: list[ContextItem]) -> bool:
+        """
+        父大纲能否升级到 CRITICAL：批次里没有用户显式附加/引用的内容时才可以。
+
+        升级的唯一目的是借用 TokenBudget.select_items 里 CRITICAL 的池化预算；
+        但池化额度本来就是留给用户显式附加内容的，一旦两者同处 CRITICAL，
+        相关度更高的父大纲会把附加文件截断甚至整体挤出上下文。此时让父大纲
+        留在 CONSTRAINT 档，它仍有该档的保底份额。
+        """
+        return not any(
+            cls._is_user_attached(item) and not item.is_focus for item in items
+        )
+
+    def classify_priority(
+        self,
+        item: ContextItem,
+        *,
+        allow_parent_upgrade: bool = True,
+    ) -> ContextPriority:
         """
         Classify the priority of a context item.
 
         Args:
             item: Context item to classify
+            allow_parent_upgrade: Whether relation="parent" outlines may be
+                upgraded to CRITICAL (see _allows_parent_upgrade)
 
         Returns:
             ContextPriority level
@@ -38,12 +78,23 @@ class ContextPrioritizer:
         if item.is_focus:
             return ContextPriority.CRITICAL
 
-        # Priority already set
-        if item.priority != ContextPriority.INSPIRATION:
-            return item.priority
+        # Type/relation rules may upgrade a preset priority (e.g. parent
+        # outlines carry whole-story background and must reach CRITICAL so
+        # they can draw on the pooled budget in TokenBudget.select_items),
+        # but never downgrade one — user-attached files and retrieval
+        # snippets keep the tier the assembler explicitly assigned.
+        type_priority = self._classify_by_type(item)
 
-        # Classify based on type and metadata
-        return self._classify_by_type(item)
+        # CRITICAL 是 _classify_by_type 里唯一的升级目标（relation="parent"）；
+        # 拒绝升级时退到 CONSTRAINT（与 sibling/child 同档）而不是回落到预设，
+        # 以保持"只升不降"不变式。
+        if not allow_parent_upgrade and type_priority == ContextPriority.CRITICAL:
+            type_priority = ContextPriority.CONSTRAINT
+
+        order = ContextPriority.priority_order()
+        if order.index(type_priority) < order.index(item.priority):
+            return type_priority
+        return item.priority
 
     def _classify_by_type(self, item: ContextItem) -> ContextPriority:
         """Classify based on item type and metadata."""
@@ -96,8 +147,11 @@ class ContextPrioritizer:
             Sorted list (highest priority first)
         """
         # Assign priorities
+        allow_parent_upgrade = self._allows_parent_upgrade(items)
         for item in items:
-            item.priority = self.classify_priority(item)
+            item.priority = self.classify_priority(
+                item, allow_parent_upgrade=allow_parent_upgrade
+            )
 
         # Priority order
         priority_order = {
@@ -109,8 +163,9 @@ class ContextPrioritizer:
 
         # Sort by:
         # 1. Priority (CRITICAL first)
-        # 2. Relevance score (higher first)
-        # 3. Type (outline > snippet > character > lore)
+        # 2. User intent (focus, then user-attached/quoted content)
+        # 3. Relevance score (higher first)
+        # 4. Type (outline > snippet > character > lore)
         type_order = {
             "outline": 0,
             "snippet": 1,
@@ -122,6 +177,7 @@ class ContextPrioritizer:
             items,
             key=lambda x: (
                 priority_order.get(x.priority, 4),
+                self._intent_rank(x),
                 -(x.relevance_score or 0),
                 type_order.get(x.type, 4),
             )
@@ -144,14 +200,18 @@ class ContextPrioritizer:
             p: [] for p in ContextPriority
         }
 
+        allow_parent_upgrade = self._allows_parent_upgrade(items)
         for item in items:
-            priority = self.classify_priority(item)
+            priority = self.classify_priority(
+                item, allow_parent_upgrade=allow_parent_upgrade
+            )
             groups[priority].append(item)
 
-        # Sort within each group by relevance
+        # Sort within each group by user intent, then relevance.
+        # TokenBudget.select_items 按这个顺序花预算，靠后的条目才会被截断/丢弃。
         for priority in groups:
             groups[priority].sort(
-                key=lambda x: -(x.relevance_score or 0)
+                key=lambda x: (self._intent_rank(x), -(x.relevance_score or 0))
             )
 
         return groups

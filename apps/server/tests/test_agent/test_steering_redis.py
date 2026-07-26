@@ -81,6 +81,43 @@ class FakeRedis:
     def expire(self, key, ttl):
         return key in self.store
 
+    def sadd(self, key, *vals):
+        s = self.store.get(key)
+        if not isinstance(s, set):
+            s = set()
+            self.store[key] = s
+        before = len(s)
+        s.update(vals)
+        return len(s) - before
+
+    def srem(self, key, *vals):
+        s = self.store.get(key)
+        if not isinstance(s, set):
+            return 0
+        removed = 0
+        for v in vals:
+            if v in s:
+                s.remove(v)
+                removed += 1
+        return removed
+
+    def scard(self, key):
+        s = self.store.get(key)
+        return len(s) if isinstance(s, set) else 0
+
+    def eval(self, script, numkeys, *keys_and_args):
+        # 模拟 steering 的 run 释放脚本（SREM -> SCARD==0 -> DEL），与真实
+        # Redis 一样在单次调用内原子完成。
+        assert "SREM" in script and "SCARD" in script and "DEL" in script
+        keys = keys_and_args[:numkeys]
+        args = keys_and_args[numkeys:]
+        runs_key = keys[0]
+        self.srem(runs_key, args[0])
+        if self.scard(runs_key) == 0:
+            self.delete(*keys)
+            return 1
+        return 0
+
     def pipeline(self, transaction=True):
         return FakePipeline(self)
 
@@ -154,6 +191,47 @@ async def test_cleanup_removes_session(redis_steering):
     assert fake.store == {}
     with pytest.raises(KeyError):
         await st.get_steering_queue_for_user_async("sess-3", "user-1")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_concurrent_runs_first_cleanup_keeps_other_runs_queue(redis_steering):
+    """同一 chat session 的并发 run 共享 steering 键：先结束的 run 不能删掉
+    另一个仍在流式生成的 run 正在使用的 owner 键与消息列表。"""
+    st, fake = redis_steering
+
+    await st.create_steering_queue_async("sess-shared", "user-1", run_id="run-a")
+    await st.create_steering_queue_async("sess-shared", "user-1", run_id="run-b")
+
+    queue = await st.get_steering_queue_for_user_async("sess-shared", "user-1")
+    await queue.add("run B 的引导消息")
+
+    # run A 先结束：owner/msgs 键必须保留，POST /steer 不能 404
+    await st.cleanup_steering_queue_async("sess-shared", run_id="run-a")
+
+    surviving = await st.get_steering_queue_for_user_async("sess-shared", "user-1")
+    pending = await surviving.peek()
+    assert [m.content for m in pending] == ["run B 的引导消息"]
+
+    # 最后一个持有者退出后所有键才删除
+    await st.cleanup_steering_queue_async("sess-shared", run_id="run-b")
+    assert fake.store == {}
+    with pytest.raises(KeyError):
+        await st.get_steering_queue_for_user_async("sess-shared", "user-1")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_without_run_id_still_removes_all_keys(redis_steering):
+    """不带 run_id 的 cleanup 保持旧语义：无条件删除全部键。"""
+    st, fake = redis_steering
+
+    await st.create_steering_queue_async("sess-legacy", "user-1", run_id="run-a")
+    q = await st.get_steering_queue_for_user_async("sess-legacy", "user-1")
+    await q.add("msg")
+
+    await st.cleanup_steering_queue_async("sess-legacy")
+    assert fake.store == {}
 
 
 @pytest.mark.unit

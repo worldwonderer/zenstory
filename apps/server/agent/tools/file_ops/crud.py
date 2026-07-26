@@ -20,6 +20,7 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from agent.tools.permissions import (
+    check_file_access_in_tool_context,
     check_project_ownership,
 )
 from config.datetime_utils import utcnow
@@ -35,6 +36,7 @@ from utils.title_sequence import (
     resolve_persisted_sequence_order,
 )
 
+from .edit import file_write_lock
 from .serialization import (
     QUERY_FILES_DEFAULT_CONTENT_PREVIEW_CHARS,
     QUERY_FILES_DEFAULT_RESPONSE_MODE,
@@ -464,6 +466,26 @@ class FileCRUD:
             PermissionError: If user doesn't have permission
             ValueError: If file not found
         """
+        from database import is_postgres
+
+        if is_postgres:
+            return self._update_file_impl(id, title, content, parent_id, order, metadata)
+        # SQLite has no row locks: serialize same-file writes with the
+        # in-process per-file lock (shared with edit_file) so concurrent
+        # tasks cannot interleave between our read, commit and version
+        # snapshot.
+        with file_write_lock(id):
+            return self._update_file_impl(id, title, content, parent_id, order, metadata)
+
+    def _update_file_impl(
+        self,
+        id: str,
+        title: str | None,
+        content: str | None,
+        parent_id: str | None,
+        order: int | None,
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         log_with_context(
             logger,
             20,  # INFO
@@ -475,8 +497,20 @@ class FileCRUD:
             content_length=len(content) if content else 0,
         )
 
-        # Get file
-        file = self.session.get(File, id)
+        # Get file. Same locking/read discipline as FileEditor.edit_file: on
+        # PostgreSQL hold a row lock (FOR NO KEY UPDATE, so the version
+        # snapshot's FK insert from its independent session is not blocked)
+        # until both content and snapshot are written; on SQLite force a
+        # re-SELECT past the shared session's identity map so the update is
+        # based on current DB state instead of a stale cached instance.
+        from database import is_postgres
+
+        if is_postgres:
+            file = self.session.exec(
+                select(File).where(File.id == id).with_for_update(key_share=True)
+            ).first()
+        else:
+            file = self.session.get(File, id, populate_existing=True)
 
         if not file:
             # Do not leak internal IDs to end users
@@ -489,8 +523,8 @@ class FileCRUD:
             )
             raise ValueError("文件不存在或已删除")
 
-        # Check permission
-        check_project_ownership(self.session, file.project_id, self.user_id)
+        # Check permission (target must belong to the current tool-context project)
+        check_file_access_in_tool_context(self.session, file, self.user_id)
 
         # Store old content for version history
         old_content = file.content
@@ -530,11 +564,19 @@ class FileCRUD:
         # Check if content changed
         content_changed = content is not None and content != old_content
 
+        # Keep the version snapshot ordered with the content commit (see
+        # FileEditor._edit_file_impl for the full rationale): on PostgreSQL
+        # snapshot BEFORE commit while the row lock is still held; on SQLite
+        # snapshot after commit, inside the per-file lock, because the
+        # snapshot's independent session must commit while this session holds
+        # no write transaction.
+        if content_changed and is_postgres:
+            self._create_version(id, content)
+
         self.session.commit()
         self.session.refresh(file)
 
-        # Create version history for content changes (AI edit)
-        if content_changed:
+        if content_changed and not is_postgres:
             self._create_version(id, content)
 
         # Fire-and-forget vector index upsert (do not block)
@@ -594,8 +636,8 @@ class FileCRUD:
             )
             raise ValueError("文件不存在或已删除")
 
-        # Check permission
-        check_project_ownership(self.session, file.project_id, self.user_id)
+        # Check permission (target must belong to the current tool-context project)
+        check_file_access_in_tool_context(self.session, file, self.user_id)
 
         deleted: list[File] = []
 
@@ -704,29 +746,17 @@ class FileCRUD:
         elif file_type:
             target_types = [file_type]
 
-        # If querying specific types, search each type separately
-        if target_types:
-            results = []
-            for ft in target_types:
-                type_results = self._query_single_type(
-                    project_id=project_id,
-                    file_type=ft,
-                    query=query,
-                    parent_id=parent_id,
-                    limit=limit,
-                    offset=offset,
-                )
-                results.extend(type_results)
-        else:
-            # Query all types at once
-            results = self._query_single_type(
-                project_id=project_id,
-                file_type=None,
-                query=query,
-                parent_id=parent_id,
-                limit=limit,
-                offset=offset,
-            )
+        # limit/offset apply to the MERGED result set (a single statement),
+        # so the declared "max results" cap and pagination semantics hold even
+        # when multiple file_types are requested.
+        results = self._query_files_page(
+            project_id=project_id,
+            file_types=target_types,
+            query=query,
+            parent_id=parent_id,
+            limit=limit,
+            offset=offset,
+        )
 
         # Apply metadata filter in Python (SQLite JSON support is limited)
         if metadata_filter:
@@ -794,21 +824,24 @@ class FileCRUD:
 
     # ========== Helper Methods ==========
 
-    def _query_single_type(
+    def _query_files_page(
         self,
         project_id: str,
-        file_type: str | None,
+        file_types: list[str] | None,
         query: str | None,
         parent_id: str | None,
         limit: int,
         offset: int,
     ) -> list[File]:
         """
-        Query files of a single type (or all types).
+        Query one page of files, optionally filtered to the given types.
+
+        limit/offset are applied to the single combined statement, so they
+        keep their declared semantics regardless of how many types are given.
 
         Args:
             project_id: Project ID
-            file_type: File type filter (None for all types)
+            file_types: File type filter (None for all types)
             query: Search keyword (optional)
             parent_id: Parent ID filter (optional)
             limit: Max results
@@ -824,8 +857,8 @@ class FileCRUD:
         )
 
         # Apply file type filter
-        if file_type:
-            stmt = stmt.where(File.file_type == file_type)
+        if file_types:
+            stmt = stmt.where(File.file_type.in_(file_types))  # type: ignore[attr-defined]
 
         # Apply keyword search
         if query:
@@ -837,8 +870,14 @@ class FileCRUD:
         if parent_id is not None:
             stmt = stmt.where(File.parent_id == parent_id)
 
-        # Order and paginate
-        stmt = stmt.order_by(File.order.asc(), col(File.created_at).desc())  # type: ignore[attr-defined]
+        # Order and paginate. The id tiebreaker makes the total order
+        # deterministic so pagination cannot duplicate/skip rows when
+        # order/created_at tie across types.
+        stmt = stmt.order_by(
+            File.order.asc(),  # type: ignore[attr-defined]
+            col(File.created_at).desc(),
+            col(File.id).asc(),
+        )
         stmt = stmt.offset(offset).limit(limit)
 
         return list(self.session.exec(stmt).all())

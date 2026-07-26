@@ -47,7 +47,7 @@ def _cjk_fraction(text: str) -> float:
         if (
             "一" <= ch <= "鿿"  # CJK Unified Ideographs
             or "㐀" <= ch <= "䶿"  # CJK Extension A
-            or " 0" <= ch <= "⩭f"  # CJK Extension B
+            or "\U00020000" <= ch <= "\U0002A6DF"  # CJK Extension B
             or "　" <= ch <= "〿"  # CJK Symbols and Punctuation
             or "＀" <= ch <= "￯"  # Fullwidth / Halfwidth Forms
         )
@@ -103,8 +103,13 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
 
     Handles various message formats including:
     - Simple string content
-    - List of content blocks (text, thinking, tool_use, image)
+    - List of content blocks (text, tool_use, image)
     - Tool result messages
+
+    Accounting matches what is actually replayed to the model: thinking
+    blocks are persisted for UI/history display only and are dropped before
+    replay (see openai_agents/runner.extract_text_from_message_content),
+    so they contribute 0 tokens here.
 
     Args:
         message: Message dict with role and content
@@ -134,8 +139,6 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
                     block_type = block.get("type", "")
                     if block_type == "text":
                         total += estimate_text_tokens(block.get("text", ""))
-                    elif block_type == "thinking":
-                        total += estimate_text_tokens(block.get("thinking", ""))
                     elif block_type == "tool_use":
                         name = block.get("name", "")
                         args = block.get("input", {})

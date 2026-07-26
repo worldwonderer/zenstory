@@ -930,3 +930,114 @@ async def test_agent_steer_rejects_empty_message(client: AsyncClient, db_session
         assert response.status_code == 400
     finally:
         await cleanup_steering_queue_async(session_id)
+
+
+@pytest.mark.integration
+async def test_agent_stream_releases_request_transaction_before_streaming(
+    client: AsyncClient,
+    db_session: Session,
+):
+    """The request-scoped session must not hold an open transaction during SSE."""
+    user = User(
+        username="agent_user_txn",
+        email="agent_user_txn@example.com",
+        hashed_password=hash_password("password123"),
+        email_verified=True,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    login_response = await client.post(
+        "/api/auth/login",
+        data={"username": "agent_user_txn", "password": "password123"},
+    )
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
+
+    project = Project(name="Agent Txn Project", owner_id=user.id)
+    db_session.add(project)
+    db_session.commit()
+
+    in_transaction_at_stream_start: list[bool] = []
+
+    class MockAgentService:
+        async def process_stream(self, **kwargs):
+            in_transaction_at_stream_start.append(kwargs["session"].in_transaction())
+            yield "event: done\ndata: {}\n\n"
+
+    def _fresh_session():
+        return Session(db_session.get_bind())
+
+    # 清空 identity map，强制鉴权/权限校验真正发 SELECT 并 autobegin 事务
+    # （否则测试内 add+commit 过的 User/Project 会命中缓存，压根开不了事务）。
+    db_session.expunge_all()
+
+    # 模拟 Postgres 路径：配额读写走独立 session，请求级 session 只承担
+    # 鉴权/权限校验的 SELECT（正是会挂住 idle in transaction 的场景）。
+    with (
+        patch("api.agent.get_agent_service", return_value=MockAgentService()),
+        patch("api.agent._should_offload_session_work", return_value=True),
+        patch("api.agent.create_session", side_effect=_fresh_session),
+    ):
+        response = await client.post(
+            "/api/v1/agent/stream",
+            json={
+                "project_id": str(project.id),
+                "message": "Hello",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert in_transaction_at_stream_start == [False]
+
+
+@pytest.mark.integration
+async def test_agent_stream_auth_failure_paths_unchanged_after_txn_release(
+    client: AsyncClient,
+    db_session: Session,
+):
+    """Releasing the request transaction must not alter auth/permission failures."""
+    owner = User(
+        username="agent_user_txn_owner",
+        email="agent_user_txn_owner@example.com",
+        hashed_password=hash_password("password123"),
+        email_verified=True,
+        is_active=True,
+    )
+    intruder = User(
+        username="agent_user_txn_intruder",
+        email="agent_user_txn_intruder@example.com",
+        hashed_password=hash_password("password123"),
+        email_verified=True,
+        is_active=True,
+    )
+    db_session.add_all([owner, intruder])
+    db_session.commit()
+
+    project = Project(name="Agent Txn Foreign Project", owner_id=owner.id)
+    db_session.add(project)
+    db_session.commit()
+
+    login_response = await client.post(
+        "/api/auth/login",
+        data={"username": "agent_user_txn_intruder", "password": "password123"},
+    )
+    assert login_response.status_code == 200
+    intruder_token = login_response.json()["access_token"]
+
+    # Unauthenticated request
+    response = await client.post(
+        "/api/v1/agent/stream",
+        json={"project_id": str(project.id), "message": "Hello"},
+    )
+    assert response.status_code == 401
+
+    # Authenticated but not the project owner
+    response = await client.post(
+        "/api/v1/agent/stream",
+        json={"project_id": str(project.id), "message": "Hello"},
+        headers={"Authorization": f"Bearer {intruder_token}"},
+    )
+    assert response.status_code == 403

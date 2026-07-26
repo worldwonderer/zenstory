@@ -33,6 +33,57 @@ logger = get_logger(__name__)
 # write). Bounded so a model that keeps failing cannot loop indefinitely.
 MAX_FILE_CORRECTION_ATTEMPTS = 2
 
+# pending-empty-file 标记的落库核验结果
+_PENDING_BODY_EMPTY = "empty"
+_PENDING_BODY_WRITTEN = "written"
+_PENDING_BODY_GONE = "gone"
+_PENDING_BODY_UNVERIFIABLE = "unverifiable"
+
+
+def _probe_pending_file_body(file_id: str) -> str:
+    """核验 pending-empty-file 标记指向的文件正文当前是否真的为空。
+
+    标记由 create_file(不带 content) 置上，只有 <file>…</file> 流式写入完成
+    （或流结束）时才会清除；edit_file 把正文写进去并不会清除它。所以"标记仍在"
+    只说明模型没走流式写入协议，不代表正文为空——必须落库核验，否则
+    create_file(空) + edit_file(op=append) 这条常走路径会被误判成空文件。
+
+    核验不了时（无 file_id / 无可用 session / 查询失败）返回 unverifiable，
+    由调用方保留原来的纠偏兜底。这里用列级查询，绕开 ORM 身份映射里可能陈旧的
+    实例，直接读数据库当前值。
+    """
+    if not file_id:
+        return _PENDING_BODY_UNVERIFIABLE
+
+    try:
+        from sqlmodel import select
+
+        from models import File
+
+        session = ToolContext.get_session()
+        row = session.exec(
+            select(File.content, File.is_deleted).where(File.id == file_id)
+        ).first()
+    except Exception as e:
+        logger.debug(f"Pending empty-file verification failed: {e}")
+        return _PENDING_BODY_UNVERIFIABLE
+
+    if row is None:
+        return _PENDING_BODY_GONE
+    content, is_deleted = row[0], row[1]
+    if is_deleted:
+        return _PENDING_BODY_GONE
+    return _PENDING_BODY_EMPTY if not str(content or "").strip() else _PENDING_BODY_WRITTEN
+
+# 追加轮提示：openai-agents 不支持向进行中的 run 注入消息，运行期间到达的
+# steering 只能在 run 结束后补一轮 writer 才能在本次请求内生效；引导内容
+# 本身已作为用户消息追加进会话历史，这里只引导模型去看它。
+STEERING_FOLLOWUP_CONTEXT = (
+    "[系统提醒] 用户在生成过程中发来了新的引导消息（见对话历史末尾的用户消息）。"
+    "请在已完成工作的基础上按用户最新引导继续调整或补充；"
+    "如果引导无需改动已完成内容，请简要回应说明。"
+)
+
 
 def _extract_review_payload(agent_content: str) -> str:
     """
@@ -236,6 +287,52 @@ async def run_writing_workflow_streaming(
         "writer": "内容创作者",
         "quality_reviewer": "质量审稿人",
     }
+
+    async def _drain_boundary_steering() -> list[dict[str, str]]:
+        """Agent 边界消费 steering 队列。
+
+        覆盖 run 内没有工具边界可消费（纯文本生成）、或落在最后一个 agent
+        运行期间的消息；不消费则它们只会在流结束时被持久化，无法影响本次
+        请求的生成。
+        """
+        if get_steering_messages is None:
+            return []
+        try:
+            raw_msgs = await get_steering_messages()
+        except Exception as exc:
+            log_with_context(
+                logger,
+                40,  # ERROR
+                "Failed to retrieve steering messages at agent boundary",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return []
+        drained: list[dict[str, str]] = []
+        for msg in raw_msgs or []:
+            if not isinstance(msg, dict):
+                continue
+            content = str(msg.get("content") or "")
+            if content:
+                drained.append({"id": str(msg.get("id") or ""), "content": content})
+        return drained
+
+    async def _absorb_boundary_steering(
+        boundary_msgs: list[dict[str, str]],
+    ) -> AsyncIterator[StreamEvent]:
+        """把边界消费的 steering 追加进会话消息，并向前端发确认事件。"""
+        if not boundary_msgs:
+            return
+        state["messages"] = list(state.get("messages") or []) + [
+            {"role": "user", "content": msg["content"]} for msg in boundary_msgs
+        ]
+        from agent.core.events import steering_received_event
+
+        for msg in boundary_msgs:
+            yield steering_received_event(
+                message_id=msg["id"],
+                preview=msg["content"][:50],
+            )
 
     iteration = 0
     current_agent_type: str | None = None
@@ -484,10 +581,25 @@ async def run_writing_workflow_streaming(
             invalid_handoff_stopped = False
             writer_used_write_tools = False
             writer_emitted_file_markers = False
+            agent_message_started = False
+            mid_run_steering_seen = False
+            agent_run_errored = False
 
             async for event in run_streaming_agent(
                 modified_state, current_agent_type, get_steering_messages=get_steering_messages
             ):
+                if event.type == StreamEventType.MESSAGE_START:
+                    agent_message_started = True
+                elif event.type == StreamEventType.ERROR:
+                    agent_run_errored = True
+                elif (
+                    getattr(event.type, "value", "") == "steering_received"
+                    and agent_message_started
+                ):
+                    # MESSAGE_START 之前的 steering 已注入本次 run 的输入；
+                    # 之后的是 runner 在工具边界消费、本次 run 无法生效的干预。
+                    mid_run_steering_seen = True
+
                 # Track text content for auto-review threshold
                 if event.type == StreamEventType.TEXT:
                     text = event.data.get("text", "")
@@ -587,6 +699,10 @@ async def run_writing_workflow_streaming(
             # narration from being persisted as the file's content), re-run the
             # writer and explicitly tell it to finish the file. Bounded by
             # MAX_FILE_CORRECTION_ATTEMPTS to avoid loops.
+            #
+            # 触发前必须落库核验（_probe_pending_file_body）：标记只表示"没走
+            # <file>…</file> 流式写入"，模型改用 edit_file(op=append) 写完正文时
+            # 标记依然留着，此时按"正文仍为空"重跑会让正文被追加两遍。
             if (
                 not clarification_stopped
                 and not invalid_handoff_stopped
@@ -598,30 +714,46 @@ async def run_writing_workflow_streaming(
                 pending = ToolContext.get_pending_empty_file() or {}
                 pending_title = str(pending.get("title") or "未命名")
                 pending_file_id = str(pending.get("file_id") or pending.get("id") or "")
-                file_correction_attempts += 1
-                # Clear the guard now: the explicit instruction below replaces its
-                # blocking role, and leaving it set would re-trigger this branch
-                # even after edit_file fills the file (edit_file does not clear it).
-                ToolContext.clear_pending_empty_file()
-                log_with_context(
-                    logger,
-                    30,  # WARNING
-                    "Empty file detected after agent turn; re-running writer to complete it",
-                    file_id=pending_file_id,
-                    title=pending_title,
-                    attempt=file_correction_attempts,
-                )
-                id_hint = f"(id={pending_file_id})" if pending_file_id else ""
-                handoff_context = (
-                    f"[系统提醒] 你创建的文件《{pending_title}》{id_hint} 正文仍为空——"
-                    "上一轮没有用 <file>…</file> 完成流式写入（很可能漏了结尾的 </file>）。"
-                    "请立即调用 edit_file（id="
-                    f"{pending_file_id or '<该文件id>'}，op=append）把完整正文写入该文件；"
-                    "不要重复创建文件，也不要只在对话里复述正文。"
-                )
-                previous_agent = current_agent_type
-                current_agent_type = "writer"
-                continue
+                body_state = _probe_pending_file_body(pending_file_id)
+                if body_state in (_PENDING_BODY_WRITTEN, _PENDING_BODY_GONE):
+                    # 正文已经写入（或文件已被删除）：没有可补的内容，只需把没人
+                    # 清理的标记清掉，避免它继续阻塞 create_file / parallel_execute。
+                    ToolContext.clear_pending_empty_file()
+                    log_with_context(
+                        logger,
+                        20,  # INFO
+                        "Pending empty-file guard cleared without correction",
+                        file_id=pending_file_id,
+                        title=pending_title,
+                        body_state=body_state,
+                    )
+                else:
+                    file_correction_attempts += 1
+                    # Clear the guard now: the explicit instruction below replaces its
+                    # blocking role, and leaving it set would re-trigger this branch
+                    # even after edit_file fills the file (edit_file does not clear it).
+                    ToolContext.clear_pending_empty_file()
+                    log_with_context(
+                        logger,
+                        30,  # WARNING
+                        "Empty file detected after agent turn; re-running writer to complete it",
+                        file_id=pending_file_id,
+                        title=pending_title,
+                        attempt=file_correction_attempts,
+                        body_state=body_state,
+                    )
+                    id_hint = f"(id={pending_file_id})" if pending_file_id else ""
+                    handoff_context = (
+                        f"[系统提醒] 你创建的文件《{pending_title}》{id_hint} 正文仍为空——"
+                        "上一轮没有用 <file>…</file> 完成流式写入（很可能漏了结尾的 </file>）。"
+                        "请立即调用 edit_file（id="
+                        f"{pending_file_id or '<该文件id>'}，op=append）把完整正文写入该文件；"
+                        "不要重复创建文件，也不要只在对话里复述正文。"
+                        "若该文件已有部分正文，只补齐缺失的部分，不要重复写入已有段落。"
+                    )
+                    previous_agent = current_agent_type
+                    current_agent_type = "writer"
+                    continue
 
             # Structured clarification stop is canonical and must block planned/auto handoff.
             if clarification_stopped:
@@ -759,6 +891,32 @@ async def run_writing_workflow_streaming(
                     f"{base_context}\n\n"
                     f"[待审查内容]\n{review_payload}"
                 ).strip()
+
+            # 本轮 run 期间到达的 steering：SDK run 中途无法注入，只有当没有
+            # 已计划的下一个 agent（否则该 agent 的起始注入/会话历史会带上
+            # 这些消息）时，追加一轮 writer 让干预在本次请求内生效。消费过的
+            # 消息不会重复触发；追加轮同样计入 max_iterations，不会无限循环。
+            if (
+                not has_pending_handoff
+                and not agent_run_errored
+                and iteration < max_iterations
+            ):
+                boundary_steering = await _drain_boundary_steering()
+                if mid_run_steering_seen or boundary_steering:
+                    async for steering_ack in _absorb_boundary_steering(boundary_steering):
+                        yield steering_ack
+                    log_with_context(
+                        logger,
+                        20,
+                        "Steering arrived during agent run; scheduling writer follow-up",
+                        agent_type=current_agent_type,
+                        mid_run_consumed=mid_run_steering_seen,
+                        boundary_consumed=len(boundary_steering),
+                    )
+                    handoff_context = STEERING_FOLLOWUP_CONTEXT
+                    previous_agent = current_agent_type
+                    current_agent_type = "writer"
+                    continue
 
             # 检测任务完成。
             # - 显式 handoff 优先级最高（继续协作，不触发 stop/complete）。

@@ -360,6 +360,42 @@ class TestExecuteParallel:
         finally:
             ToolContext.clear_context()
 
+    async def test_pending_flag_set_inside_subtask_visible_after_execution(self):
+        """write_chapter 子任务里设置的空文件标记，并行执行结束后主上下文必须可见。
+
+        execute_parallel 用 asyncio.gather 在独立 Task 里执行子任务并为每个
+        子任务重绑定 _tool_context_var；标记若随子任务上下文销毁，writing_graph
+        的纠偏循环与后续 create_file 守卫都读不到它。
+        """
+        from agent.tools.mcp_tools import ToolContext
+
+        ToolContext.set_context(None, "user1", "proj-1", "sess-1")
+        try:
+
+            async def fake_write_chapter(params):
+                # 模拟 create_file 创建空文件后设置 pending 标记
+                ToolContext.set_pending_empty_file("file-z", params.get("title", ""))
+                return _make_result({"status": "success", "data": {"id": "file-z"}})
+
+            with patch(
+                "agent.tools.parallel_executor.handle_write_chapter",
+                new=fake_write_chapter,
+            ):
+                result = await execute_parallel([
+                    {"type": "write_chapter", "description": "W", "params": {"title": "第3章"}},
+                ])
+
+            text = result["content"][0]["text"]
+            parsed = json.loads(text)
+            assert parsed["data"]["all_completed"] is True
+
+            assert ToolContext.has_pending_empty_file() is True
+            pending = ToolContext.get_pending_empty_file()
+            assert pending is not None
+            assert pending["file_id"] == "file-z"
+        finally:
+            ToolContext.clear_context()
+
     async def test_execute_unknown_task_type(self):
         """Test execution with unknown task type."""
         from agent.tools.mcp_tools import ToolContext

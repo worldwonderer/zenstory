@@ -113,8 +113,9 @@ def check_file_ownership(
         The File object if authorized
 
     Raises:
-        NotFoundError: If file doesn't exist
-        ForbiddenError: If file doesn't belong to project or user lacks access
+        NotFoundError: If file doesn't exist, or doesn't belong to the project
+            (跨项目访问对调用方表现为"文件不存在"，不泄漏其它项目文件的存在性)
+        ForbiddenError: If user lacks access to the project
     """
     # First check project access
     check_project_ownership(session, project_id, user_id)
@@ -125,11 +126,59 @@ def check_file_ownership(
     if not file or file.is_deleted:
         raise NotFoundError(f"File not found: {file_id}")
 
-    # Verify file belongs to the project
+    # Verify file belongs to the project. A mismatch is reported as not-found:
+    # 按 id 探测其它项目的文件不应得到与"不存在"可区分的响应；真实原因只进日志。
     if file.project_id != project_id:
-        raise ForbiddenError(f"File {file_id} does not belong to project {project_id}")
+        log_with_context(
+            logger,
+            40,  # ERROR
+            "File does not belong to requested project",
+            file_id=file_id,
+            file_project_id=file.project_id,
+            requested_project_id=project_id,
+            user_id=user_id,
+        )
+        raise NotFoundError(f"File not found: {file_id}")
 
     return file
+
+
+def check_file_access_in_tool_context(
+    session: Session,
+    file: File,
+    user_id: str | None = None,
+) -> None:
+    """
+    Check by-id file access for agent tool execution.
+
+    Agent 工具按 id 定位文件时，目标必须属于当前 ToolContext 绑定的项目：
+    根文件夹 id 可由 project_id 推出（如 "{project_id}-draft-folder"），仅靠
+    "用户拥有该文件所在项目"不足以阻止被注入文本诱导的跨项目写/删。
+    未绑定工具上下文的调用（stream_adapter 落盘、后台任务等直接构造执行器的
+    路径）退回文件自身项目的所有权校验。
+
+    Args:
+        session: Database session
+        file: Already-loaded target file
+        user_id: User ID
+
+    Raises:
+        NotFoundError: 文件不属于当前上下文项目（用户可见信息与文件不存在一致）
+        ForbiddenError: 用户不拥有相关项目
+    """
+    # 函数内延迟导入：mcp_tools 在模块加载时经 file_ops 间接导入本模块
+    from agent.tools.mcp_tools import ToolContext
+
+    context_project_id = ToolContext.get_project_id()
+    if context_project_id is None:
+        check_project_ownership(session, file.project_id, user_id)
+        return
+
+    try:
+        check_file_ownership(session, file.id, context_project_id, user_id)
+    except NotFoundError as e:
+        # 与按 id 加载失败共用同一条用户可见文案（真实原因已在权限层日志中）
+        raise NotFoundError("文件不存在或已删除") from e
 
 
 def check_user_exists(
