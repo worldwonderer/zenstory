@@ -1011,9 +1011,10 @@ class TestHandleCreateFileResult:
             "content": "Some content",
         }
 
-        await adapter._handle_create_file_result(result_data)
+        events = [e async for e in adapter._handle_create_file_result(result_data)]
 
         # Should NOT set pending file write because content exists
+        assert events == []
         assert adapter._pending_file_write is None
 
     @pytest.mark.asyncio
@@ -1026,11 +1027,28 @@ class TestHandleCreateFileResult:
             "content": "",
         }
 
-        await adapter._handle_create_file_result(result_data)
+        events = [e async for e in adapter._handle_create_file_result(result_data)]
 
         # Should set pending file write
+        assert events == []
         assert adapter._pending_file_write is not None
         assert adapter._pending_file_write.file_id == "file-1"
+
+    @pytest.mark.asyncio
+    async def test_create_file_empty_folder(self, adapter):
+        """folder 建档不得进入待写正文状态（它永远不会有 <file> 正文）。"""
+        result_data = {
+            "id": "folder-1",
+            "file_type": "folder",
+            "title": "第一卷",
+            "content": "",
+        }
+
+        events = [e async for e in adapter._handle_create_file_result(result_data)]
+
+        assert events == []
+        assert adapter._pending_file_write is None
+        assert adapter._stream_processor.state == StreamState.IDLE
 
 
 class TestHandleEditFileResult:
@@ -1670,3 +1688,271 @@ async def test_unclosed_fence_narration_then_file_block_is_saved():
         e.data.get("text", "") for e in events if e.type == EventType.CONTENT
     )
     assert chat_text == "好的，输出格式```\n已完成。"
+
+
+# ---------------------------------------------------------------------------
+# folder 是纯容器节点，永远不会收到 <file>…</file> 正文：
+# create_file(file_type="folder") 不得开启流式捕获（C2 回归）
+# ---------------------------------------------------------------------------
+
+
+def _create_file_result_event(
+    file_id: str,
+    file_type: str,
+    title: str,
+    content: str = "",
+) -> LangGraphStreamEvent:
+    """构造一个 create_file 的 TOOL_RESULT 事件（MCP 规范格式）。"""
+    payload = {
+        "status": "success",
+        "data": {
+            "id": file_id,
+            "title": title,
+            "file_type": file_type,
+            "content": content,
+        },
+    }
+    return LangGraphStreamEvent(
+        type=StreamEventType.TOOL_RESULT,
+        data={
+            "name": "create_file",
+            "tool_use_id": f"tu-{file_id}",
+            "result": {"content": [{"type": "text", "text": json.dumps(payload)}]},
+        },
+    )
+
+
+async def _drive_per_event(adapter, events) -> list[list]:
+    """逐个事件喂给 adapter，返回「每个输入事件当轮产出的 SSE 事件」列表。
+
+    必须按轮记录：folder 被当成待写正文文件时，叙述会被扣在 WAITING_START
+    缓冲里直到 MESSAGE_END 才一次性吐出（前端表现为长时间无输出），只看事件
+    总集合无法区分这种时序差异。
+    """
+    return [
+        [sse async for sse in adapter._process_workflow_event(event)]
+        for event in events
+    ]
+
+
+@pytest.mark.unit
+async def test_empty_folder_does_not_start_file_capture():
+    """创建空文件夹后，叙述必须在各自 TEXT 事件当轮就流出，处理器保持 IDLE。
+
+    回归：_handle_create_file_result 只看 content 为空就开启流式捕获，folder
+    同样命中，导致后续叙述全被缓冲到 MESSAGE_END 才吐出。
+    """
+    from agent.stream_adapter import create_stream_adapter
+    from agent.tools.mcp_tools import ToolContext
+
+    ToolContext.clear_pending_empty_file()
+    adapter = create_stream_adapter(project_id="p", user_id="u", process_file_markers=True)
+    adapter._save_file_content = AsyncMock(return_value=True)
+
+    rounds = await _drive_per_event(adapter, [
+        _create_file_result_event("folder-1", "folder", "第一卷"),
+        LangGraphStreamEvent(
+            type=StreamEventType.TEXT, data={"text": "已为你建好「第一卷」文件夹，"}
+        ),
+        LangGraphStreamEvent(
+            type=StreamEventType.TEXT, data={"text": "接下来我会按大纲逐章写作。"}
+        ),
+        LangGraphStreamEvent(type=StreamEventType.MESSAGE_END, data={"stop_reason": "end_turn"}),
+    ])
+
+    # folder 不是待写正文的目标：既不置 adapter 的 pending，也不让处理器进入捕获
+    assert adapter._pending_file_write is None
+    assert adapter._stream_processor.state == StreamState.IDLE
+
+    # file_created 事件仍要照常发出（前端据此刷新文件树）
+    assert [e.type for e in rounds[0]] == [EventType.TOOL_RESULT, EventType.FILE_CREATED]
+
+    # 叙述在当轮就流出，MESSAGE_END 不再补吐任何内容
+    assert [
+        e.data["text"] for e in rounds[1] if e.type == EventType.CONTENT
+    ] == ["已为你建好「第一卷」文件夹，"]
+    assert [
+        e.data["text"] for e in rounds[2] if e.type == EventType.CONTENT
+    ] == ["接下来我会按大纲逐章写作。"]
+    assert rounds[3] == []
+
+    adapter._save_file_content.assert_not_awaited()
+    assert ToolContext.has_pending_empty_file() is False
+
+
+@pytest.mark.unit
+async def test_empty_folder_file_type_variants_do_not_start_capture():
+    """folder 判定需归一化（大小写/空白），否则变体仍会开启流式捕获。"""
+    from agent.stream_adapter import create_stream_adapter
+
+    for raw_type in ("folder", "Folder", " FOLDER ", "folder\n"):
+        adapter = create_stream_adapter(
+            project_id="p", user_id="u", process_file_markers=True
+        )
+        await _drive_per_event(adapter, [
+            _create_file_result_event("folder-x", raw_type, "第一卷"),
+        ])
+        assert adapter._pending_file_write is None, raw_type
+        assert adapter._stream_processor.state == StreamState.IDLE, raw_type
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "file_type",
+    ["draft", "script", "outline", "character", "lore", "snippet", ""],
+)
+async def test_empty_content_bearing_file_still_starts_capture(file_type):
+    """承载正文的类型（含剧本分集复用返回的空 content）必须继续进入 WAITING_START。"""
+    from agent.stream_adapter import create_stream_adapter
+
+    adapter = create_stream_adapter(project_id="p", user_id="u", process_file_markers=True)
+    await _drive_per_event(adapter, [
+        _create_file_result_event("file-1", file_type, "第一章"),
+    ])
+
+    assert adapter._pending_file_write is not None
+    assert adapter._pending_file_write.file_id == "file-1"
+    assert adapter._stream_processor.state == StreamState.WAITING_START
+
+
+@pytest.mark.unit
+async def test_folder_narration_with_fenced_file_example_is_not_written_to_folder():
+    """folder 后的叙述里出现 ``` 围栏包裹的成对 <file>…</file> 范例时，
+    范例必须原样进聊天，不得被流结束的 at_eof 兜底当成正文写进文件夹行。"""
+    from agent.stream_adapter import create_stream_adapter
+
+    adapter = create_stream_adapter(project_id="p", user_id="u", process_file_markers=True)
+    adapter._save_file_content = AsyncMock(return_value=True)
+
+    rounds = await _drive_per_event(adapter, [
+        _create_file_result_event("folder-2", "folder", "第一卷"),
+        LangGraphStreamEvent(
+            type=StreamEventType.TEXT,
+            data={
+                "text": "文件夹已创建。写作协议是这样的：\n\n"
+                        "```markdown\n<file>\n这里是正文示例，比如第一章的开头。\n</file>\n```\n\n"
+            },
+        ),
+        LangGraphStreamEvent(
+            type=StreamEventType.TEXT, data={"text": "明白了吗？我现在开始写第一章。"}
+        ),
+        LangGraphStreamEvent(type=StreamEventType.MESSAGE_END, data={}),
+    ])
+    emitted = [e for round_events in rounds for e in round_events]
+
+    adapter._save_file_content.assert_not_awaited()
+    assert not [
+        e for e in emitted
+        if e.type in (EventType.FILE_CONTENT, EventType.FILE_CONTENT_END)
+    ]
+
+    chat_text = "".join(
+        e.data.get("text", "") for e in emitted if e.type == EventType.CONTENT
+    )
+    assert "这里是正文示例，比如第一章的开头。" in chat_text
+    assert "<file>" in chat_text
+    assert chat_text.endswith("明白了吗？我现在开始写第一章。")
+
+
+# ---------------------------------------------------------------------------
+# 新的空文件建档顶掉上一段流式捕获时，不得静默丢弃已缓冲的内容
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_new_pending_write_flushes_buffered_narration():
+    """WAITING_START 中缓冲的叙述必须在被下一次建档顶掉前吐出。
+
+    回归：set_pending_file_write -> start_file_write() 直接清空 temp_buffer，
+    夹在两次建档之间的叙述永久消失（0 个 content 事件）。
+    """
+    from agent.stream_adapter import create_stream_adapter
+
+    adapter = create_stream_adapter(project_id="p", user_id="u", process_file_markers=True)
+    adapter._save_file_content = AsyncMock(return_value=True)
+
+    rounds = await _drive_per_event(adapter, [
+        _create_file_result_event("draft-A", "draft", "第一章"),
+        LangGraphStreamEvent(
+            type=StreamEventType.TEXT, data={"text": "先说明一下：这一章我会写得克制些。"}
+        ),
+        _create_file_result_event("draft-B", "draft", "第二章"),
+        LangGraphStreamEvent(
+            type=StreamEventType.TEXT, data={"text": "<file>第二章正文。</file>"}
+        ),
+        LangGraphStreamEvent(type=StreamEventType.MESSAGE_END, data={}),
+    ])
+
+    # 被顶掉的缓冲在「顶掉它的那一轮」就作为 content 吐出
+    assert [
+        e.data["text"] for e in rounds[2] if e.type == EventType.CONTENT
+    ] == ["先说明一下：这一章我会写得克制些。"]
+
+    # 新文件的正文正常落库，且不含那段叙述
+    adapter._save_file_content.assert_awaited_once()
+    saved_args = adapter._save_file_content.await_args.args
+    assert saved_args[0] == "draft-B"
+    assert saved_args[1] == "第二章正文。"
+
+
+@pytest.mark.unit
+async def test_new_pending_write_completes_displaced_unterminated_file():
+    """WRITING 中被顶掉时，上一份文件已缓冲的正文必须落库而不是被清空。"""
+    from agent.stream_adapter import create_stream_adapter
+
+    adapter = create_stream_adapter(project_id="p", user_id="u", process_file_markers=True)
+    adapter._save_file_content = AsyncMock(return_value=True)
+
+    await _drive_per_event(adapter, [
+        _create_file_result_event("draft-C", "draft", "第三章"),
+        LangGraphStreamEvent(
+            type=StreamEventType.TEXT, data={"text": "<file>第三章开头，尚未闭合。"}
+        ),
+        _create_file_result_event("draft-D", "draft", "第四章"),
+        LangGraphStreamEvent(
+            type=StreamEventType.TEXT, data={"text": "<file>第四章正文。</file>"}
+        ),
+        LangGraphStreamEvent(type=StreamEventType.MESSAGE_END, data={}),
+    ])
+
+    saved = [call.args for call in adapter._save_file_content.await_args_list]
+    assert saved == [
+        ("draft-C", "第三章开头，尚未闭合。"),
+        ("draft-D", "第四章正文。"),
+    ]
+
+
+@pytest.mark.unit
+async def test_displaced_completion_keeps_new_files_pending_empty_guard():
+    """收尾被顶掉的文件时，不能清掉已指向新文件的「空文件待补写」标记。
+
+    该标记是 writing_graph 判断「空文件必须被补写」的唯一信号，误清会让新建
+    的空文件永远无人补写。
+    """
+    from agent.stream_adapter import create_stream_adapter
+    from agent.tools.mcp_tools import ToolContext
+
+    ToolContext.clear_pending_empty_file()
+    adapter = create_stream_adapter(project_id="p", user_id="u", process_file_markers=True)
+    adapter._save_file_content = AsyncMock(return_value=True)
+
+    # draft-E 走的是「执行器复用/幂等路径返回 content=''」，入参带内容因此
+    # mcp_tools 没有为它置标记；随后新建的 draft-F 才是被标记的空文件。
+    await _drive_per_event(adapter, [
+        _create_file_result_event("draft-E", "draft", "第五章"),
+        LangGraphStreamEvent(
+            type=StreamEventType.TEXT, data={"text": "<file>第五章开头。"}
+        ),
+    ])
+    ToolContext.set_pending_empty_file("draft-F", "第六章")
+
+    await _drive_per_event(adapter, [
+        _create_file_result_event("draft-F", "draft", "第六章"),
+    ])
+
+    adapter._save_file_content.assert_awaited_once()
+    assert adapter._save_file_content.await_args.args == ("draft-E", "第五章开头。")
+    pending = ToolContext.get_pending_empty_file()
+    assert pending is not None and pending["file_id"] == "draft-F"
+
+    ToolContext.clear_pending_empty_file()

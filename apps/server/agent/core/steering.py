@@ -439,15 +439,34 @@ def _redis_create_sync(
 ) -> None:
     from services.infra.redis_client import get_redis_client
 
-    # The session owner starts the stream they own (session_id is their
-    # chat_session.id), so binding the owner here is authoritative.
+    # 注册必须和释放（_RELEASE_RUN_SCRIPT）互相原子：若拆成 SET owner 与
+    # SADD runs 两次 round-trip，另一个 worker 上并发结束的 run 会整段插在
+    # 中间执行释放（SREM → SCARD==0 → DEL owner/msgs/runs），结果本 run 注册
+    # 完成后 runs={本 run} 而 owner 已被删——本 run 剩余时间里所有
+    # POST /agent/steer 都 404（_add_sync/_pop_all_sync 只 EXPIRE，不会重建
+    # owner 键），并且已排队未消费的 steering 消息随 msgs 键一起丢失。
+    # MULTI/EXEC 让释放脚本只能看到「注册前」或「注册后」两种状态。
     client = get_redis_client()
-    client.set(_owner_key(session_id), owner_user_id or "", ex=_STEERING_TTL_S)
+    pipe = client.pipeline(transaction=True)
     if run_id:
         # 记录持有队列的 run：同一 session 的并发 run 共享 owner/msgs 键，
         # cleanup 只在最后一个 run 释放时才真正删除（见 _RELEASE_RUN_SCRIPT）。
-        client.sadd(_runs_key(session_id), run_id)
-        client.expire(_runs_key(session_id), _STEERING_TTL_S)
+        # 先写 runs 再写 owner：即使将来被拆回多条命令，也不会留下
+        # 「owner 已写、runs 未写」这个最坏顺序。
+        pipe.sadd(_runs_key(session_id), run_id)
+        pipe.expire(_runs_key(session_id), _STEERING_TTL_S)
+    if owner_user_id:
+        # The session owner starts the stream they own (session_id is their
+        # chat_session.id), so binding the owner here is authoritative.
+        pipe.set(_owner_key(session_id), owner_user_id, ex=_STEERING_TTL_S)
+    else:
+        # 调用方不知道 owner 时（get_steering_queue_async）只在键缺失时占位：
+        # nx=True 保证不会把已绑定的真实 owner 降级成空串，否则
+        # get_steering_queue_for_user_async 会跳过 owner 校验并把队列
+        # backfill 给任意请求者。
+        pipe.set(_owner_key(session_id), "", ex=_STEERING_TTL_S, nx=True)
+        pipe.expire(_owner_key(session_id), _STEERING_TTL_S)
+    pipe.execute()
 
 
 def _redis_get_owner_sync(session_id: str) -> str | None:
@@ -499,7 +518,12 @@ _queue_manager = SteeringQueueManager()
 
 
 async def get_steering_queue_async(session_id: str) -> Any:
-    """Get or create steering queue for a session (async version)."""
+    """Get or create steering queue for a session (async version).
+
+    不绑定 owner：仅在 owner 键缺失时占位，已绑定的 owner 保持不变。生产入口
+    请用 create_steering_queue_async（写入真实 owner）或
+    get_steering_queue_for_user_async（校验 owner）。
+    """
     if await _redis_available():
         await asyncio.to_thread(_redis_create_sync, session_id, None)
         return RedisSteeringQueue(session_id)
@@ -544,7 +568,8 @@ async def cleanup_steering_queue_async(session_id: str, run_id: str | None = Non
     """Release a run's hold on the steering queue (async version).
 
     带 run_id 时只释放该 run 的持有，最后一个持有者退出才真正删除；
-    不带 run_id 保持旧语义，无条件删除。
+    不带 run_id 保持旧语义，无条件删除——会连带删掉其它并发 run 正在使用的
+    队列，因此仅用于测试/运维清理，生产路径（service.py）始终传 run_id。
     """
     if await _redis_available():
         await asyncio.to_thread(_redis_cleanup_sync, session_id, run_id)
