@@ -313,18 +313,31 @@ export class ApiError extends Error {
   public errorCode?: string;
 
   /**
+   * Structured `error_detail` payload from the backend, when it is an object.
+   *
+   * Some errors carry machine-readable context that the caller must act on —
+   * e.g. a 409 `ERR_RESOURCE_CONFLICT` from `PUT /files/{id}` ships
+   * `{ reason: "stale_write", current_content, current_updated_at }` so the
+   * editor can refresh instead of silently losing the user's edit. Flattening
+   * everything into a string would throw that away.
+   */
+  public details?: Record<string, unknown>;
+
+  /**
    * Create a new ApiError.
    *
    * @param status - HTTP status code (e.g., 401, 404, 500)
    * @param message - Error message or error code (will be translated if starts with 'ERR_')
+   * @param details - Structured error_detail object when the backend provides one
    */
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, details?: Record<string, unknown>) {
     const normalized = message.trim();
     super(toUserErrorMessage(normalized));
     this.status = status;
     this.name = 'ApiError';
     this.rawMessage = normalized;
     this.errorCode = normalized.startsWith('ERR_') ? normalized : undefined;
+    this.details = details;
   }
 }
 
@@ -418,13 +431,20 @@ export async function apiCall<T>(
   // Handle other errors
   if (!response.ok) {
     let errorMessage = `API error: ${response.status}`;
+    let errorDetails: Record<string, unknown> | undefined;
     try {
       const errorData = await response.json();
       errorMessage = resolveApiErrorMessage(errorData, errorMessage);
+      // 保留结构化的 error_detail：409 冲突等场景需要里面的 current_content /
+      // current_updated_at 才能正确恢复，压成一句文案就没法用了
+      const rawDetail = (errorData as Record<string, unknown> | null)?.error_detail;
+      if (rawDetail && typeof rawDetail === 'object' && !Array.isArray(rawDetail)) {
+        errorDetails = rawDetail as Record<string, unknown>;
+      }
     } catch {
       // Could not parse error response
     }
-    throw new ApiError(response.status, errorMessage);
+    throw new ApiError(response.status, errorMessage, errorDetails);
   }
 
   return response.json();

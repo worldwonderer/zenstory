@@ -57,6 +57,26 @@ export interface File {
   file_metadata: string | null; // JSON string
   created_at: string;
   updated_at: string;
+  /**
+   * Only set on `PUT /files/{id}` responses. `true` means the content WAS saved
+   * but the version-history quota is full, so no version snapshot was created.
+   * Surface it as an upgrade hint, never as a save failure.
+   */
+  version_quota_exceeded?: boolean;
+}
+
+/**
+ * Outcome of a batch `edit_file` call, carried by the `file_edit_end` event.
+ *
+ * `edit_file` can partially fail when `continue_on_error` is on: looking only
+ * at `edits_applied` renders "1 of 3 succeeded" as a plain success, so the user
+ * never learns the other two edits were never made.
+ */
+export interface FileEditOutcome {
+  failedCount: number;
+  partialSuccess: boolean;
+  allFailed: boolean;
+  warnings: string[];
 }
 
 /**
@@ -1318,8 +1338,13 @@ export interface SessionStartedEvent {
 export interface ParallelStartEvent {
   type: "parallel_start";
   execution_id: string;
+  /** Tasks actually executed this round (capped by the backend concurrency limit). */
   task_count: number;
   task_descriptions: string[];
+  /** Tasks the model originally asked for, before the cap was applied. */
+  requested_task_count?: number;
+  /** Requested tasks dropped because of the cap; the model must re-issue them. */
+  dropped_count?: number;
 }
 
 export interface ParallelTaskStartEvent {
@@ -1346,6 +1371,8 @@ export interface ParallelEndEvent {
   completed: number;
   failed: number;
   duration_ms: number;
+  requested_task_count?: number;
+  dropped_count?: number;
 }
 
 /**

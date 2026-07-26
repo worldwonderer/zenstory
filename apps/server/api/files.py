@@ -3,6 +3,7 @@ File management API endpoints.
 
 Provides REST API for the unified File model used by the AI agent.
 """
+import contextlib
 import json
 import logging
 import os
@@ -19,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import load_only
 from sqlmodel import Session, col, select
 
-from config.datetime_utils import utcnow
+from config.datetime_utils import normalize_datetime_to_utc, utcnow
 from core.error_codes import ErrorCode
 from core.error_handler import APIException
 from core.project_access import verify_project_ownership
@@ -41,6 +42,7 @@ from models.file_version import (
     CHANGE_TYPE_RESTORE,
 )
 from services.features.activation_event_service import activation_event_service
+from services.file_tree_rules import ParentNotFoundError, validate_parent_assignment
 from utils.logger import get_logger, log_with_context
 from utils.text_metrics import count_words
 from utils.title_sequence import (
@@ -278,6 +280,14 @@ class FileUpdate(BaseModel):
     change_source: Literal["user", "ai", "system"] | None = None
     change_summary: str | None = None
     skip_version: bool = False
+    base_updated_at: datetime | None = Field(
+        default=None,
+        description=(
+            "乐观并发令牌：客户端加载这份正文时拿到的 updated_at。"
+            "服务端发现文件在此之后被改过（例如 agent 的 edit_file），则返回 409，"
+            "避免编辑器的防抖自动保存用陈旧整篇快照静默覆盖 AI 的编辑结果。"
+        ),
+    )
 
 
 class MoveFileRequest(BaseModel):
@@ -302,6 +312,13 @@ class FileResponse(BaseModel):
     file_metadata: str | None
     created_at: datetime
     updated_at: datetime
+    version_quota_exceeded: bool = Field(
+        default=False,
+        description=(
+            "本次保存因版本额度已满而未生成版本快照。正文本身已保存成功——"
+            "版本额度限制的是历史深度，不应该把用户的正文保存整体判负。"
+        ),
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -330,6 +347,54 @@ def _resolve_change_source(change_source: str | None) -> str:
     return change_source
 
 
+def _load_file_for_write(session: Session, file_id: str) -> File | None:
+    """
+    读取待写入的文件行，语义与 agent 侧 edit_file/update_file 保持一致。
+
+    - PostgreSQL：`FOR NO KEY UPDATE` 行锁，与 agent 的 edit_file 互斥（用 key_share
+      而非独占锁，才不会挡住版本快照那条独立 session 的外键插入）；
+    - SQLite：没有行锁，改用 populate_existing 强制重新 SELECT，绕开 session
+      identity map 里可能已经陈旧的副本；互斥由外层的条带写锁提供。
+    """
+    from database import is_postgres
+
+    if is_postgres:
+        return session.exec(
+            select(File).where(File.id == file_id).with_for_update(key_share=True)
+        ).first()
+    return session.get(File, file_id, populate_existing=True)
+
+
+def _assert_not_stale_write(file: File, base_updated_at: datetime | None) -> None:
+    """
+    乐观并发校验：客户端提交的是「整篇正文快照」，纯加锁挡不住丢更新——
+    锁只保证串行，陈旧快照照样会在拿到锁之后原样覆盖别人刚写完的内容。
+
+    因此当客户端带了加载时的 updated_at、而服务端的 updated_at 已经更新
+    （典型场景：用户编辑器 3 秒防抖自动保存待发时，agent 的 edit_file 先落库），
+    直接返回 409 并把服务端当前正文回带，交给前端刷新/合并。
+    """
+    if base_updated_at is None:
+        return
+
+    current = normalize_datetime_to_utc(file.updated_at)
+    base = normalize_datetime_to_utc(base_updated_at)
+    if current <= base:
+        return
+
+    raise APIException(
+        error_code=ErrorCode.RESOURCE_CONFLICT,
+        status_code=409,
+        detail={
+            "reason": "stale_write",
+            "file_id": file.id,
+            "current_content": file.content or "",
+            "current_updated_at": current.isoformat(),
+            "base_updated_at": base.isoformat(),
+        },
+    )
+
+
 def _validate_parent_assignment(
     session: Session,
     project_id: str,
@@ -343,30 +408,31 @@ def _validate_parent_assignment(
     - parent must exist, be active, and belong to project
     - parent must be a folder
     - moving file cannot be assigned into its own descendant chain
-    """
-    if parent_id is None:
-        return None
 
-    parent = session.get(File, parent_id)
-    if not parent or parent.is_deleted or parent.project_id != project_id:
+    规则本身不在这里实现：唯一权威版本在 services/file_tree_rules.py，
+    Agent 工具层（agent/tools/file_ops/crud.py）复用的是同一份。本函数只负责
+    把 ValueError 翻译成 REST 契约要求的 error_code——历史上两个入口各写一遍
+    校验，agent 那份漏了「parent 必须是 folder」，才有了 AI 写的章节在文件树里
+    消失的缺陷。
+    """
+    try:
+        return validate_parent_assignment(
+            session,
+            project_id,
+            parent_id,
+            moving_file_id=moving_file_id,
+        )
+    except ParentNotFoundError as exc:
         raise APIException(
             error_code=ErrorCode.FILE_NOT_FOUND,
             status_code=400,
-        )
-
-    if parent.file_type != "folder":
+        ) from exc
+    except ValueError as exc:
+        # 非 folder / 成环：沿用既有的 VALIDATION_ERROR，保持前端与既有测试不变
         raise APIException(
             error_code=ErrorCode.VALIDATION_ERROR,
             status_code=400,
-        )
-
-    if moving_file_id and _is_descendant(session, moving_file_id, parent_id):
-        raise APIException(
-            error_code=ErrorCode.VALIDATION_ERROR,
-            status_code=400,
-        )
-
-    return parent_id
+        ) from exc
 
 
 def _ensure_material_folder(session: Session, project_id: str) -> File:
@@ -721,87 +787,160 @@ def update_file(
     session: Session = Depends(get_session)
 ):
     """Update an existing file."""
-    file = session.get(File, file_id)
-    if not file or file.is_deleted:
-        raise APIException(error_code=ErrorCode.FILE_NOT_FOUND, status_code=404)
+    # 请求参数校验必须先于任何写入：change_type/change_source 非法时若等到正文
+    # commit 之后才抛 400，就又是一次「内容其实已保存却提示失败」的误导性失败。
+    change_type = _resolve_change_type(file_data.change_type)
+    change_source = _resolve_change_source(file_data.change_source)
+    change_summary = file_data.change_summary or "File updated"
 
-    # Check project ownership
-    verify_project_ownership(file.project_id, current_user, session)
+    from agent.tools.file_ops.edit import file_write_lock
+    from database import is_postgres
+
+    # 用户保存必须和 agent 的 edit_file / update_file 走同一条串行化通道。
+    # 上一轮只把 agent↔agent 序列化了，agent↔用户这条更常见的路径没有任何互斥。
+    # SQLite 没有行锁，用同一组进程内条带锁；PG 上互斥由 _load_file_for_write
+    # 里的 FOR NO KEY UPDATE 行锁提供，不再叠加进程内锁（与 agent 侧一致）。
+    lock_ctx = contextlib.nullcontext() if is_postgres else file_write_lock(file_id)
 
     content_changed = False
+    version_quota_exceeded = False
 
-    # Update fields
-    if file_data.title is not None:
-        file.title = file_data.title
+    with lock_ctx:
+        file = _load_file_for_write(session, file_id)
+        if not file or file.is_deleted:
+            raise APIException(error_code=ErrorCode.FILE_NOT_FOUND, status_code=404)
 
-    if file_data.content is not None:
-        if file_data.content != file.content:
-            content_changed = True
-        file.content = file_data.content
+        # Check project ownership
+        verify_project_ownership(file.project_id, current_user, session)
 
-    if "parent_id" in file_data.model_fields_set:
-        file.parent_id = _validate_parent_assignment(
-            session,
-            file.project_id,
-            file_data.parent_id,
-            moving_file_id=file.id,
-        )
+        # 陈旧写入检测：必须在拿到锁、读到最新行之后做，否则校验的是过期快照。
+        _assert_not_stale_write(file, file_data.base_updated_at)
 
-    existing_metadata: dict[str, Any] = {}
-    if file.file_metadata:
-        try:
-            parsed = json.loads(file.file_metadata)
-            if isinstance(parsed, dict):
-                existing_metadata = parsed
-        except Exception:
-            existing_metadata = {}
+        # Update fields
+        if file_data.title is not None:
+            file.title = file_data.title
 
-    updated_metadata: dict[str, Any] | None = None
+        if file_data.content is not None:
+            if file_data.content != file.content:
+                content_changed = True
+            file.content = file_data.content
 
-    if file_data.metadata is not None:
-        updated_metadata = {**existing_metadata, **file_data.metadata}
-
-    if content_changed and file.file_type in {"draft", "script"}:
-        if updated_metadata is None:
-            updated_metadata = dict(existing_metadata)
-
-        # Don't override explicit user-provided metadata payload.
-        user_supplied_word_count = (
-            file_data.metadata is not None
-            and isinstance(file_data.metadata, dict)
-            and "word_count" in file_data.metadata
-        )
-        if not user_supplied_word_count:
-            from utils.text_metrics import count_words
-
-            resolved_word_count = (
-                int(file_data.word_count)
-                if file_data.word_count is not None
-                else count_words(file.content)
+        if "parent_id" in file_data.model_fields_set:
+            file.parent_id = _validate_parent_assignment(
+                session,
+                file.project_id,
+                file_data.parent_id,
+                moving_file_id=file.id,
             )
-            updated_metadata["word_count"] = max(0, resolved_word_count)
 
-    if updated_metadata is not None:
-        file.file_metadata = json.dumps(updated_metadata)
+        existing_metadata: dict[str, Any] = {}
+        if file.file_metadata:
+            try:
+                parsed = json.loads(file.file_metadata)
+                if isinstance(parsed, dict):
+                    existing_metadata = parsed
+            except Exception:
+                existing_metadata = {}
 
-    if (
-        file_data.order is not None
-        or file_data.title is not None
-        or file_data.metadata is not None
-    ):
-        effective_metadata = updated_metadata if updated_metadata is not None else existing_metadata
-        effective_raw_order = file_data.order if file_data.order is not None else file.order
-        file.order = resolve_persisted_sequence_order(
-            effective_raw_order,
-            title=file.title,
-            metadata=effective_metadata,
-            file_type=file.file_type,
-        )
+        updated_metadata: dict[str, Any] | None = None
 
-    file.updated_at = utcnow()
+        if file_data.metadata is not None:
+            updated_metadata = {**existing_metadata, **file_data.metadata}
 
-    session.commit()
-    session.refresh(file)
+        if content_changed and file.file_type in {"draft", "script"}:
+            if updated_metadata is None:
+                updated_metadata = dict(existing_metadata)
+
+            # Don't override explicit user-provided metadata payload.
+            user_supplied_word_count = (
+                file_data.metadata is not None
+                and isinstance(file_data.metadata, dict)
+                and "word_count" in file_data.metadata
+            )
+            if not user_supplied_word_count:
+                resolved_word_count = (
+                    int(file_data.word_count)
+                    if file_data.word_count is not None
+                    else count_words(file.content)
+                )
+                updated_metadata["word_count"] = max(0, resolved_word_count)
+
+        if updated_metadata is not None:
+            file.file_metadata = json.dumps(updated_metadata)
+
+        if (
+            file_data.order is not None
+            or file_data.title is not None
+            or file_data.metadata is not None
+        ):
+            effective_metadata = updated_metadata if updated_metadata is not None else existing_metadata
+            effective_raw_order = file_data.order if file_data.order is not None else file.order
+            file.order = resolve_persisted_sequence_order(
+                effective_raw_order,
+                title=file.title,
+                metadata=effective_metadata,
+                file_type=file.file_type,
+            )
+
+        file.updated_at = utcnow()
+
+        # 版本额度预检必须发生在 commit 之前。
+        # 旧顺序是「先 commit 正文，再 create_version」，配额超限时 402 原样上抛，
+        # 前端提示「保存失败」而正文其实已经落库——典型的误导性失败。
+        # 现在的口径：per-file 版本额度限制的是历史深度，不该把用户的正文保存
+        # 整体判负；超限就跳过版本快照，并在响应里显式告诉前端。
+        from services.file_version import get_file_version_service
+
+        file_version_service = get_file_version_service()
+        create_version_needed = content_changed and not file_data.skip_version
+        if create_version_needed and change_source == CHANGE_SOURCE_USER:
+            has_quota, used_versions, max_versions = (
+                file_version_service.check_user_version_quota(
+                    session,
+                    file.id,
+                    current_user.id,
+                )
+            )
+            if not has_quota:
+                version_quota_exceeded = True
+                create_version_needed = False
+                log_with_context(
+                    logger,
+                    logging.INFO,
+                    "File version quota reached, saving content without a version snapshot",
+                    user_id=current_user.id,
+                    file_id=file.id,
+                    used_versions=used_versions,
+                    max_versions=max_versions,
+                    operation="update_file_version_quota",
+                )
+
+        session.commit()
+        session.refresh(file)
+
+        if create_version_needed:
+            try:
+                file_version_service.create_version(
+                    session=session,
+                    file_id=file.id,
+                    new_content=file.content,
+                    change_type=change_type,
+                    change_source=change_source,
+                    change_summary=change_summary,
+                    user_id=current_user.id,
+                    # 额度已在 commit 之前预检过，这里再查一次只会重复计数；
+                    # 更重要的是正文此刻已落库，任何 402 都会变成误导性失败。
+                    skip_quota=True,
+                )
+            except Exception as e:
+                log_with_context(
+                    logger,
+                    logging.WARNING,
+                    "Failed to create file version after content update",
+                    error=str(e),
+                    file_id=file.id,
+                    operation="update_file_create_version",
+                )
 
     if content_changed and file.file_type in {"draft", "script"}:
         try:
@@ -822,39 +961,6 @@ def update_file(
                 project_id=file.project_id,
                 file_id=file.id,
                 operation="update_file_bump_dashboard_cache_version",
-            )
-
-    # Ensure project snapshots can reliably reference latest file state.
-    # We create a file version on content update; duplicate content is skipped by service.
-    if content_changed:
-        change_type = _resolve_change_type(file_data.change_type)
-        change_source = _resolve_change_source(file_data.change_source)
-        change_summary = file_data.change_summary or "File updated"
-
-    if content_changed and not file_data.skip_version:
-        try:
-            from services.file_version import get_file_version_service
-
-            file_version_service = get_file_version_service()
-            file_version_service.create_version(
-                session=session,
-                file_id=file.id,
-                new_content=file.content,
-                change_type=change_type,
-                change_source=change_source,
-                change_summary=change_summary,
-                user_id=current_user.id,
-            )
-        except APIException:
-            raise
-        except Exception as e:
-            log_with_context(
-                logger,
-                logging.WARNING,
-                "Failed to create file version after content update",
-                error=str(e),
-                file_id=file.id,
-                operation="update_file_create_version",
             )
 
     if content_changed:
@@ -935,7 +1041,9 @@ def update_file(
             operation="update_file_index",
         )
 
-    return file
+    response = FileResponse.model_validate(file)
+    response.version_quota_exceeded = version_quota_exceeded
+    return response
 
 
 @router.delete("/files/{file_id}")
@@ -1175,24 +1283,9 @@ def _delete_recursive(session: Session, file: File) -> list[File]:
     return deleted
 
 
-def _is_descendant(session: Session, file_id: str, potential_ancestor_id: str) -> bool:
-    """Check if potential_ancestor_id is a descendant of file_id (cycle detection)."""
-    visited = set()
-    current_id = potential_ancestor_id
-
-    while current_id:
-        if current_id in visited:
-            break  # Cycle detected, stop
-        if current_id == file_id:
-            return True  # Found the file_id in the ancestry chain
-        visited.add(current_id)
-
-        current_file = session.get(File, current_id)
-        if not current_file:
-            break
-        current_id = current_file.parent_id
-
-    return False
+# 成环检测原先在这里另写了一份 `_is_descendant`，与 agent 侧的实现同语义不同代码。
+# 现已统一到 services/file_tree_rules.is_descendant_of，由
+# _validate_parent_assignment 间接调用，本文件不再保留副本。
 
 
 # ==================== File Tree ====================

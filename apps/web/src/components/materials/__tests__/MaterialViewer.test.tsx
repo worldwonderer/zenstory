@@ -8,6 +8,14 @@ vi.mock('../../../hooks/useMediaQuery', () => ({
   useIsMobile: () => isMobile,
 }))
 
+// MaterialViewer 直接读 lib/i18n 单例的 language 来决定别名分隔符（zh 用「、」，
+// en 用「, 」）。这里的断言写死了「、」，而那个单例是进程级共享状态：
+// 同一 worker 里先跑过切语言的用例，或 localStorage 残留 zenstory-language=en，
+// 都会让本用例随执行顺序随机变红。固定成 zh，断言才只取决于被测组件本身。
+vi.mock('../../../lib/i18n', () => ({
+  default: { language: 'zh' },
+}))
+
 vi.mock('react-i18next', () => ({
   initReactI18next: {
     type: '3rdParty',

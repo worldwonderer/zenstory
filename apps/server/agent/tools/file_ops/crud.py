@@ -19,16 +19,27 @@ from services.file_version import FileVersionService
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
+from agent.constants import coerce_bool
 from agent.tools.permissions import (
     check_file_access_in_tool_context,
     check_project_ownership,
 )
 from config.datetime_utils import utcnow
 from models import File
+from models.file_model import FILE_TYPE_FOLDER
 from models.file_version import (
     CHANGE_SOURCE_AI,
     CHANGE_TYPE_AI_EDIT,
     CHANGE_TYPE_CREATE,
+)
+from services.file_tree_rules import (
+    # 文件树结构不变量的唯一实现放在 services/file_tree_rules.py：
+    # REST 层 api/files.py 与本模块共用同一份，避免两边各写一遍再慢慢漂移
+    # （历史上 agent 侧就漏了「parent 必须是 folder」这一条）。
+    # 这里保留同名再导出，既有调用方与测试的 `crud.validate_parent_assignment`
+    # 依旧可用。
+    is_descendant_of,
+    validate_parent_assignment,
 )
 from utils.logger import get_logger, log_with_context
 from utils.title_sequence import (
@@ -36,7 +47,7 @@ from utils.title_sequence import (
     resolve_persisted_sequence_order,
 )
 
-from .edit import file_write_lock
+from .edit import acquire_file_write_lock
 from .serialization import (
     QUERY_FILES_DEFAULT_CONTENT_PREVIEW_CHARS,
     QUERY_FILES_DEFAULT_RESPONSE_MODE,
@@ -45,6 +56,38 @@ from .serialization import (
 )
 
 logger = get_logger(__name__)
+
+
+def find_nearest_folder_ancestor(
+    session: Session,
+    project_id: str,
+    file_id: str | None,
+) -> str | None:
+    """从 file_id 起沿 parent_id 向上，返回最近的「同项目、未删除的 folder」。
+
+    file_id 自身若已经是合法 folder 则直接返回它；一路走到根都没有 folder
+    （或中途遇到跨项目/已删除节点）时返回 None，表示应挂到根层。
+    visited 集合同样用于抵御历史脏数据里的环。
+    """
+    if not file_id:
+        return None
+
+    visited: set[str] = set()
+    current_id: str | None = file_id
+
+    while current_id:
+        if current_id in visited:
+            return None
+        visited.add(current_id)
+
+        node = session.get(File, current_id)
+        if node is None or node.project_id != project_id:
+            return None
+        if node.file_type == FILE_TYPE_FOLDER and not node.is_deleted:
+            return node.id
+        current_id = node.parent_id
+
+    return None
 
 
 class FileCRUD:
@@ -255,6 +298,18 @@ class FileCRUD:
                             f"Parent file {parent_id} not found in project {project_id}"
                         )
 
+        # 父节点必须是 folder（与 REST 层同一不变量，见 validate_parent_assignment）。
+        # parent_id 直接来自 LLM，模型经常把「上一章的文件 id」当成 parent 传进来。
+        # 这里不硬失败打断写作流（那会让本轮建档整体失败），而是就近上挂到最近的
+        # folder 祖先并告警，保证「写出来的文件一定在文件树里可见」。
+        parent_id = self._normalize_parent_to_folder(
+            project_id,
+            parent_id,
+            title=title,
+            file_type=file_type,
+        )
+        validate_parent_assignment(self.session, project_id, parent_id)
+
         normalized_title = (title or "").strip()
         if normalized_title and normalized_title != title:
             title = normalized_title
@@ -330,10 +385,13 @@ class FileCRUD:
         # If an agent tries to create the same episode twice (often due to earlier
         # mismatched file_type/order), reuse the existing file to prevent duplicates.
         #
-        # IMPORTANT: The streaming pipeline expects create_file to return an empty
-        # `content` field, so StreamAdapter can enter "<file>...</file>" capture mode.
-        # Therefore, when we reuse an existing file, we return `content=""` even if the
-        # file currently has content, and rely on update_file + FileVersion for history.
+        # 复用分支的返回契约（不要再用 content="" 当协议信号）：
+        # 这里返回**真实 content**，并附加显式字段 reused_existing / original_content_length。
+        # 历史写法是把 content 谎报成 ""，只为让 StreamAdapter 进入 <file> 捕获模式；
+        # 正常路径能跑通，但模型漏写 </file> 触发截断补全时，适配器以为目标文件本来
+        # 就是空的，于是把残稿整体覆盖回去——整集正文被残稿吃掉且不可逆。
+        # 现在由 StreamAdapter 依据 reused_existing 决定是否进入捕获，并据
+        # original_content_length 判断「目标文件原本非空」以拒绝整体覆盖。
         if looks_like_episode and file_type == "script" and not content:
             existing_stmt = (
                 select(File)
@@ -389,10 +447,14 @@ class FileCRUD:
                         file_type=candidate.file_type,
                         promoted=promoted,
                         total_matches=len(existing_files),
+                        original_content_length=len(candidate.content or ""),
                     )
 
                     reused = serialize_file(candidate)
-                    reused["content"] = ""
+                    original_content = candidate.content or ""
+                    reused["content"] = original_content
+                    reused["reused_existing"] = True
+                    reused["original_content_length"] = len(original_content)
                     return reused
 
         # Create file
@@ -474,7 +536,12 @@ class FileCRUD:
         # in-process per-file lock (shared with edit_file) so concurrent
         # tasks cannot interleave between our read, commit and version
         # snapshot.
-        with file_write_lock(id):
+        #
+        # 必须走 acquire_file_write_lock 而不是裸 `with file_write_lock(id)`：
+        # 这把条带锁与 edit_file 共用，裸阻塞获取一旦发生在事件循环线程上，
+        # 整个进程会陪着等到对方释放（最坏是 SQLite busy_timeout 的 30 秒）。
+        # acquire 版本在工作线程里语义完全不变，只在事件循环线程上改为有界等待。
+        with acquire_file_write_lock(id):
             return self._update_file_impl(id, title, content, parent_id, order, metadata)
 
     def _update_file_impl(
@@ -545,7 +612,22 @@ class FileCRUD:
                 parent = self.session.get(File, parent_id)
                 if not parent or parent.is_deleted or parent.project_id != file.project_id:
                     raise ValueError(f"Parent file {parent_id} not found in same project")
-                file.parent_id = parent_id
+                # 与 create_file 走同一套「必须挂在 folder 下」的不变量：先就近
+                # 归一到最近的 folder 祖先，再做完整校验（含自引用/成环拒绝）。
+                normalized_parent_id = self._normalize_parent_to_folder(
+                    file.project_id,
+                    parent_id,
+                    title=file.title,
+                    file_type=file.file_type,
+                    file_id=file.id,
+                )
+                validate_parent_assignment(
+                    self.session,
+                    file.project_id,
+                    normalized_parent_id,
+                    moving_file_id=file.id,
+                )
+                file.parent_id = normalized_parent_id
 
         if metadata is not None:
             file.file_metadata = self._serialize_metadata(metadata)
@@ -613,6 +695,14 @@ class FileCRUD:
             PermissionError: If user doesn't have permission
             ValueError: If file not found
         """
+        # recursive 直接来自 LLM 的工具参数。工具调用走 strict_json_schema=False，
+        # schema 里的 "type": "boolean" 在运行时没有约束力，模型完全可能发来
+        # 字符串 "false"/"0"，而朴素的 `if recursive:` 会把它判成真——
+        # 「只删这一个文件」当场变成「递归软删整棵子树」。
+        # 这里先用 coerce_bool 收敛成真 bool，下面再用 `is True` 判断：
+        # 即便上游某条入口漏了强转，也不会误触发级联删除。
+        recursive = coerce_bool(recursive)
+
         log_with_context(
             logger,
             20,  # INFO
@@ -642,7 +732,7 @@ class FileCRUD:
         deleted: list[File] = []
 
         # Delete recursively if requested
-        if recursive:
+        if recursive is True:
             deleted = self._delete_recursive(file)
         else:
             # Soft delete: mark as deleted instead of removing from database
@@ -709,6 +799,13 @@ class FileCRUD:
         Raises:
             PermissionError: If user doesn't have permission
         """
+        # include_content 是三值语义：None=未指定（按 response_mode 走），
+        # True=强制返回全文。它同样来自 LLM 参数，字符串 "false" 会被下游的
+        # `include_content is True` 之外的真值判断带偏，也会让日志里的取值失真，
+        # 因此在入口就收敛成真 bool（None 保持 None，不丢「未指定」语义）。
+        if include_content is not None:
+            include_content = coerce_bool(include_content)
+
         # Check project permission
         check_project_ownership(self.session, project_id, self.user_id)
 
@@ -823,6 +920,56 @@ class FileCRUD:
         }
 
     # ========== Helper Methods ==========
+
+    def _normalize_parent_to_folder(
+        self,
+        project_id: str,
+        parent_id: str | None,
+        *,
+        title: str,
+        file_type: str,
+        file_id: str | None = None,
+    ) -> str | None:
+        """把「挂到非 folder 节点下」的父节点就近归一到最近的 folder 祖先。
+
+        为什么要归一而不是直接报错：parent_id 来自 LLM，模型高频把「上一章的
+        文件 id」当作 parent 传进来。硬失败会打断整轮写作（模型往往原样重试），
+        而归一后的结果恰好就是用户期望的位置（同一个章节文件夹）。
+        真正非法、归一也救不了的情况（跨项目 / 已删除 / 成环）由随后的
+        validate_parent_assignment 拒绝。
+
+        Returns:
+            归一后的 parent_id；一路向上都没有 folder 时返回 None（挂到根层）。
+        """
+        if parent_id is None:
+            return None
+
+        parent = self.session.get(File, parent_id)
+        if parent is None or parent.is_deleted or parent.project_id != project_id:
+            # 交给 validate_parent_assignment 统一报错，这里不做猜测
+            return parent_id
+        if parent.file_type == FILE_TYPE_FOLDER:
+            return parent_id
+
+        fallback_parent_id = find_nearest_folder_ancestor(
+            self.session, project_id, parent_id
+        )
+
+        log_with_context(
+            logger,
+            30,  # WARNING
+            "Parent is not a folder; re-anchoring to nearest folder ancestor",
+            project_id=project_id,
+            user_id=self.user_id,
+            file_id=file_id,
+            requested_parent_id=parent_id,
+            requested_parent_type=parent.file_type,
+            resolved_parent_id=fallback_parent_id,
+            title=title,
+            file_type=file_type,
+        )
+
+        return fallback_parent_id
 
     def _query_files_page(
         self,
@@ -944,13 +1091,23 @@ class FileCRUD:
 
         return filtered
 
-    def _delete_recursive(self, file: File) -> list[File]:
+    def _delete_recursive(self, file: File, visited: set[str] | None = None) -> list[File]:
         """
         Delete a file and all its children recursively.
 
         Returns a list of File objects that were deleted (including the root file).
         Uses soft delete: marks files as deleted instead of removing from database.
+
+        visited 用于抵御历史脏数据：库里可能已经存在自引用（parent_id 指向自己）
+        或更长的环（这些行是本次修复前的 update_file 写进去的）。没有这层保护时
+        递归删除会直接打成 RecursionError，整个工具调用失败且什么都删不掉。
         """
+        if visited is None:
+            visited = set()
+        if file.id in visited:
+            return []
+        visited.add(file.id)
+
         deleted: list[File] = []
 
         # Get children that are not already deleted
@@ -963,7 +1120,7 @@ class FileCRUD:
             ).all()
         )
         for child in children:
-            deleted.extend(self._delete_recursive(child))
+            deleted.extend(self._delete_recursive(child, visited))
 
         deleted.append(file)
         # Soft delete: mark as deleted instead of removing from database
@@ -1066,4 +1223,7 @@ class FileCRUD:
 
 __all__ = [
     "FileCRUD",
+    "find_nearest_folder_ancestor",
+    "is_descendant_of",
+    "validate_parent_assignment",
 ]

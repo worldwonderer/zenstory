@@ -49,6 +49,14 @@ export interface ProjectContextType {
   editorRefreshVersion: number;
   triggerEditorRefresh: (fileId: string) => void;
   lastEditedFileId: string | null;
+  /**
+   * File the AI is editing right now (between `file_edit_start` and
+   * `file_edit_end`). The editor must suspend its debounced auto-save for this
+   * file while it is set — otherwise a snapshot taken before the AI's edit
+   * lands gets PUT afterwards and silently overwrites it.
+   */
+  aiEditingFileId: string | null;
+  setAiEditingFileId: (fileId: string | null) => void;
   // File streaming state
   streamingFileId: string | null;
   streamingContent: string;
@@ -73,6 +81,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProjectId, setCurrentProjectIdState] = useState<string | null>(null);
+  // 与 currentProjectId 同步的 ref：用于在同一批更新里判断「项目是否真的换了」。
+  const currentProjectIdRef = useRef<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +91,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Editor refresh state (for edit_file updates)
   const [editorRefreshVersion, setEditorRefreshVersion] = useState(0);
   const [lastEditedFileId, setLastEditedFileId] = useState<string | null>(null);
-  
+  // AI 正在编辑的文件（file_edit_start ~ file_edit_end 之间）
+  const [aiEditingFileId, setAiEditingFileId] = useState<string | null>(null);
+
   // File streaming state (for AI-generated content)
   const [streamingFileId, setStreamingFileId] = useState<string | null>(null);
   const [streamingContent, setStreamingContent] = useState('');
@@ -97,6 +109,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   useEffect(() => {
     streamingFileIdRef.current = streamingFileId;
   }, [streamingFileId]);
+
+  // 兜住那些绕过 setCurrentProjectId 直接调 setCurrentProjectIdState 的路径
+  // （登出清理、loadProjects 的无用户分支），保证 ref 不会漂移。
+  useEffect(() => {
+    currentProjectIdRef.current = currentProjectId;
+  }, [currentProjectId]);
 
   useEffect(() => {
     return () => {
@@ -301,8 +319,26 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const currentProject = projects.find(p => p.id === currentProjectId) || null;
 
   const setCurrentProjectId = useCallback((projectId: string | null) => {
+    // 同步维护 ref：loadProjects 会在同一批更新里多次调用本函数，
+    // 依赖 state 判断「项目是否真的变了」会读到过期值。
+    const previousProjectId = currentProjectIdRef.current;
+    currentProjectIdRef.current = projectId;
+
     setCurrentProjectIdState(projectId);
     setSelectedItem(null);
+
+    // 真正切换项目时必须释放上一个项目遗留的流式写入态。
+    // 旧流已被 useAgentStream 的项目切换 effect 直接 abort，不会再有
+    // file_content_end / done，也就不会再有人来调 finishFileStreaming；
+    // 若不在这里兜底清掉，那个文件的编辑器会一直被锁成只读并显示半截缓冲。
+    //
+    // 注意必须先比对 previousProjectId：loadProjects 在初始化时会用当前 id
+    // 再调一次本函数，无差别重置会把正在进行的流式写入误伤掉。
+    if (previousProjectId !== projectId) {
+      streamingFileIdRef.current = null;
+      setStreamingFileId(null);
+      resetStreamingContent();
+    }
 
     const storageKey = getProjectStorageKey(user?.id);
     if (projectId) {
@@ -314,7 +350,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       localStorage.removeItem(storageKey);
       localStorage.removeItem(STORAGE_KEY_PREFIX);
     }
-  }, [user]);
+  }, [resetStreamingContent, user]);
 
   // Load projects when user is authenticated
   const loadProjects = useCallback(async () => {
@@ -519,6 +555,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     editorRefreshVersion,
     triggerEditorRefresh,
     lastEditedFileId,
+    aiEditingFileId,
+    setAiEditingFileId,
     streamingFileId,
     streamingContent,
     appendFileContent,
@@ -552,6 +590,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     editorRefreshVersion,
     triggerEditorRefresh,
     lastEditedFileId,
+    aiEditingFileId,
+    setAiEditingFileId,
     streamingFileId,
     streamingContent,
     appendFileContent,

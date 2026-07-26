@@ -138,6 +138,7 @@
     "stopReason": "Reason: {{reason}}",
     "handoffMessage": "Handing off to {{agent}}: {{reason}}",
     "parallelStart": "Starting {{count}} parallel tasks",
+    "parallelStartTruncated": "Running {{count}} tasks in parallel ({{dropped}} more exceeded the per-call limit and will run in a later batch)",
     "parallelTaskCompleted": "✓ {{description}}",
     "parallelTaskFailed": "✗ {{description}}: {{error}}",
     "parallelEnd": "Parallel execution complete: {{completed}}/{{total}} done, {{failed}} failed",
@@ -279,5 +280,9 @@
       "writing_style": "Writing Style",
       "notes": "Notes"
     }
+  },
+  "fileEdit": {
+    "allFailed": "All {{count}} edits to \"{{title}}\" failed; the file was left unchanged.",
+    "partialFailed": "{{count}} edit(s) to \"{{title}}\" did not apply. Please review and retry."
   }
 }

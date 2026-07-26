@@ -1056,10 +1056,12 @@ describe('useAgentStream', () => {
       act(() => {
         callbacks.onFileEditEnd?.('file-123', 3, 100)
       })
+      // 第 8 个参数是新增的批量编辑结果；上游没传时原样转发 undefined。
       expect(onFileEditEnd).toHaveBeenCalledWith(
         'file-123',
         3,
         100,
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -1470,7 +1472,7 @@ describe('useAgentStream', () => {
       })
 
       expect(onSessionStartedV1).toHaveBeenCalledWith('session-v1')
-      expect(onParallelStartV1).toHaveBeenCalledWith('exec-v1', 1, ['task-v1'])
+      expect(onParallelStartV1).toHaveBeenCalledWith('exec-v1', 1, ['task-v1'], undefined)
       expect(onSteeringReceivedV1).toHaveBeenCalledWith('steer-v1', 'preview-v1')
 
       rerender({
@@ -1490,7 +1492,12 @@ describe('useAgentStream', () => {
       })
 
       expect(onSessionStartedV2).toHaveBeenCalledWith('session-v2')
-      expect(onParallelStartV2).toHaveBeenCalledWith('exec-v2', 2, ['task-a', 'task-b'])
+      expect(onParallelStartV2).toHaveBeenCalledWith(
+        'exec-v2',
+        2,
+        ['task-a', 'task-b'],
+        undefined,
+      )
       expect(onSteeringReceivedV2).toHaveBeenCalledWith('steer-v2', 'preview-v2')
 
       expect(onSessionStartedV1).toHaveBeenCalledTimes(1)

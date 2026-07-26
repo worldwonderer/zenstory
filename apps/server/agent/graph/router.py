@@ -7,7 +7,7 @@ intent and route to the appropriate writing agent.
 
 import json
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -107,6 +107,9 @@ async def router_node(state: WritingState) -> dict:
             "workflow_plan": decision.workflow_type,
             "workflow_agents": workflow_agents,
             "routing_metadata": decision.model_dump(),
+            # 路由这次 LLM 调用的用量随决策一起上报，由 writing_graph 放进
+            # ROUTER_DECIDED 事件，最终汇入 stream_adapter 的 usage 累加器。
+            "routing_usage": response.get("usage"),
         }
 
     except Exception as e:
@@ -131,7 +134,57 @@ async def router_node(state: WritingState) -> dict:
         }
 
 
-async def _route_with_deepseek_chat(user_message: str) -> dict[str, list[dict[str, str]]]:
+def _int_usage_field(source: object, name: str) -> int:
+    """读取 usage 上的整数字段，缺失/None/bool/非法一律按 0 处理。"""
+    value = getattr(source, name, None)
+    if isinstance(value, bool) or value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_usage(response: object) -> dict[str, int] | None:
+    """把 Chat Completions 的 usage 归一化成**规范键**。
+
+    路由这次调用同样烧真金白银（deepseek-v4-flash 的 reasoning token 尤其多），
+    却一直没有进任何统计口径——整轮用量因此系统性偏低。
+
+    键名必须与 openai_agents/runner.py 的 `_usage_dict_from_result` 完全一致
+    （input_tokens / output_tokens / cache_read_tokens / total_tokens）：
+    stream_adapter._merge_usage 是**按字面键**逐一相加的，两族键名并存时只有
+    total_tokens 会被真正相加，而下游 writing_stats_service 取 input_tokens 时
+    已经被 runner 填过，router 的 prompt_tokens 会被静默丢弃——于是
+    total_tokens ≠ input + output + cache，计价口径自相矛盾。
+
+    cache_read_tokens 取自 OpenAI 兼容字段 prompt_tokens_details.cached_tokens，
+    它是 prompt_tokens 的**子集**；writing_stats_service 的公式是
+    input * 输入价 + cache_read * 缓存价（相加），所以必须从 input_tokens 里
+    把命中缓存的部分扣掉，否则同一批 token 被重复计价。
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+
+    prompt_tokens = _int_usage_field(usage, "prompt_tokens")
+    cached_tokens = _int_usage_field(
+        getattr(usage, "prompt_tokens_details", None), "cached_tokens"
+    )
+    cached_tokens = max(0, min(cached_tokens, prompt_tokens))
+
+    extracted = {
+        "input_tokens": prompt_tokens - cached_tokens,
+        "output_tokens": _int_usage_field(usage, "completion_tokens"),
+        "cache_read_tokens": cached_tokens,
+        "total_tokens": _int_usage_field(usage, "total_tokens"),
+    }
+    # 保持「没有真实用量时返回 None」的既有契约：全 0 视为没拿到 usage。
+    non_zero = {key: value for key, value in extracted.items() if value}
+    return non_zero or None
+
+
+async def _route_with_deepseek_chat(user_message: str) -> dict[str, Any]:
     """Route using DeepSeek's OpenAI-compatible Chat Completions endpoint."""
     client = get_deepseek_client()
     response = await client.chat.completions.create(
@@ -154,7 +207,8 @@ async def _route_with_deepseek_chat(user_message: str) -> dict[str, list[dict[st
                 "type": "text",
                 "text": text,
             }
-        ]
+        ],
+        "usage": _extract_usage(response),
     }
 
 

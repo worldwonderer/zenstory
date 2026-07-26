@@ -5,6 +5,10 @@ Provides FastAPI router for agent endpoints:
 - POST /api/v1/agent/stream - Stream AI response with Function Calling
 - GET /api/v1/agent/health - Health check
 - POST /api/v1/agent/suggest - Generate intelligent next-step suggestions
+- POST /api/v1/agent/steer - Inject steering message into a running session
+
+计费/限流约定：所有会触发 LLM 的端点都必须同时具备「鉴权 + 项目权限 + 配额 + 按用户限流」，
+新增端点时请照此对齐，不要只做鉴权。
 """
 
 import asyncio
@@ -23,6 +27,7 @@ from agent.service import get_agent_service
 from core.error_codes import ErrorCode
 from core.error_handler import APIException
 from database import create_session, get_session
+from middleware.rate_limit import require_user_rate_limit
 from models import User
 from services.quota_service import quota_service
 from utils.logger import get_logger, log_with_context
@@ -32,6 +37,25 @@ from utils.request_context import bind_request_context, reset_request_context
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/agent", tags=["Agent"])
+
+
+# ==================== 限流配置 ====================
+# 本 router 下所有已登录端点都会触发真实的远端 LLM 调用：
+# - /stream、/suggest 直接调用 LLM；
+# - /steer 向运行中的 agent 循环注入消息，间接触发额外的 LLM 轮次。
+# 成本按账号结算，因此限流主体必须是 user_id：middleware.rate_limit.require_rate_limit
+# 默认按客户端 IP 计数，换 IP / 走代理即可绕过，对「单账号刷接口」这类滥用无效。
+STREAM_RATE_LIMIT_MAX_REQUESTS = 60
+STREAM_RATE_LIMIT_WINDOW_SECONDS = 3600
+SUGGEST_RATE_LIMIT_MAX_REQUESTS = 30
+SUGGEST_RATE_LIMIT_WINDOW_SECONDS = 3600
+STEER_RATE_LIMIT_MAX_REQUESTS = 120
+STEER_RATE_LIMIT_WINDOW_SECONDS = 3600
+
+
+# 「按登录用户限流」的依赖构造器现已下沉到 middleware.rate_limit，
+# 供本 router 与 api/editor.py（/natural-polish 同样直连 LLM）共用同一份实现。
+# 这里保留同名再导出，既有引用与静态自检用例无需改动。
 
 
 def _should_offload_session_work(session: Session) -> bool:
@@ -57,6 +81,57 @@ def _release_ai_conversation_sync(user_id: str) -> bool:
     """Release quota using a fresh sync DB session."""
     with create_session() as quota_session:
         return quota_service.release_ai_conversation(quota_session, user_id)
+
+
+async def _refund_ai_conversation(
+    session: Session,
+    user_id: str,
+    *,
+    project_id: str,
+    reason: str,
+) -> bool:
+    """退还一次已预扣的 AI 对话额度，失败只记日志不影响主流程。"""
+    try:
+        if _should_offload_session_work(session):
+            return await asyncio.to_thread(_release_ai_conversation_sync, user_id)
+        # 失败的事务可能让共享 session 处于 PendingRollback 状态，先复位再补偿，
+        # 否则退款会静默失效、用户被多扣一次。
+        with contextlib.suppress(Exception):
+            session.rollback()
+        return quota_service.release_ai_conversation(session, user_id)
+    except Exception as refund_error:
+        log_with_context(
+            logger,
+            30,  # WARNING
+            "Failed to refund AI conversation quota",
+            user_id=user_id,
+            project_id=project_id,
+            reason=reason,
+            error=str(refund_error),
+            error_type=type(refund_error).__name__,
+        )
+        return False
+
+
+def _is_pure_fallback_suggestion(
+    service: Any,
+    suggestions: list[str],
+    count: int,
+    language: str,
+) -> bool:
+    """判断结果是否完全等于固定兜底文案。
+
+    SuggestService 会吞掉 LLM 超时/解析失败并退化成固定文案，这种「没有真实产出」
+    的调用不应扣费（与 /stream 的失败退款口径一致）。
+    """
+    getter = getattr(service, "_get_fallback_suggestions", None)
+    if not callable(getter):
+        return False
+    try:
+        fallback = getter(count, language)
+    except Exception:
+        return False
+    return isinstance(fallback, list) and list(suggestions) == fallback
 
 
 # ==================== Request Models ====================
@@ -118,6 +193,13 @@ async def stream_request(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user),
     accept_language: str | None = Header(None, alias="Accept-Language"),
+    _rate_limit: int = Depends(
+        require_user_rate_limit(
+            "agent_stream",
+            STREAM_RATE_LIMIT_MAX_REQUESTS,
+            STREAM_RATE_LIMIT_WINDOW_SECONDS,
+        )
+    ),
 ):
     """
     Process request with streaming SSE output.
@@ -357,6 +439,13 @@ async def suggest_next_action(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user),
     accept_language: str | None = Header(None, alias="Accept-Language"),
+    _rate_limit: int = Depends(
+        require_user_rate_limit(
+            "agent_suggest",
+            SUGGEST_RATE_LIMIT_MAX_REQUESTS,
+            SUGGEST_RATE_LIMIT_WINDOW_SECONDS,
+        )
+    ),
 ):
     """
     Generate intelligent next-step suggestions.
@@ -370,6 +459,23 @@ async def suggest_next_action(
 
     # Keep authorization behavior consistent with chat/stream endpoints
     await verify_project_access(body.project_id, session, current_user)
+
+    # 配额预检：本端点会真正调用远端 LLM（上下文组装 + acomplete），与 /stream、
+    # /natural-polish 同属付费调用，必须计入 AI 对话额度；否则额度已耗尽的账号
+    # 仍能无限次触发厂商计费。
+    if _should_offload_session_work(session):
+        allowed, used, limit = await asyncio.to_thread(
+            _check_ai_conversation_quota_sync,
+            user_id,
+        )
+    else:
+        allowed, used, limit = quota_service.check_ai_conversation_quota(session, user_id)
+    if not allowed:
+        raise APIException(
+            error_code=ErrorCode.QUOTA_AI_CONVERSATIONS_EXCEEDED,
+            status_code=402,
+            detail=f"AI conversation quota exceeded ({used}/{limit}). Please upgrade your plan.",
+        )
 
     log_with_context(
         logger,
@@ -385,14 +491,56 @@ async def suggest_next_action(
     service = get_suggest_service()
     lang = (accept_language or "").split(",")[0].split("-")[0].strip().lower() or "zh"
 
-    suggestions = await service.generate_suggestions(
-        session=session,
-        project_id=body.project_id,
-        user_id=user_id,
-        recent_messages=body.recent_messages,
-        count=body.count,
-        language=lang,
-    )
+    # 只有真正持有 LLM 客户端时才扣费：未配置 API Key 的环境（本地/e2e）里
+    # SuggestService.llm 为 None，直接返回固定兜底文案，不产生任何厂商成本，
+    # 此时扣额度等于平白吃掉用户配额。
+    llm_backed = getattr(service, "llm", None) is not None
+    consumed = False
+
+    if llm_backed:
+        # 调用前预扣，避免并发请求越过上面的预检把额度打穿。
+        if _should_offload_session_work(session):
+            consumed = await asyncio.to_thread(
+                _consume_ai_conversation_sync,
+                user_id,
+            )
+        else:
+            consumed = quota_service.consume_ai_conversation(session, user_id)
+        if not consumed:
+            raise APIException(
+                error_code=ErrorCode.QUOTA_AI_CONVERSATIONS_EXCEEDED,
+                status_code=402,
+                detail=f"AI conversation quota exceeded ({used}/{limit}). Please upgrade your plan.",
+            )
+
+    try:
+        suggestions = await service.generate_suggestions(
+            session=session,
+            project_id=body.project_id,
+            user_id=user_id,
+            recent_messages=body.recent_messages,
+            count=body.count,
+            language=lang,
+        )
+    except Exception:
+        # 生成失败（超时/上游异常）没有产出，退还预扣的额度后原样抛出。
+        if consumed:
+            await _refund_ai_conversation(
+                session,
+                user_id,
+                project_id=body.project_id,
+                reason="suggest_exception",
+            )
+        raise
+
+    # 结果完全等于兜底文案 => LLM 调用失败被内部吞掉，没有真实产出，退款。
+    if consumed and _is_pure_fallback_suggestion(service, suggestions, body.count, lang):
+        consumed = not await _refund_ai_conversation(
+            session,
+            user_id,
+            project_id=body.project_id,
+            reason="suggest_fallback_only",
+        )
 
     log_with_context(
         logger,
@@ -400,6 +548,7 @@ async def suggest_next_action(
         "suggest_next_action completed",
         project_id=body.project_id,
         suggestion_count=len(suggestions),
+        quota_charged=consumed,
     )
 
     return SuggestResponse(suggestions=suggestions)
@@ -409,12 +558,22 @@ async def suggest_next_action(
 async def inject_steering(
     body: SteeringRequest,
     current_user: User = Depends(get_current_active_user),
+    _rate_limit: int = Depends(
+        require_user_rate_limit(
+            "agent_steer",
+            STEER_RATE_LIMIT_MAX_REQUESTS,
+            STEER_RATE_LIMIT_WINDOW_SECONDS,
+        )
+    ),
 ):
     """
     Inject a steering message into an active agent session.
 
     Steering messages allow users to provide mid-execution guidance
     to the running agent loop without interrupting the conversation.
+
+    注：steering 消息本身不单独计 AI 对话额度（所属的 /stream 运行已扣过一次），
+    但每条注入都会让运行中的 agent 循环多跑若干轮 LLM，所以仍需按用户限流。
     """
     from agent.core.steering import get_steering_queue_for_user_async
 

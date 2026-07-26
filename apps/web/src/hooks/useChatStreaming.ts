@@ -17,6 +17,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type {
   AgentContextItem,
   ApplyAction,
+  FileEditOutcome,
   FileType,
   SSEHandoffData,
   SSERoutingMetadata,
@@ -25,6 +26,7 @@ import type {
   ToolCall,
 } from "../types";
 import { logger } from "../lib/logger";
+import { toast } from "../lib/toast";
 import { stripThinkTags } from "../lib/utils";
 import { dispatchProjectStatusUpdated } from "../lib/projectStatusEvents";
 import type { MessageSegment } from "./useAgentStream";
@@ -355,6 +357,7 @@ export interface UseChatStreamingOptions {
     originalContent?: string,
     fileType?: string,
     title?: string,
+    outcome?: FileEditOutcome,
   ) => void;
 
   // ========================================
@@ -371,7 +374,12 @@ export interface UseChatStreamingOptions {
   onSessionStarted?: (sessionId: string) => void;
 
   /** Called when parallel execution starts */
-  onParallelStart?: (executionId: string, taskCount: number, descriptions: string[]) => void;
+  onParallelStart?: (
+    executionId: string,
+    taskCount: number,
+    descriptions: string[],
+    droppedCount?: number,
+  ) => void;
 
   /** Called when a parallel task starts */
   onParallelTaskStart?: (executionId: string, taskId: string, taskType: string, description: string) => void;
@@ -408,6 +416,12 @@ export interface UseChatStreamingDependencies {
   triggerFileTreeRefresh: () => void;
   /** Function to trigger editor refresh for a specific file */
   triggerEditorRefresh: (fileId: string) => void;
+  /**
+   * 标记/清除「AI 正在编辑某个文件」。
+   * 编辑器据此在 file_edit_start ~ file_edit_end 之间挂起防抖自动保存，
+   * 否则编辑前拍下的整篇快照会在 AI 写完之后发出，把它的改动整篇覆盖掉。
+   */
+  setAiEditingFileId?: (fileId: string | null) => void;
   /** Function to set the selected item in project context */
   setSelectedItem: (item: { id: string; type: FileType; title: string }) => void;
   /** Returns the latest selected item from project context */
@@ -710,6 +724,7 @@ export function useChatStreaming(): UseChatStreamingReturn {
       const {
         triggerFileTreeRefresh,
         triggerEditorRefresh,
+        setAiEditingFileId,
         setSelectedItem,
         getCurrentSelectedItem,
         appendFileContent,
@@ -1182,6 +1197,8 @@ export function useChatStreaming(): UseChatStreamingReturn {
          */
         onFileEditStart: (fileId: string, title: string, totalEdits: number, fileType?: string) => {
           fileEditMetaByIdRef.current.set(fileId, { title, fileType });
+          // 挂起该文件的自动保存，直到 file_edit_end
+          setAiEditingFileId?.(fileId);
           setEditProgress({
             fileId,
             title,
@@ -1224,10 +1241,34 @@ export function useChatStreaming(): UseChatStreamingReturn {
           originalContent?: string,
           fileType?: string,
           title?: string,
+          outcome?: FileEditOutcome,
         ) => {
           // Clear edit progress and mark tree refresh once.
           setEditProgress(null);
+          setAiEditingFileId?.(null);
           scheduleFileTreeRefresh();
+
+          // 批量编辑可以部分失败：不提示的话用户只看到"编辑完成"，
+          // 实际上有若干条 edit 根本没落地（失败原因只藏在 data 里）。
+          if (outcome && (outcome.failedCount > 0 || outcome.allFailed)) {
+            const displayTitle = title || fileEditMetaByIdRef.current.get(fileId)?.title || "";
+            toast.error(
+              outcome.allFailed
+                ? t("chat:fileEdit.allFailed", {
+                    title: displayTitle,
+                    count: outcome.failedCount,
+                  })
+                : t("chat:fileEdit.partialFailed", {
+                    title: displayTitle,
+                    count: outcome.failedCount,
+                  }),
+            );
+          }
+          for (const warning of outcome?.warnings ?? []) {
+            if (warning) {
+              logger.warn(`[FileEdit] ${fileId}: ${warning}`);
+            }
+          }
 
           // If we have both original and new content, enter diff review mode
           if (newContent && originalContent && newContent !== originalContent) {
@@ -1293,13 +1334,28 @@ export function useChatStreaming(): UseChatStreamingReturn {
           // Session state is tracked internally via useAgentStream.
         },
 
-        onParallelStart: (_executionId: string, taskCount: number, _descriptions: string[]) => {
+        onParallelStart: (
+          _executionId: string,
+          taskCount: number,
+          _descriptions: string[],
+          droppedCount?: number,
+        ) => {
+          // 后端单次并行有上限，超出的任务会被截断。只报"执行 N 个"会让用户
+          // 以为模型请求的任务全跑了，而实际上有几个根本没执行。
+          const dropped = droppedCount ?? 0;
+          const content =
+            dropped > 0
+              ? t('chat:workflow.parallelStartTruncated', {
+                  count: taskCount,
+                  dropped,
+                })
+              : t('chat:workflow.parallelStart', { count: taskCount });
           updateStreamItems((prev) => [
             ...prev,
             {
               type: "thinking_status",
               id: generateUniqueId("parallel-start"),
-              content: t('chat:workflow.parallelStart', { count: taskCount }),
+              content,
               timestamp: new Date(),
             },
           ]);
@@ -1387,6 +1443,10 @@ export function useChatStreaming(): UseChatStreamingReturn {
           // assistant message as "status cards" so they should not remain as standalone
           // streamed items after completion.
           clearStreamItems();
+
+          // 流结束兜底：file_edit_end 可能因取消/报错永远不到，
+          // 不清掉标记会让编辑器的自动保存被永久挂起。
+          setAiEditingFileId?.(null);
 
           // Clear any remaining file streaming state
           const latestStreamingFileId =
@@ -1484,6 +1544,7 @@ export function useChatStreaming(): UseChatStreamingReturn {
          */
         onError: (_message?: string, _code?: string, _retryable?: boolean) => {
           setEditProgress(null);
+          setAiEditingFileId?.(null);
 
           // Clear any remaining file streaming state on error
           const latestStreamingFileId =

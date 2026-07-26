@@ -8,6 +8,7 @@ import os
 from collections.abc import AsyncIterator
 from typing import Any
 
+from agent.constants import CONTENT_FILE_TYPES
 from agent.core.workflow_events import StreamEvent, StreamEventType
 from agent.graph.nodes import (
     detect_task_complete,
@@ -76,13 +77,57 @@ def _probe_pending_file_body(file_id: str) -> str:
     return _PENDING_BODY_EMPTY if not str(content or "").strip() else _PENDING_BODY_WRITTEN
 
 # 追加轮提示：openai-agents 不支持向进行中的 run 注入消息，运行期间到达的
-# steering 只能在 run 结束后补一轮 writer 才能在本次请求内生效；引导内容
-# 本身已作为用户消息追加进会话历史，这里只引导模型去看它。
+# steering 只能在 run 结束后补一轮才能在本次请求内生效；引导内容本身已作为
+# 用户消息追加进会话历史，这里只引导模型去看它。
 STEERING_FOLLOWUP_CONTEXT = (
     "[系统提醒] 用户在生成过程中发来了新的引导消息（见对话历史末尾的用户消息）。"
     "请在已完成工作的基础上按用户最新引导继续调整或补充；"
     "如果引导无需改动已完成内容，请简要回应说明。"
 )
+
+# 只读 agent（工具集里没有任何写文件工具，如 quality_reviewer）的追加轮提示。
+# 不能对它们说"继续调整或补充"——那是一句明确的"去改"指令，而 review_only
+# 这类工作流本就承诺全程不动文件；要改只能显式交接给有写权限的 agent。
+STEERING_FOLLOWUP_CONTEXT_READONLY = (
+    "[系统提醒] 用户在生成过程中发来了新的引导消息（见对话历史末尾的用户消息）。"
+    "请在已完成工作的基础上按用户最新引导继续你的审查；"
+    "如果引导要求改动正文，请用 handoff_to_agent 交接给 writer，不要自行改写文件；"
+    "如果引导无需额外工作，请简要回应说明。"
+)
+
+# 写文件类工具：用于判断某个 agent 类型本轮是否具备改动文件的能力。
+_WRITE_TOOL_NAMES = frozenset({"create_file", "edit_file", "delete_file"})
+
+
+def _agent_can_write_files(agent_type: str | None) -> bool:
+    """该 agent 类型的工具集里是否包含写文件工具。
+
+    工具集由 registry 按 agent 类型分配（quality_reviewer 被刻意剥夺了
+    create_file/edit_file/delete_file）。这里按 registry 的实际映射判断，
+    而不是硬编码 agent 名字，新增只读 agent 时无需再改这里。
+    """
+    if not agent_type:
+        return False
+    try:
+        from agent.tools.registry import AGENT_TOOL_NAME_MAP
+
+        tool_names = AGENT_TOOL_NAME_MAP.get(agent_type)
+    except Exception as e:  # pragma: no cover - registry 导入失败属异常路径
+        logger.debug(f"Failed to resolve agent toolset for {agent_type}: {e}")
+        return True
+    if tool_names is None:
+        # 未知 agent 类型走 registry 的 writer 兜底，视为有写权限。
+        return True
+    return bool(_WRITE_TOOL_NAMES.intersection(tool_names))
+
+
+def _steering_followup_context(agent_type: str | None) -> str:
+    """按 agent 是否有写权限选择追加轮提示文案。"""
+    return (
+        STEERING_FOLLOWUP_CONTEXT
+        if _agent_can_write_files(agent_type)
+        else STEERING_FOLLOWUP_CONTEXT_READONLY
+    )
 
 
 def _extract_review_payload(agent_content: str) -> str:
@@ -150,19 +195,80 @@ def _format_review_payload(text: str, *, max_chars: int = 9000) -> str:
 
 
 def _format_file_inventory(inventory: dict[str, list[dict[str, Any]]]) -> str:
-    """格式化文件清单为可读字符串。"""
-    parts = []
+    """格式化文件清单为可读字符串（handoff 时注入给下一个 agent）。
+
+    分桶规则与 ContextAssembler._build_inventory_sections 保持一致，二者是同一份
+    清单的两个渲染端，任何一端漏类型都会让 Agent「失明」：
+
+    - 大纲：outline
+    - 正文：CONTENT_FILE_TYPES（draft + script）合并输出——短剧项目的分集正文是
+      script，历史实现只认 draft，交接后的 writer/quality_reviewer 看不到已写好的
+      分集，于是从头重复创建。
+    - 角色 / 设定：character / lore
+    - 其他文件：document / snippet 以及任何未预期的新类型，统一进兜底桶，
+      保证没有文件会从清单里凭空消失（这正是数据源改了、渲染端没改的历史顽疾）。
+
+    条目带类型标注（正文桶与兜底桶各类型混排，不标注读不出是哪一类）。
+    """
     type_names = {
         "outline": "大纲",
         "draft": "正文",
+        "script": "剧本",
         "character": "角色",
         "lore": "设定",
+        "document": "文档",
+        "snippet": "片段",
     }
 
-    for file_type, files in inventory.items():
-        if files and file_type in type_names:
-            items = [f"{f['title']}(id={f['id']})" for f in files]
-            parts.append(f"{type_names[file_type]}: {', '.join(items)}")
+    def _render(files: list[dict[str, Any]], *, show_type: bool) -> list[str]:
+        rendered: list[str] = []
+        for f in files:
+            if not isinstance(f, dict):
+                continue
+            title = f.get("title") or ""
+            file_id = f.get("id") or ""
+            entry = f"{title}(id={file_id})"
+            if show_type:
+                raw_type = str(f.get("file_type") or "").strip()
+                if raw_type:
+                    entry = f"{entry}[{type_names.get(raw_type, raw_type)}]"
+            rendered.append(entry)
+        return rendered
+
+    def _bucket(file_type: str) -> list[dict[str, Any]]:
+        rows = inventory.get(file_type) or []
+        # 行字典里可能没带 file_type（旧数据源），用桶名兜底，保证类型标注不丢。
+        return [
+            {**row, "file_type": row.get("file_type") or file_type}
+            for row in rows
+            if isinstance(row, dict)
+        ]
+
+    known_types = {"outline", "character", "lore", *CONTENT_FILE_TYPES}
+
+    content_rows: list[dict[str, Any]] = []
+    for file_type in CONTENT_FILE_TYPES:
+        content_rows.extend(_bucket(file_type))
+
+    other_rows: list[dict[str, Any]] = []
+    for file_type in inventory:
+        if file_type in known_types:
+            continue
+        other_rows.extend(_bucket(file_type))
+
+    sections: list[tuple[str, list[dict[str, Any]], bool]] = [
+        ("大纲", _bucket("outline"), False),
+        ("正文", content_rows, True),
+        ("角色", _bucket("character"), False),
+        ("设定", _bucket("lore"), False),
+        ("其他文件", other_rows, True),
+    ]
+
+    parts: list[str] = []
+    for label, rows, show_type in sections:
+        items = _render(rows, show_type=show_type)
+        if items:
+            parts.append(f"{label}: {', '.join(items)}")
 
     return "\n".join(parts) if parts else ""
 
@@ -342,6 +448,16 @@ async def run_writing_workflow_streaming(
     review_round: int = 0  # 跟踪 writer-quality_reviewer 循环次数
     previous_agent: str | None = None  # 跟踪上一个 agent
     file_correction_attempts: int = 0  # 跟踪「创建了空文件但未写入正文」的纠正次数
+    # 被空文件纠偏轮暂存的显式 handoff：纠偏分支会用 continue 跳过本轮末尾的
+    # 交接决策，若不暂存，模型这一轮请求的目标 agent（例如 WRITER_PROMPT 强制
+    # 要求的 quality_reviewer 送审）会连同 handoff_packet 一起被静默吞掉。
+    deferred_handoff: dict[str, Any] | None = None
+    # 纠偏轮是被打断那一轮 writer 的延续：把上一轮的正文与写工具信号接续过来，
+    # 否则自动质检门（按本轮字数 + 是否动过写工具判定）会因为纠偏轮本身只补了
+    # 一小段而永远不触发。
+    carried_agent_content: str = ""
+    carried_writer_used_write_tools: bool = False
+    carried_writer_emitted_file_markers: bool = False
 
     try:
         generation_mode = str(state.get("generation_mode") or "").strip().lower()
@@ -406,6 +522,9 @@ async def run_writing_workflow_streaming(
                 workflow_agents.pop(0)
             workflow_plan = router_result.get("workflow_plan", "quick")
             routing_metadata = router_result.get("routing_metadata", {})
+            # 路由自己那次 LLM 调用的用量：随事件下发，由 stream_adapter 汇入
+            # 整轮 usage 累加器，否则这部分 token 永远不进任何统计。
+            routing_usage = router_result.get("routing_usage")
         except (ValueError, KeyError) as validation_error:
             # 可恢复的验证错误 - 使用 fallback
             log_with_context(
@@ -424,6 +543,8 @@ async def run_writing_workflow_streaming(
                 "reason": "router_validation_fallback",
                 "confidence": 0.0,
             }
+            # fallback 路径没有成功的路由调用，用量为空
+            routing_usage = None
         except Exception as router_error:
             # 其他错误 - 记录并使用 fallback
             log_with_context(
@@ -442,6 +563,8 @@ async def run_writing_workflow_streaming(
                 "reason": "router_exception_fallback",
                 "confidence": 0.0,
             }
+            # 路由调用抛异常：可能已经烧了 token，但拿不到 usage，只能记空
+            routing_usage = None
 
         yield StreamEvent(
             type=StreamEventType.ROUTER_DECIDED,
@@ -450,6 +573,7 @@ async def run_writing_workflow_streaming(
                 "workflow_plan": workflow_plan,
                 "workflow_agents": workflow_agents.copy(),
                 "routing_metadata": routing_metadata,
+                "routing_usage": routing_usage,
             },
         )
 
@@ -683,6 +807,24 @@ async def run_writing_workflow_streaming(
             if isinstance(updated_messages, list):
                 state["messages"] = updated_messages
 
+            # 接续上一轮被纠偏打断的 writer 产出（正文 + 写工具信号），让后面的
+            # 自动质检门、待审查内容提取看到完整的一轮写作，而不是只看到补写片段。
+            if (
+                carried_agent_content
+                or carried_writer_used_write_tools
+                or carried_writer_emitted_file_markers
+            ):
+                agent_content = f"{carried_agent_content}{agent_content}"
+                writer_used_write_tools = (
+                    writer_used_write_tools or carried_writer_used_write_tools
+                )
+                writer_emitted_file_markers = (
+                    writer_emitted_file_markers or carried_writer_emitted_file_markers
+                )
+                carried_agent_content = ""
+                carried_writer_used_write_tools = False
+                carried_writer_emitted_file_markers = False
+
             if current_agent_type == "writer" and agent_content:
                 lowered = agent_content.lower()
                 if "<file" in lowered or "</file" in lowered:
@@ -703,22 +845,55 @@ async def run_writing_workflow_streaming(
             # 触发前必须落库核验（_probe_pending_file_body）：标记只表示"没走
             # <file>…</file> 流式写入"，模型改用 edit_file(op=append) 写完正文时
             # 标记依然留着，此时按"正文仍为空"重跑会让正文被追加两遍。
+            #
+            # 纠偏配额（attempts / iteration）**不能**参与本分支的进入条件：一旦
+            # 配额用尽就整段跳过，pending-empty-file 标记便再也没人清除，而工具层
+            # 对它是硬拦截（mcp_tools 的 create_file、parallel_executor 的建档子
+            # 任务都会直接报错），本次请求后续十几轮协作将再也建不出任何文件。
+            # 所以：进入条件只看"标记是否还在"，进来之后无条件清除标记，配额只决定
+            # 要不要再安排一轮补写。
             if (
                 not clarification_stopped
                 and not invalid_handoff_stopped
                 and not tool_call_exhausted
-                and iteration < max_iterations
-                and file_correction_attempts < MAX_FILE_CORRECTION_ATTEMPTS
                 and ToolContext.has_pending_empty_file()
             ):
-                pending = ToolContext.get_pending_empty_file() or {}
-                pending_title = str(pending.get("title") or "未命名")
-                pending_file_id = str(pending.get("file_id") or pending.get("id") or "")
-                body_state = _probe_pending_file_body(pending_file_id)
-                if body_state in (_PENDING_BODY_WRITTEN, _PENDING_BODY_GONE):
+                # 标记现在是集合：同一轮里可能有多个空文件在等补写（例如模型连建
+                # 三集只写完最后一集）。只救 get_pending_empty_file() 返回的"最近
+                # 一个"会让先建的那几份永远停在空正文，因此这里取全量逐个核验。
+                pendings = ToolContext.get_pending_empty_files()
+                unfinished: list[dict[str, str]] = []
+                probed_states: list[str] = []
+                for entry in pendings:
+                    entry_file_id = str(entry.get("file_id") or entry.get("id") or "")
+                    entry_title = str(entry.get("title") or "未命名")
+                    entry_state = _probe_pending_file_body(entry_file_id)
+                    probed_states.append(entry_state)
+                    if entry_state in (_PENDING_BODY_WRITTEN, _PENDING_BODY_GONE):
+                        continue
+                    unfinished.append({"file_id": entry_file_id, "title": entry_title})
+
+                # 无条件清除**全部**：下面无论走哪条路，这些守卫都不该被留给后续
+                # 工具调用。（即便安排补写轮，显式的补写指令也已经替代了它的拦截
+                # 作用；且 edit_file 写完正文并不会清除它，留着会导致重复纠偏。）
+                ToolContext.clear_pending_empty_file()
+
+                # 兼容原有单文件日志/提示语：取第一份未完成的作为主对象。
+                pending_title = unfinished[0]["title"] if unfinished else (
+                    str(pendings[0].get("title") or "未命名") if pendings else "未命名"
+                )
+                pending_file_id = unfinished[0]["file_id"] if unfinished else (
+                    str(pendings[0].get("file_id") or "") if pendings else ""
+                )
+                body_state = probed_states[0] if probed_states else _PENDING_BODY_UNVERIFIABLE
+
+                can_schedule_correction = (
+                    iteration < max_iterations
+                    and file_correction_attempts < MAX_FILE_CORRECTION_ATTEMPTS
+                )
+                if not unfinished:
                     # 正文已经写入（或文件已被删除）：没有可补的内容，只需把没人
                     # 清理的标记清掉，避免它继续阻塞 create_file / parallel_execute。
-                    ToolContext.clear_pending_empty_file()
                     log_with_context(
                         logger,
                         20,  # INFO
@@ -726,13 +901,24 @@ async def run_writing_workflow_streaming(
                         file_id=pending_file_id,
                         title=pending_title,
                         body_state=body_state,
+                        pending_count=len(pendings),
+                    )
+                elif not can_schedule_correction:
+                    # 配额用尽或已是最后一轮：不再补写，但标记必须已经清掉，
+                    # 否则后续 agent 的 create_file 会被工具层一直硬拒。
+                    log_with_context(
+                        logger,
+                        30,  # WARNING
+                        "Empty file left unfinished; correction quota exhausted, guard cleared",
+                        file_id=pending_file_id,
+                        title=pending_title,
+                        attempts=file_correction_attempts,
+                        iteration=iteration,
+                        body_state=body_state,
+                        unfinished_count=len(unfinished),
                     )
                 else:
                     file_correction_attempts += 1
-                    # Clear the guard now: the explicit instruction below replaces its
-                    # blocking role, and leaving it set would re-trigger this branch
-                    # even after edit_file fills the file (edit_file does not clear it).
-                    ToolContext.clear_pending_empty_file()
                     log_with_context(
                         logger,
                         30,  # WARNING
@@ -741,8 +927,22 @@ async def run_writing_workflow_streaming(
                         title=pending_title,
                         attempt=file_correction_attempts,
                         body_state=body_state,
+                        unfinished_count=len(unfinished),
                     )
                     id_hint = f"(id={pending_file_id})" if pending_file_id else ""
+                    # 暂存本轮的显式 handoff：纠偏轮的 continue 会跳过本轮末尾的
+                    # 交接决策，不暂存就等于把模型请求的送审/交接静默丢弃。
+                    if next_agent:
+                        deferred_handoff = {
+                            "next_agent": next_agent,
+                            "event_data": explicit_handoff_event_data,
+                            "packet": handoff_packet,
+                            "context": handoff_context,
+                        }
+                    # 把本轮写作产出接续给纠偏轮，供纠偏轮结束后的质检门判定使用。
+                    carried_agent_content = agent_content
+                    carried_writer_used_write_tools = writer_used_write_tools
+                    carried_writer_emitted_file_markers = writer_emitted_file_markers
                     handoff_context = (
                         f"[系统提醒] 你创建的文件《{pending_title}》{id_hint} 正文仍为空——"
                         "上一轮没有用 <file>…</file> 完成流式写入（很可能漏了结尾的 </file>）。"
@@ -751,6 +951,17 @@ async def run_writing_workflow_streaming(
                         "不要重复创建文件，也不要只在对话里复述正文。"
                         "若该文件已有部分正文，只补齐缺失的部分，不要重复写入已有段落。"
                     )
+                    if len(unfinished) > 1:
+                        # 还有别的空文件同样在等补写，必须一次性全部点名，
+                        # 否则模型只补第一份，其余的下一轮就没人再提醒了。
+                        others = "；".join(
+                            f"《{item['title']}》(id={item['file_id'] or '未知'})"
+                            for item in unfinished[1:]
+                        )
+                        handoff_context += (
+                            f"\n[系统提醒] 另有 {len(unfinished) - 1} 个文件同样正文为空，"
+                            f"请在同一轮内一并补齐：{others}。"
+                        )
                     previous_agent = current_agent_type
                     current_agent_type = "writer"
                     continue
@@ -767,6 +978,37 @@ async def run_writing_workflow_streaming(
             if tool_call_exhausted:
                 terminated_via_break = True
                 break
+
+            # 恢复被纠偏轮暂存的显式 handoff。本轮若自己产生了新的显式 handoff，
+            # 以新的为准（并丢弃旧的，避免交接意图堆积）。
+            if deferred_handoff is not None:
+                if next_agent:
+                    deferred_handoff = None
+                elif deferred_handoff.get("next_agent") == current_agent_type:
+                    # 纠偏轮恰好就是交接目标（例如 planner 建了空文件并交接给
+                    # writer，纠偏轮本身就是 writer）：目标 agent 已经跑过，再交接
+                    # 一次就是自交接，丢弃并留痕。
+                    log_with_context(
+                        logger,
+                        30,  # WARNING
+                        "Deferred handoff target already ran as the correction agent; dropping",
+                        target_agent=deferred_handoff.get("next_agent"),
+                        agent_type=current_agent_type,
+                    )
+                    deferred_handoff = None
+                else:
+                    next_agent = deferred_handoff.get("next_agent")
+                    explicit_handoff_event_data = deferred_handoff.get("event_data")
+                    handoff_packet = deferred_handoff.get("packet")
+                    handoff_context = str(deferred_handoff.get("context") or "")
+                    log_with_context(
+                        logger,
+                        20,  # INFO
+                        "Restored handoff deferred by empty-file correction",
+                        target_agent=next_agent,
+                        agent_type=current_agent_type,
+                    )
+                    deferred_handoff = None
 
             # Determine upcoming handoff after stop checks.
             # Explicit handoff requests still take precedence over completion checks.
@@ -894,8 +1136,13 @@ async def run_writing_workflow_streaming(
 
             # 本轮 run 期间到达的 steering：SDK run 中途无法注入，只有当没有
             # 已计划的下一个 agent（否则该 agent 的起始注入/会话历史会带上
-            # 这些消息）时，追加一轮 writer 让干预在本次请求内生效。消费过的
-            # 消息不会重复触发；追加轮同样计入 max_iterations，不会无限循环。
+            # 这些消息）时，追加一轮让干预在本次请求内生效。消费过的消息不会
+            # 重复触发；追加轮同样计入 max_iterations，不会无限循环。
+            #
+            # 追加轮必须沿用当前 agent，不能硬编码成 writer：review_only 这类
+            # 工作流的 workflow_agents 为空，一旦硬编码，用户只要在审查过程中发
+            # 一条引导，就会被凭空升级成一轮持有 create_file/edit_file/delete_file
+            # 的 writer，并被系统提示引导去"调整或补充"——用户明确说了先别改。
             if (
                 not has_pending_handoff
                 and not agent_run_errored
@@ -908,14 +1155,13 @@ async def run_writing_workflow_streaming(
                     log_with_context(
                         logger,
                         20,
-                        "Steering arrived during agent run; scheduling writer follow-up",
+                        "Steering arrived during agent run; scheduling follow-up round",
                         agent_type=current_agent_type,
                         mid_run_consumed=mid_run_steering_seen,
                         boundary_consumed=len(boundary_steering),
                     )
-                    handoff_context = STEERING_FOLLOWUP_CONTEXT
+                    handoff_context = _steering_followup_context(current_agent_type)
                     previous_agent = current_agent_type
-                    current_agent_type = "writer"
                     continue
 
             # 检测任务完成。

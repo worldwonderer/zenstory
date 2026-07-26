@@ -5,6 +5,7 @@ Handles file version creation, retrieval, diff computation, and rollback.
 Uses incremental diff storage with periodic base versions for efficiency.
 """
 
+import contextlib
 import difflib
 import json
 import re
@@ -46,6 +47,8 @@ class FileVersionService:
         change_summary: str | None = None,
         force_base: bool = False,
         user_id: str | None = None,
+        skip_quota: bool = False,
+        quota_source: str | None = None,
     ) -> FileVersion:
         """
         Create a new version of a file.
@@ -59,25 +62,41 @@ class FileVersionService:
             change_summary: Optional description of changes
             force_base: Force this to be a base version (full content)
             user_id: Optional user ID for quota checking
+            skip_quota: 跳过配额闸门（调用方已自行预检，或本次是不可被配额阻断的
+                恢复类操作，例如版本回滚）
+            quota_source: 配额判定用的来源。缺省时沿用 change_source；
+                当 change_source 可能来自**客户端请求体**时，调用方必须显式传入
+                服务端自己判定的来源（见下方说明），否则配额可被绕过。
 
         Returns:
             Created FileVersion object
         """
-        # Check version limit if user_id is provided
-        if user_id:
-            plan = quota_service.get_user_plan(session, user_id)
-            if plan:
-                max_versions = plan.features.get("file_versions_per_file", 10)
-                if max_versions != -1:
-                    existing_count = self.get_version_count(session, file_id)
-                    if existing_count >= max_versions:
-                        from core.error_codes import ErrorCode
-                        from core.error_handler import APIException
-                        raise APIException(
-                            error_code=ErrorCode.QUOTA_FILE_VERSIONS_EXCEEDED,
-                            status_code=402,
-                            detail=f"Version limit reached ({existing_count}/{max_versions}). Please upgrade your plan.",
-                        )
+        # 配额闸门只约束「用户来源」的版本。
+        #
+        # 历史缺陷：AI 侧（agent/tools/file_ops/*.py）建版本时不传 user_id，永远
+        # 不被检查；而计数用的 get_version_count 又把 AI 行一并算进用户额度。
+        # 结果免费用户（每文件 10 版）在十来次 AI 编辑之后，自己的手动保存和版本
+        # 回滚被 AI 自己耗尽的额度挡住，且没有任何回收路径。
+        # 因此这里把「被计数的集合」和「被闸门约束的集合」对齐成同一个：
+        # 只有 user 来源的版本占用户额度，也只有它会被拒绝。
+        #
+        # 但「来源」绝不能直接取自请求体：POST /files/{id}/versions 的
+        # change_source 是客户端可控字段，若拿它当闸门判据，任何登录用户发一个
+        # {"change_source": "ai"} 就能无限建版本。因此判据独立成 quota_source，
+        # 由服务端调用方决定；只有内部调用（agent / snapshot）才允许省略。
+        effective_quota_source = quota_source if quota_source is not None else change_source
+        if user_id and not skip_quota and effective_quota_source == CHANGE_SOURCE_USER:
+            allowed, existing_count, max_versions = self.check_user_version_quota(
+                session, file_id, user_id
+            )
+            if not allowed:
+                from core.error_codes import ErrorCode
+                from core.error_handler import APIException
+                raise APIException(
+                    error_code=ErrorCode.QUOTA_FILE_VERSIONS_EXCEEDED,
+                    status_code=402,
+                    detail=f"Version limit reached ({existing_count}/{max_versions}). Please upgrade your plan.",
+                )
 
         # Get the file
         file = session.get(File, file_id)
@@ -376,30 +395,51 @@ class FileVersionService:
         Returns:
             Tuple of (updated File, new FileVersion)
         """
-        # Get content at target version
-        content = self.get_content_at_version(session, file_id, version_number)
+        # 回滚同样是「读旧内容 -> 整篇覆盖 File.content」的用户侧写入，必须和
+        # agent 的 edit_file 走同一条串行化通道；否则 agent 的写入会插在读版本
+        # 与提交之间，版本链和正文对不上。
+        # 延迟 import：agent.tools.file_ops.edit 反过来依赖本模块。
+        from agent.tools.file_ops.edit import file_write_lock
+        from database import is_postgres
 
-        # Get the file
-        file = session.get(File, file_id)
-        if not file or file.is_deleted:
-            raise ValueError(f"File {file_id} not found")
+        lock_ctx = contextlib.nullcontext() if is_postgres else file_write_lock(file_id)
 
-        # Update file content
-        file.content = content
-        file.updated_at = utcnow()
-        session.add(file)
+        with lock_ctx:
+            # Get content at target version
+            content = self.get_content_at_version(session, file_id, version_number)
 
-        # Create a new version for the rollback
-        new_version = self.create_version(
-            session=session,
-            file_id=file_id,
-            new_content=content,
-            change_type=CHANGE_TYPE_RESTORE,
-            change_source=CHANGE_SOURCE_USER,
-            change_summary=f"Restored to version {version_number}",
-            force_base=True,  # Force base version for clarity
-            user_id=user_id,
-        )
+            # Get the file（PG 取行锁，SQLite 强制重新 SELECT，避免用到 identity
+            # map 里的陈旧副本）
+            if is_postgres:
+                file = session.exec(
+                    select(File).where(File.id == file_id).with_for_update(key_share=True)
+                ).first()
+            else:
+                file = session.get(File, file_id, populate_existing=True)
+            if not file or file.is_deleted:
+                raise ValueError(f"File {file_id} not found")
+
+            # Update file content
+            file.content = content
+            file.updated_at = utcnow()
+            session.add(file)
+
+            # Create a new version for the rollback
+            #
+            # 回滚不受版本配额约束：它是用户从「AI 把正文改坏了」里自救的唯一手段，
+            # 一旦被 402 挡住，file.content 的赋值也不会提交，AI 的破坏就变成不可撤销。
+            # 恢复类操作永远优先于额度限制，因此显式 skip_quota。
+            new_version = self.create_version(
+                session=session,
+                file_id=file_id,
+                new_content=content,
+                change_type=CHANGE_TYPE_RESTORE,
+                change_source=CHANGE_SOURCE_USER,
+                change_summary=f"Restored to version {version_number}",
+                force_base=True,  # Force base version for clarity
+                user_id=user_id,
+                skip_quota=True,
+            )
 
         return file, new_version
 
@@ -408,15 +448,56 @@ class FileVersionService:
         session: Session,
         file_id: str,
         include_auto_save: bool = True,
+        change_source: str | None = None,
     ) -> int:
-        """Get total number of versions for a file."""
+        """
+        Get total number of versions for a file.
+
+        Args:
+            change_source: 只统计该来源（user/ai/system）的版本；None 表示不过滤。
+                配额判定必须传 CHANGE_SOURCE_USER，否则 AI/系统写入的版本会占用
+                用户的 per-file 版本额度。
+        """
         query = select(func.count(FileVersion.id)).where(FileVersion.file_id == file_id)  # type: ignore[arg-type]
 
         if not include_auto_save:
             query = query.where(FileVersion.change_type != CHANGE_TYPE_AUTO_SAVE)
 
+        if change_source is not None:
+            query = query.where(FileVersion.change_source == change_source)
+
         result = session.exec(query).one()
         return int(result or 0)
+
+    def check_user_version_quota(
+        self,
+        session: Session,
+        file_id: str,
+        user_id: str,
+    ) -> tuple[bool, int, int]:
+        """
+        预检用户在该文件上的版本额度。
+
+        供调用方在「改动落库之前」判断本次保存能否附带版本快照，避免出现
+        「正文已 commit 却抛 402」的误导性失败（见 api/files.py 的 update_file）。
+
+        Returns:
+            (是否还有额度, 已占用的用户版本数, 计划上限；-1 表示不限)
+        """
+        plan = quota_service.get_user_plan(session, user_id)
+        if not plan:
+            return True, 0, -1
+
+        max_versions = plan.features.get("file_versions_per_file", 10)
+        if max_versions == -1:
+            return True, 0, -1
+
+        existing_count = self.get_version_count(
+            session,
+            file_id,
+            change_source=CHANGE_SOURCE_USER,
+        )
+        return existing_count < max_versions, existing_count, max_versions
 
     def cleanup_old_versions(
         self,

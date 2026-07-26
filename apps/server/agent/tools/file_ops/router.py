@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlmodel import Session, col, select
 
+from agent.constants import coerce_bool
 from agent.tools.permissions import (
     PermissionError,
     format_permission_error,
@@ -20,6 +21,15 @@ from models import File
 from .crud import FileCRUD
 from .edit import FileEditor
 from .project import ProjectOperations
+
+# 各工具里语义为布尔的参数。工具参数由 LLM 生成且走 strict_json_schema=False，
+# schema 声明的 "type": "boolean" 运行时没有约束力，模型可能发来 "false"/"0"/""
+# 这类字符串；朴素真值判断会把它们判真，把「删一个文件」变成「递归删整棵子树」。
+# 因此在路由入口统一用 coerce_bool 强转一遍（各执行器内部还有第二道防线）。
+BOOL_TOOL_ARGS: dict[str, tuple[str, ...]] = {
+    "delete_file": ("recursive",),
+    "edit_file": ("continue_on_error",),
+}
 
 
 def resolve_file_id_in_project(
@@ -103,6 +113,11 @@ def execute_file_tool_call(
     project_ops = ProjectOperations(session, user_id)
 
     try:
+        # 布尔参数强制归一（见 BOOL_TOOL_ARGS 的说明）
+        for bool_arg in BOOL_TOOL_ARGS.get(tool_name, ()):
+            if bool_arg in tool_args:
+                tool_args[bool_arg] = coerce_bool(tool_args[bool_arg])
+
         # Some tools may receive an injected project_id from the agent layer.
         # Only keep it for tools that accept it.
         injected_project_id: str | None = None
@@ -183,6 +198,7 @@ def execute_file_tool_call(
 
 
 __all__ = [
+    "BOOL_TOOL_ARGS",
     "execute_file_tool_call",
     "resolve_file_id_in_project",
 ]

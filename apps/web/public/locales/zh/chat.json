@@ -138,6 +138,7 @@
     "stopReason": "原因：{{reason}}",
     "handoffMessage": "交接给 {{agent}}：{{reason}}",
     "parallelStart": "开始并行执行 {{count}} 个任务",
+    "parallelStartTruncated": "并行执行 {{count}} 个任务（另有 {{dropped}} 个超出单次上限，未执行，将分批继续）",
     "parallelTaskCompleted": "✓ {{description}}",
     "parallelTaskFailed": "✗ {{description}}：{{error}}",
     "parallelEnd": "并行执行结束：{{completed}}/{{total}} 完成，{{failed}} 失败",
@@ -279,5 +280,9 @@
       "writing_style": "写作风格",
       "notes": "备注"
     }
+  },
+  "fileEdit": {
+    "allFailed": "《{{title}}》的 {{count}} 处编辑全部失败，文件未做任何修改。",
+    "partialFailed": "《{{title}}》有 {{count}} 处编辑未生效，请检查后重试。"
   }
 }

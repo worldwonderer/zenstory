@@ -360,6 +360,7 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
     selectedItem,
     triggerFileTreeRefresh,
     triggerEditorRefresh,
+    setAiEditingFileId,
     setSelectedItem,
     appendFileContent,
     finishFileStreaming,
@@ -499,6 +500,7 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
     return getStreamCallbacks({
       triggerFileTreeRefresh,
       triggerEditorRefresh,
+      setAiEditingFileId,
       setSelectedItem,
       getCurrentSelectedItem: () => selectedItemRef.current,
       appendFileContent,
@@ -519,6 +521,7 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
     getStreamCallbacks,
     triggerFileTreeRefresh,
     triggerEditorRefresh,
+    setAiEditingFileId,
     setSelectedItem,
     appendFileContent,
     finishFileStreaming,
@@ -1196,14 +1199,25 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
    * toast sets that expectation ("applies at the next step").
    */
   const handleSteer = useCallback(async (message: string) => {
-    if (!message.trim() || !isStreaming) return;
+    // 不能静默 return / 静默吞异常：调用方（MessageInput）以「没有抛错 = 已送达」
+    // 来决定是否清空输入框，而 setInput("") 会连带把持久化草稿覆写成空串，
+    // 用户敲的这段追加指令在 textarea 和 localStorage 里都不复存在。
     try {
+      if (!message.trim()) {
+        throw new Error("Empty steering message");
+      }
+      // 流可能在用户按下回车前就结束了（按钮的可见性是上一帧的快照）。
+      if (!isStreaming) {
+        throw new Error("No active stream for steering");
+      }
       await sendSteeringMessage(message);
-      toast.success(t("chat:input.steerSent"));
     } catch (err) {
-      console.error("Failed to send steering message", err);
+      logger.error("Failed to send steering message", err);
       toast.error(t("chat:input.steerFailed"));
+      // 继续抛出，让输入框保留用户已输入的内容。
+      throw err;
     }
+    toast.success(t("chat:input.steerSent"));
   }, [isStreaming, sendSteeringMessage, t]);
 
   const handleIterationAssistAction = useCallback(

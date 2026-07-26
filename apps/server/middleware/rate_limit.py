@@ -213,3 +213,53 @@ def require_rate_limit(key: str, max_requests: int, window_seconds: int):
             )
         return remaining
     return check
+
+
+def require_user_rate_limit(key: str, max_requests: int, window_seconds: int):
+    """构造「按登录用户限流」的依赖项。
+
+    与 require_rate_limit 的区别是限流主体：这里把 user_id 拼进限流 key 并关闭
+    IP 维度，保证同一账号无论从哪个 IP 发起请求都共享同一个额度窗口。
+    按 IP 计数对「单账号刷 LLM 接口」这类滥用无效——换 IP / 走代理即可绕过，
+    而 LLM 的成本是按账号结算的。
+
+    所有会触发真实远端 LLM 调用的已登录端点都应该挂这个依赖
+    （/agent/stream、/agent/suggest、/agent/steer、/editor/natural-polish）。
+    """
+    # 延迟 import：services.auth 会反向依赖 middleware，模块级 import 会成环
+    from fastapi import Depends
+
+    from services.auth import get_current_active_user
+
+    def check(
+        request: Request,
+        current_user=Depends(get_current_active_user),
+    ) -> int:
+        allowed, remaining = check_rate_limit(
+            request,
+            f"{key}:user_{current_user.id}",
+            max_requests,
+            window_seconds,
+            include_client_ip=False,
+        )
+        if not allowed:
+            log_with_context(
+                logger,
+                30,  # WARNING
+                "LLM endpoint rate limit exceeded",
+                rate_limit_key=key,
+                user_id=current_user.id,
+                max_requests=max_requests,
+                window_seconds=window_seconds,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded. Please try again later.",
+            )
+        return remaining
+
+    # 挂到闭包上，便于路由层做「所有 LLM 端点都已限流」的静态自检。
+    check.rate_limit_key = key
+    check.rate_limit_max_requests = max_requests
+    check.rate_limit_window_seconds = window_seconds
+    return check

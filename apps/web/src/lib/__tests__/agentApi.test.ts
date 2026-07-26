@@ -367,6 +367,8 @@ describe('agentApi', () => {
       await new Promise(resolve => setTimeout(resolve, 100))
 
       expect(onFileEditStart).toHaveBeenCalledWith('file-1', 'Chapter 1', 2, 'outline')
+      // 第 8 个参数是新增的批量编辑结果（failed_count / warnings 等）。
+      // 事件里没带这些字段时给出安全默认值，等价于"全部成功"。
       expect(onFileEditEnd).toHaveBeenCalledWith(
         'file-1',
         2,
@@ -374,7 +376,13 @@ describe('agentApi', () => {
         undefined,
         undefined,
         'outline',
-        'Chapter 1'
+        'Chapter 1',
+        {
+          failedCount: 0,
+          partialSuccess: false,
+          allFailed: false,
+          warnings: [],
+        }
       )
     })
 

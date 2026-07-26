@@ -32,6 +32,83 @@ logger = get_logger(__name__)
 
 MessageList = list[dict[str, Any]]
 
+# 控制流工具：调用成功即表示「本次 SDK run 到此为止」——
+# handoff_to_agent 把控制权交给下一个 agent，request_clarification 把控制权交回用户。
+# 工具名与 agent/tools/registry.py 的注册名一致（tools_adapter 原样透传给 SDK）。
+CONTROL_FLOW_TOOL_NAMES: tuple[str, ...] = ("handoff_to_agent", "request_clarification")
+
+# 控制流工具「调用成功」的判定：只有返回这些 status 才算真的要停下。
+# 参数非法时（invalid target_agent / self handoff / question is required）工具返回 error，
+# 此时必须让模型看到错误并在同一个 run 内自行纠正，绝不能把 run 截断掉。
+_CONTROL_FLOW_STOP_STATUS: dict[str, str] = {
+    "handoff_to_agent": "handoff",
+    "request_clarification": "clarification_needed",
+}
+
+
+def _control_flow_status_of(tool_name: str, output_text: str) -> bool:
+    """判断某次工具输出是否是「生效的控制流结果」。"""
+    expected = _CONTROL_FLOW_STOP_STATUS.get(tool_name)
+    if expected is None:
+        return False
+    try:
+        payload = json.loads(output_text) if output_text else {}
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(payload, dict) and payload.get("status") == expected
+
+
+def _stop_run_on_control_flow_tool(_ctx: Any, tool_results: list[Any]) -> Any:
+    """SDK 的 tool_use_behavior 回调：控制流工具生效后立即结束当前 run。
+
+    为什么不能只靠 result.cancel(mode="after_turn")：cancel 是异步落地的——
+    SDK run-loop 把 tool_output 放进自己的 _event_queue，经 _pump_sdk_events 转发到
+    run_queue，本模块的消费循环才读到并 cancel；等标志位落地时 run-loop 早已发起了
+    下一次模型调用，那一轮的正文会被推给前端、工具（create_file/edit_file/delete_file）
+    会被真实执行——「工作流已暂停」却仍在改用户的文件。
+    这里改用 SDK 在 turn 内同步检查的 tool_use_behavior（turn_resolution.py
+    check_for_final_output_from_tools），控制流工具一返回就把本轮当作 final output，
+    run-loop 不会再发起下一次模型调用。
+
+    用可调用对象而非 StopAtTools(dict) 的原因：StopAtTools 只看工具名，
+    控制流工具报错（例如 target_agent 非法）时也会把 run 掐断，模型将失去在同一个
+    run 内纠错的机会；这里按返回 status 精确判定。
+    """
+    from agents.agent import ToolsToFinalOutputResult
+
+    for tool_result in tool_results or []:
+        tool_name = str(getattr(getattr(tool_result, "tool", None), "name", "") or "")
+        if tool_name not in CONTROL_FLOW_TOOL_NAMES:
+            continue
+        output = getattr(tool_result, "output", "")
+        output_text = output if isinstance(output, str) else str(output)
+        if _control_flow_status_of(tool_name, output_text):
+            return ToolsToFinalOutputResult(is_final_output=True, final_output=output_text)
+
+    return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+
+
+def _is_new_model_turn_event(sdk_event: Any) -> bool:
+    """事件是否意味着「模型又开了新的一轮」。
+
+    单个 turn 内，模型响应流（raw_response_event）先跑完，SDK 才执行工具并发出
+    tool_output；因此控制流工具的 tool_output 之后再出现任何 raw_response_event，
+    或再出现 tool_called，都只能来自新的一轮模型调用。
+    """
+    event_type = str(getattr(sdk_event, "type", "") or "")
+    if event_type == "raw_response_event":
+        return True
+    return event_type == "run_item_stream_event" and getattr(sdk_event, "name", "") == "tool_called"
+
+
+def _safe_cancel(result: Any, mode: str) -> None:
+    """调用 SDK 的 cancel，忽略实现差异/已结束 run 带来的异常。"""
+    cancel = getattr(result, "cancel", None)
+    if not callable(cancel):
+        return
+    with contextlib.suppress(Exception):
+        cancel(mode=mode)
+
 
 def extract_text_from_message_content(content: Any) -> str:
     """Convert persisted mixed content blocks to plain text for Chat Completions input."""
@@ -184,25 +261,54 @@ def _tool_output_payload(item: Any) -> tuple[str, str]:
     return str(call_id or ""), output if isinstance(output, str) else str(output)
 
 
+def _int_attr(source: Any, name: str) -> int:
+    """读取 usage 上的整数字段，缺失/None/非法一律按 0 处理。"""
+    value = getattr(source, name, 0)
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _usage_dict_from_result(result: Any) -> dict[str, int]:
-    usage: dict[str, int] = {}
+    """汇总本次 SDK run 全部模型响应的 token 用量。
+
+    cache_read_tokens：DeepSeek 的 prompt cache 命中量（OpenAI 兼容字段
+    prompt_tokens_details.cached_tokens，SDK 映射为 input_tokens_details.cached_tokens）。
+    它是 prompt_tokens 的**子集**，而 writing_stats_service 的计价公式是
+    input * 输入价 + cache_read * 缓存价（相加），所以这里必须把命中缓存的部分从
+    input_tokens 里扣掉，否则同一批 token 会被按输入价和缓存价重复计费。
+    """
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_read_tokens": 0,
+    }
     raw_responses = getattr(result, "raw_responses", None)
     if not isinstance(raw_responses, list):
-        return usage
+        return {}
 
     for raw_response in raw_responses:
         response_usage = getattr(raw_response, "usage", None)
         if response_usage is None:
             continue
-        for source_attr, target_key in (
-            ("input_tokens", "input_tokens"),
-            ("output_tokens", "output_tokens"),
-            ("total_tokens", "total_tokens"),
-        ):
-            value = getattr(response_usage, source_attr, 0) or 0
-            if value:
-                usage[target_key] = usage.get(target_key, 0) + int(value)
-    return usage
+
+        input_tokens = _int_attr(response_usage, "input_tokens")
+        cached_tokens = _int_attr(
+            getattr(response_usage, "input_tokens_details", None), "cached_tokens"
+        )
+        cached_tokens = max(0, min(cached_tokens, input_tokens))
+
+        totals["input_tokens"] += input_tokens - cached_tokens
+        totals["cache_read_tokens"] += cached_tokens
+        totals["output_tokens"] += _int_attr(response_usage, "output_tokens")
+        totals["total_tokens"] += _int_attr(response_usage, "total_tokens")
+
+    # 保持「无用量时返回空 dict」的既有契约：下游用非空判断是否拿到真实 usage。
+    return {key: value for key, value in totals.items() if value}
 
 
 def _build_agent(agent_type: str, system_prompt: str) -> Any:
@@ -235,8 +341,17 @@ def _build_agent(agent_type: str, system_prompt: str) -> Any:
             temperature=1.0,
             top_p=0.95,
             max_tokens=AGENT_OPENAI_AGENTS_MAX_OUTPUT_TOKENS,
+            # include_usage 决定请求体里是否带 stream_options={"include_usage": true}。
+            # SDK 的默认值只在 client 指向 api.openai.com 时才是 True
+            # （chatcmpl_helpers.get_stream_options_param），而本项目走 api.deepseek.com，
+            # 不显式打开的话 OpenAI 兼容流式接口不会补发带 usage 的末尾 chunk，
+            # MESSAGE_END 的 usage 恒为空，用量统计只能退化成「字符数/4」的估算。
+            include_usage=True,
         ),
         tools=build_agent_function_tools(agent_type),
+        # 控制流工具生效即结束 run，避免 SDK 在「工作流已暂停」之后再跑一整轮
+        # 模型调用并真实执行其工具（详见 _stop_run_on_control_flow_tool）。
+        tool_use_behavior=_stop_run_on_control_flow_tool,
     )
 
 
@@ -347,6 +462,8 @@ async def run_openai_agents_streaming_agent(
     artifact_refs_accumulated: list[str] = []
     handoff_event_data: dict[str, Any] | None = None
     clarification_event_data: dict[str, Any] | None = None
+    # 控制流工具已生效：本 run 不应再有新的模型轮次（见 _is_new_model_turn_event）。
+    control_flow_stopped = False
 
     # Read-only co-call instrumentation (item 1.4).
     # Approximation: within a single assistant turn, the SDK emits all tool_called events
@@ -423,6 +540,20 @@ async def run_openai_agents_streaming_agent(
                 if kind == "error":
                     raise payload
                 sdk_event = payload
+                if control_flow_stopped and _is_new_model_turn_event(sdk_event):
+                    # 兜底护栏：正常情况下 tool_use_behavior 已经让 run-loop 在控制流
+                    # 工具返回的那一刻结束，走不到这里。一旦走到（工具改名、SDK 行为
+                    # 变化等），说明 SDK 又开了新的一轮——立即硬取消并截断消费循环，
+                    # 绝不把暂停之后的正文/工具调用透给前端或写回 state.messages。
+                    log_with_context(
+                        logger,
+                        30,  # WARNING
+                        "Control-flow tool did not stop the SDK run; truncating extra turn",
+                        agent_type=agent_type,
+                        sdk_event_type=str(getattr(sdk_event, "type", "") or ""),
+                    )
+                    _safe_cancel(result, "immediate")
+                    break
                 event_type = getattr(sdk_event, "type", "")
 
                 if event_type == "raw_response_event":
@@ -525,7 +656,7 @@ async def run_openai_agents_streaming_agent(
                     except json.JSONDecodeError:
                         result_data = {}
 
-                    if tool_name == "handoff_to_agent" and result_data.get("status") == "handoff":
+                    if tool_name == "handoff_to_agent" and result_data.get("status") == _CONTROL_FLOW_STOP_STATUS["handoff_to_agent"]:
                         # DESIGN NOTE — do not migrate to the SDK's native Agent(handoffs=[...]).
                         #
                         # The SDK's built-in handoff mechanism passes a plain text string from
@@ -537,10 +668,11 @@ async def run_openai_agents_streaming_agent(
                         # require duplicating the packet-assembly and event-streaming logic that
                         # lives in build_handoff_packet / extract_artifact_refs.
                         #
-                        # result.cancel(mode="after_turn") lets the current SDK turn finish
-                        # cleanly (so any in-flight streaming completes) before the graph picks
-                        # up the handoff_event_data and routes to the next agent node.  Using
-                        # "immediate" would truncate the trailing text stream; keep "after_turn".
+                        # 「停下」由 Agent(tool_use_behavior=_stop_run_on_control_flow_tool)
+                        # 在 SDK turn 内同步完成，run-loop 不会再发起下一次模型调用。
+                        # 这里的 cancel(mode="after_turn") 只是第二道保险（万一 SDK 侧的
+                        # 截断未生效，至少不让它跨过下一个 turn 边界）；历史上仅靠它是
+                        # 不够的——cancel 标志异步落地，模型早已跑完并执行了额外的工具。
                         packet = build_handoff_packet(
                             result_data,
                             artifact_refs=artifact_refs_accumulated,
@@ -551,8 +683,9 @@ async def run_openai_agents_streaming_agent(
                             "context": packet["context"],
                             "handoff_packet": packet,
                         }
-                        result.cancel(mode="after_turn")
-                    elif tool_name == "request_clarification" and result_data.get("status") == "clarification_needed":
+                        control_flow_stopped = True
+                        _safe_cancel(result, "after_turn")
+                    elif tool_name == "request_clarification" and result_data.get("status") == _CONTROL_FLOW_STOP_STATUS["request_clarification"]:
                         clarification_event_data = {
                             "reason": "clarification_needed",
                             "agent_type": agent_type,
@@ -561,7 +694,8 @@ async def run_openai_agents_streaming_agent(
                             "context": result_data.get("context", ""),
                             "details": normalize_str_list(result_data.get("details")),
                         }
-                        result.cancel(mode="after_turn")
+                        control_flow_stopped = True
+                        _safe_cancel(result, "after_turn")
 
                     # 工具输出边界是 run 内唯一能消费 steering 的时机（SDK 事件
                     # 消费循环的其余位置都在等模型流式输出）。

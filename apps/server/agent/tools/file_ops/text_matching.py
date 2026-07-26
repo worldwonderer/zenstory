@@ -10,6 +10,7 @@ These utilities are used by the file editing operations to reliably locate
 text anchors in content even when there are minor differences.
 """
 
+import time
 import unicodedata
 from difflib import SequenceMatcher
 
@@ -18,17 +19,55 @@ from difflib import SequenceMatcher
 # fallback used only after exact and punctuation-insensitive fuzzy matching
 # both fail. Its sliding-window + SequenceMatcher scan is O(windows × N × P),
 # which on a full novel chapter can spin the CPU for seconds to minutes and,
-# in the default SQLite deployment, block the asyncio event loop (stalling the
-# SSE stream). When the input is too large we skip it and let the caller fall
-# through to the helpful "copy a longer/unique snippet" error instead.
+# in the default SQLite deployment, block the asyncio event loop (stalling
+# every other request served by the same process). When the input is too large
+# we skip it and let the caller fall through to the helpful
+# "copy a longer/unique snippet" error instead.
 MAX_APPROX_CONTENT_LEN = 5000  # normalized chars; skip approximate scan above this
-MAX_APPROX_WORK = 800_000  # ceiling on window_count × len(norm_content)
+# 工作量上限：真实代价是「窗口尺寸种类数 × 内容长度 × pattern 长度」的字符级操作
+# ——每个窗口都要做 norm_content[i:i+w] 切片、set(window) 构造、set_seq1() 与
+# quick_ratio()，常数是 O(pattern_len) 而不是 O(1)。旧公式只算到
+# window_count × len(norm_content)，整整漏掉了 pattern_len 这个因子（可达数百）：
+# 实测 5000 归一化字 + 260 字 pattern 的估算值仍在「安全区」内，却要跑 39 秒，
+# 把事件循环整段占死。这里按字符级操作数重新标定阈值。
+MAX_APPROX_WORK = 5_000_000  # ceiling on window_count × len(norm_content) × pattern_len
+# 兜底 wall-clock 上限：预过滤命中率随语料分布浮动（同样的工作量估算，实际耗时可
+# 差数倍），静态估算不可能精确，所以扫描过程中再加一道硬超时。超时即放弃近似匹配，
+# 调用方会走「请复制更长且唯一的原文」的错误分支——这比让整个进程停摆好得多。
+MAX_APPROX_SECONDS = 1.0
 
 # Minimum score gap between the best window and the best *non-overlapping*
 # runner-up. If a different, distant passage scores nearly as high, the match
 # is ambiguous and we refuse to auto-apply it (which would silently overwrite
 # the wrong passage). Mirrors find_unique_line_span's min_gap.
 MIN_APPROX_GAP = 0.08
+
+# 段落打分里「一方包含另一方即判满分」的捷径所需的最小长度比。
+# 没有这道约束时，一个 3 字的章节标题段落「第三章」只要被整条锚点顺带包含，
+# 就能拿到 0.999 分，稳稳压过真正语义相关但相似度只有 0.4~0.6 的长段落，
+# 于是正文被插到章节开头。只有两段长度接近时，包含关系才说明它们指的是同一件事。
+CONTAINMENT_MIN_LEN_RATIO = 0.6
+
+
+def _length_ratio_ok(a: str, b: str, min_ratio: float = CONTAINMENT_MIN_LEN_RATIO) -> bool:
+    """两段文本的长度比是否达到 ``min_ratio``（短/长）。"""
+    longer = max(len(a), len(b))
+    if longer == 0:
+        return False
+    return min(len(a), len(b)) / longer >= min_ratio
+
+
+def _block_similarity(norm_pattern: str, norm_block: str) -> float:
+    """段落级相似度：带长度比约束的包含捷径 + SequenceMatcher 兜底。
+
+    包含关系只有在两段长度接近时才视为「同一段」（0.999）；长度悬殊时退回
+    SequenceMatcher，其比值天然会因长度差惩罚短块，短标题不会再冒充目标段落。
+    """
+    if (norm_pattern in norm_block or norm_block in norm_pattern) and _length_ratio_ok(
+        norm_pattern, norm_block
+    ):
+        return 0.999
+    return SequenceMatcher(None, norm_pattern, norm_block).ratio()
 
 
 def normalize_for_fuzzy_match(
@@ -204,11 +243,16 @@ def find_approximate_match(
     # inputs the scan is prohibitively expensive (and would block the event
     # loop), so bail out and let the caller surface the helpful
     # "copy a longer/unique snippet" error instead of hanging.
+    # 工作量必须带上 pattern_len：每个窗口内部的切片/set/quick_ratio 都是
+    # O(pattern_len)，漏掉它会让「守卫放行的那一档」恰好是最慢的一档。
     if (
         len(norm_content) > MAX_APPROX_CONTENT_LEN
-        or window_count * len(norm_content) > MAX_APPROX_WORK
+        or window_count * len(norm_content) * pattern_len > MAX_APPROX_WORK
     ):
         return None
+
+    # 静态估算之外再加一道 wall-clock 硬超时（见 MAX_APPROX_SECONDS）。
+    deadline = time.monotonic() + MAX_APPROX_SECONDS
 
     pattern_char_set = set(norm_pattern)
     min_common = len(pattern_char_set) * 0.5
@@ -230,7 +274,15 @@ def find_approximate_match(
     candidates: list[tuple[tuple[int, int], float]] = []  # ((start, end), score)
 
     for window_size in range(window_min, window_max + 1):
+        if time.monotonic() > deadline:
+            # 扫描不完整就无法判定歧义（可能漏掉真正的最佳窗口或它的竞争者），
+            # 因此超时一律放弃匹配，绝不返回「半程最佳」。
+            return None
         for i in range(len(norm_content) - window_size + 1):
+            # 单个 window_size 的内层循环本身也可能很长（通过预过滤的窗口还要跑
+            # 一次 O(N×P) 的 ratio()），所以内层每 64 个窗口也检查一次超时。
+            if (i & 0x3F) == 0 and time.monotonic() > deadline:
+                return None
             window = norm_content[i:i + window_size]
 
             # Quick pre-filter: check if at least some characters overlap
@@ -359,11 +411,9 @@ def suggest_similar_lines(
         if not norm_b:
             continue
 
-        score = (
-            0.999
-            if norm_pat in norm_b or norm_b in norm_pat
-            else SequenceMatcher(None, norm_pat, norm_b).ratio()
-        )
+        # 与 find_unique_line_span 共用同一套打分：包含捷径必须过长度比约束，
+        # 否则一个 3 字的章节标题会把真正相关的长段落挤出建议列表。
+        score = _block_similarity(norm_pat, norm_b)
 
         candidates.append((score, snippet[:160] + ("..." if len(snippet) > 160 else "")))
 
@@ -380,11 +430,15 @@ def find_unique_line_span(
     ignore_punct_whitespace: bool = True,
     min_score: float = 0.9,
     min_gap: float = 0.08,
-) -> tuple[int, int] | None:
+) -> tuple[int, int, float] | None:
     """Find a unique best-matching paragraph span for anchor.
 
     This function finds a single, unique paragraph that best matches the anchor,
     with confidence scoring to ensure it's not ambiguous.
+
+    这是 insert_after/insert_before 在 exact/fuzzy/approximate 全部失败后的
+    第三级兜底，命中的是「最像的整段」而非逐字原文，因此把置信度一并返回，
+    让调用方把兜底性质写进 applied_edits，模型才能判断要不要换更精确的锚点。
 
     Args:
         content: The content to search
@@ -394,7 +448,7 @@ def find_unique_line_span(
         min_gap: Minimum gap between best and second-best scores
 
     Returns:
-        (start, end) tuple in original content if confident, otherwise None
+        (start, end, score) tuple in original content if confident, otherwise None
     """
     norm_anchor, _ = normalize_for_fuzzy_match(
         anchor,
@@ -415,10 +469,7 @@ def find_unique_line_span(
         )
         if not norm_b:
             continue
-        if norm_anchor in norm_b or norm_b in norm_anchor:
-            score = 0.999
-        else:
-            score = SequenceMatcher(None, norm_anchor, norm_b).ratio()
+        score = _block_similarity(norm_anchor, norm_b)
         scored.append((score, b))
 
     if not scored:
@@ -440,7 +491,7 @@ def find_unique_line_span(
     if content.find(best_block, idx + 1) >= 0:
         return None
 
-    return idx, idx + len(best_block)
+    return idx, idx + len(best_block), best_score
 
 
 __all__ = [

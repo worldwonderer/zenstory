@@ -13,6 +13,80 @@ from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
 
+# 技能手册（reference）的注入预算默认值。
+# 目录（catalog）与手册必须共用同一份预算参数，否则会出现
+# 「目录宣告全部技能可用，手册只注入了前几个」的谎报。
+DEFAULT_MAX_SKILLS = 8
+DEFAULT_MAX_INSTRUCTION_CHARS = 4000
+
+# 单个技能进入手册所需的最小剩余预算。
+# 只剩几十上百字符时塞进去的是残片，对模型没有指导价值，
+# 却会让目录把该技能宣告成「可直接应用」，属于更糟的谎报。
+MIN_USEFUL_INSTRUCTION_CHARS = 300
+
+# 目录中两类技能的小节标题（回归测试按此解析，改动需同步测试）
+CATALOG_SECTION_APPLICABLE = "可直接应用"
+CATALOG_SECTION_DEFERRED = "需显式调用"
+
+
+def select_injected_skills(
+    skills: list[dict],
+    max_skills: int = DEFAULT_MAX_SKILLS,
+    max_instruction_chars: int = DEFAULT_MAX_INSTRUCTION_CHARS,
+) -> tuple[list[dict], list[dict]]:
+    """
+    在预算内挑出「真正会把完整指令注入 prompt」的技能。
+
+    这是技能目录与技能参考手册唯一的筛选入口：两个注入面必须消费同一份结果，
+    否则会出现「目录宣告 13 个技能可用、手册只注入了 3 个」的谎报——
+    模型据此声明使用了某技能，实际却从未见过该技能的任何指令。
+
+    Args:
+        skills: _load_user_skills 返回的技能列表（顺序必须是确定的）
+        max_skills: 最多注入几个技能
+        max_instruction_chars: 指令总字符预算
+
+    Returns:
+        (injected, deferred) 两个列表。
+        injected 元素为 {"skill": 原始 dict, "instructions": 实际注入文本, "truncated": bool}；
+        deferred 元素为 {"skill": 原始 dict, "reason": 未注入原因}。
+    """
+    injected: list[dict] = []
+    deferred: list[dict] = []
+
+    remaining = max_instruction_chars
+
+    for skill in skills:
+        instructions = (skill.get("instructions") or "").strip()
+
+        # 没有指令的技能本身就没有任何可注入内容，不能宣称「可直接应用」
+        if not instructions:
+            deferred.append({"skill": skill, "reason": "empty_instructions"})
+            continue
+
+        if len(injected) >= max_skills:
+            deferred.append({"skill": skill, "reason": "max_skills"})
+            continue
+
+        # 剩余预算不足以承载一段有意义的指令时，宁可整条不注入，
+        # 也不要塞一个几十字的残片再对模型宣称该技能可用。
+        if remaining < min(MIN_USEFUL_INSTRUCTION_CHARS, len(instructions)):
+            deferred.append({"skill": skill, "reason": "budget_exhausted"})
+            continue
+
+        truncated = len(instructions) > remaining
+        if truncated:
+            instructions = instructions[:remaining].rstrip() + "…"
+        remaining -= len(instructions)
+
+        injected.append({
+            "skill": skill,
+            "instructions": instructions,
+            "truncated": truncated,
+        })
+
+    return injected, deferred
+
 
 class SkillContextInjector:
     """
@@ -26,16 +100,21 @@ class SkillContextInjector:
         self,
         session: Session,
         user_id: str | None,
+        max_skills: int = DEFAULT_MAX_SKILLS,
+        max_instruction_chars: int = DEFAULT_MAX_INSTRUCTION_CHARS,
     ) -> str | None:
         """
         Build a concise skill catalog for the system prompt.
 
-        Returns a formatted string listing available skills with their
-        names and brief descriptions. Returns None if no skills available.
+        目录必须与《技能参考手册》同源：用同一份筛选结果，把技能分成
+        「本轮已注入完整指令、可直接应用」与「本轮未注入、需显式调用」两类，
+        避免模型以为某技能可用、实际却一个字的指令都没拿到。
 
         Args:
             session: Database session
             user_id: User ID to load skills for
+            max_skills: 手册最多注入几个技能（必须与 build_skill_reference 一致）
+            max_instruction_chars: 手册指令总字符预算（必须与 build_skill_reference 一致）
 
         Returns:
             Formatted skill catalog string or None
@@ -48,6 +127,12 @@ class SkillContextInjector:
         if not skills:
             return None
 
+        injected, deferred = select_injected_skills(
+            skills,
+            max_skills=max_skills,
+            max_instruction_chars=max_instruction_chars,
+        )
+
         # Build catalog
         lines = [
             "## 可用写作技能",
@@ -56,13 +141,38 @@ class SkillContextInjector:
             "",
         ]
 
-        for skill in skills:
-            name = skill["name"]
-            desc = skill["description"] or "专业写作辅助"
-            lines.append(f"- **{name}**: {desc}")
+        if injected:
+            lines.extend([
+                f"### {CATALOG_SECTION_APPLICABLE}",
+                "",
+                "以下技能的完整指令已随本次对话注入（见《技能参考手册》），可直接按其方法执行：",
+                "",
+            ])
+            for item in injected:
+                skill = item["skill"]
+                name = skill["name"]
+                desc = skill["description"] or "专业写作辅助"
+                suffix = "（指令较长，手册中已截断）" if item["truncated"] else ""
+                lines.append(f"- **{name}**: {desc}{suffix}")
+            lines.append("")
+
+        if deferred:
+            lines.extend([
+                f"### {CATALOG_SECTION_DEFERRED}",
+                "",
+                "以下技能本轮受上下文预算限制未注入详细指令，你只知道它们的用途、不知道其具体方法。"
+                "不要凭空臆造其做法；如果需要使用，请提示用户在消息开头写出该技能名称"
+                "（例如「悬念大师 帮我写……」），系统会为那条消息加载它的完整指令。",
+                "",
+            ])
+            for item in deferred:
+                skill = item["skill"]
+                name = skill["name"]
+                desc = skill["description"] or "专业写作辅助"
+                lines.append(f"- **{name}**: {desc}")
+            lines.append("")
 
         lines.extend([
-            "",
             "当识别到匹配的技能时，自然地将其方法融入你的回复中。",
             "",
             "**重要：技能使用标记**",
@@ -82,6 +192,9 @@ class SkillContextInjector:
             logger, 20, "Built skill catalog",
             user_id=user_id,
             skill_count=len(skills),
+            injected_count=len(injected),
+            deferred_count=len(deferred),
+            deferred_skills=[item["skill"]["name"] for item in deferred],
         )
 
         return "\n".join(lines)
@@ -103,6 +216,10 @@ class SkillContextInjector:
 
         Returns:
             Dict mapping skill name to instructions
+
+        Note:
+            这是一个查表接口，返回用户全部技能，不参与 system prompt 的预算裁剪。
+            真正注入 prompt 的两个面（目录 / 手册）请走 select_injected_skills。
         """
         if not user_id:
             return {}
@@ -114,8 +231,8 @@ class SkillContextInjector:
         self,
         session: Session,
         user_id: str | None,
-        max_skills: int = 8,
-        max_instruction_chars: int = 4000,
+        max_skills: int = DEFAULT_MAX_SKILLS,
+        max_instruction_chars: int = DEFAULT_MAX_INSTRUCTION_CHARS,
     ) -> str | None:
         """
         Build full skill reference with instructions.
@@ -123,9 +240,14 @@ class SkillContextInjector:
         This is a more detailed version that includes full instructions
         for each skill. Use when context budget allows.
 
+        与 build_skill_catalog 共用 select_injected_skills 的筛选结果：
+        目录里被列为「可直接应用」的技能，必然且仅有它们出现在这里。
+
         Args:
             session: Database session
             user_id: User ID to load skills for
+            max_skills: 最多注入几个技能（必须与 build_skill_catalog 一致）
+            max_instruction_chars: 指令总字符预算（必须与 build_skill_catalog 一致）
 
         Returns:
             Formatted skill reference string or None
@@ -138,11 +260,14 @@ class SkillContextInjector:
         if not skills:
             return None
 
-        # Graceful degradation: never drop the ENTIRE reference just because
-        # there are too many skills or one is oversized. Include as many as fit,
-        # truncating an individual overlong skill's instructions rather than
-        # aborting the whole section (which would strip every skill's guidance).
-        skills = skills[:max_skills]
+        injected, _deferred = select_injected_skills(
+            skills,
+            max_skills=max_skills,
+            max_instruction_chars=max_instruction_chars,
+        )
+
+        if not injected:
+            return None
 
         lines = [
             "## 技能参考手册",
@@ -151,18 +276,8 @@ class SkillContextInjector:
             "",
         ]
 
-        remaining = max_instruction_chars
-        included = 0
-        for skill in skills:
-            instructions = (skill["instructions"] or "").strip()
-            if not instructions:
-                continue
-            if remaining <= 0:
-                break
-            if len(instructions) > remaining:
-                instructions = instructions[:remaining].rstrip() + "…"
-            remaining -= len(instructions)
-
+        for item in injected:
+            skill = item["skill"]
             name = skill["name"]
             desc = skill["description"] or ""
 
@@ -175,12 +290,8 @@ class SkillContextInjector:
                 lines.append(f"*{desc}*")
                 lines.append("")
 
-            lines.append(instructions)
+            lines.append(item["instructions"])
             lines.extend(["", "---", ""])
-            included += 1
-
-        if included == 0:
-            return None
 
         return "\n".join(lines)
 
@@ -206,10 +317,13 @@ class SkillContextInjector:
         skills = []
 
         # Load user's custom skills
+        # order_by 不可省：没有它时返回顺序由数据库堆序决定，
+        # PostgreSQL 上任何一次 UPDATE 都会把元组重写到堆尾，
+        # 导致「哪些技能进预算」在用户编辑技能后无声漂移。
         user_stmt = select(UserSkill).where(
             UserSkill.user_id == user_id,
             UserSkill.is_active,
-        )
+        ).order_by(UserSkill.created_at, UserSkill.id)
         user_skills = session.exec(user_stmt).all()
 
         for skill in user_skills:
@@ -228,7 +342,7 @@ class SkillContextInjector:
             UserAddedSkill.user_id == user_id,
             UserAddedSkill.is_active,
             PublicSkill.status == "approved",
-        )
+        ).order_by(UserAddedSkill.added_at, UserAddedSkill.id)
         added_results = session.exec(added_stmt).all()
 
         for added, public in added_results:

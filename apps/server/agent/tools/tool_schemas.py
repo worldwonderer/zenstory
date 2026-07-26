@@ -79,10 +79,26 @@ EDIT_FILE_TOOL: dict[str, Any] = {
                             "type": "string",
                             "description": "要插入的文本（用于insert_*/append/prepend操作）"
                         },
+                        "occurrence": {
+                            "type": "integer",
+                            "description": "当 old/anchor 匹配到多处时，指定要操作第几处（1-based，从 1 开始）。适用于 replace/delete/insert_after/insert_before。工具报「匹配到多个位置」时，首选加上这个参数（候选片段里已标出每处的序号），而不是 replace_all。",
+                            "minimum": 1
+                        },
                         "replace_all": {
                             "type": "boolean",
-                            "description": "是否替换所有匹配项（用于replace操作）",
+                            "description": "是否替换所有匹配项（仅用于replace操作）。破坏性选项：会不加次数上限地替换全部匹配处。只想改其中一处请改用 occurrence。",
                             "default": False
+                        },
+                        "match_mode": {
+                            "type": "string",
+                            "description": "匹配模式：auto(默认，exact 失败后依次尝试模糊/近似匹配)；exact(只做逐字精确匹配，找不到就报错，适合不允许任何偏差的场景)",
+                            "enum": ["auto", "exact"],
+                            "default": "auto"
+                        },
+                        "ignore_punct_whitespace": {
+                            "type": "boolean",
+                            "description": "模糊匹配时是否忽略标点与空白差异（默认 true）。设为 false 可要求标点也逐字一致。",
+                            "default": True
                         }
                     },
                     "required": ["op"]

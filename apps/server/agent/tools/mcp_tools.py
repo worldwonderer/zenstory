@@ -10,6 +10,7 @@ import contextvars
 import json
 import os
 import re
+import threading
 from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
@@ -17,6 +18,7 @@ from uuid import uuid4
 from sqlalchemy import desc
 from sqlmodel import Session, and_, select
 
+from agent.constants import CONTENT_FILE_TYPES, INVENTORY_FILE_TYPES, coerce_bool
 from agent.tools.file_ops import FileToolExecutor
 from utils.logger import get_logger, log_with_context
 from utils.title_sequence import extract_chapter_like_sequence_number, parse_chinese_number
@@ -45,10 +47,24 @@ PROJECT_STATUS_FIELD_ALIASES: dict[str, str] = {
 
 
 def _should_offload_tool_execution() -> bool:
-    """Only offload tool DB work when running against PostgreSQL production-style infra."""
-    from database import is_postgres
+    """工具的同步实现是否必须放到线程池里执行。
 
-    return is_postgres
+    判据是"这段代码本身是不是 CPU/IO 密集"，与数据库类型**无关**：
+
+    - 所有 ``*_sync`` 实现都做阻塞式 DB 读写。SQLite 还配了
+      ``PRAGMA busy_timeout=30000``，写锁被别人占住时单次 commit 最长阻塞 30 秒。
+    - ``_edit_file_sync`` 会对整章正文做近似匹配扫描与 difflib 比对（纯 CPU），
+      并以**阻塞方式**获取按 file_id 分条带的 ``threading.Lock``；而该锁的另一个
+      持有者 ``stream_adapter._save_file_content`` 本来就跑在
+      ``asyncio.to_thread`` 的工作线程里。
+    - ``_hybrid_search_sync`` 走向量检索，同样是 CPU 密集。
+
+    历史实现返回 ``is_postgres``，于是在项目默认的 SQLite 部署下，上面这些工作
+    全部同步跑在事件循环线程上：实测单次 edit_file 可让事件循环停顿 21.93 秒，
+    期间该 worker 的所有 SSE 流、HTTP 请求与心跳一起停摆；threading.Lock 也变成
+    "在事件循环线程上等另一个线程释放"的死等。因此这里恒为 True。
+    """
+    return True
 
 
 def _is_hybrid_search_tool_enabled() -> bool:
@@ -72,7 +88,37 @@ def _run_sync_tool_with_owned_session_cleanup(
     normal ``ToolContext.clear_context()`` in the caller does not guarantee the
     thread-owned session is closed immediately. Close it here to avoid relying on
     GC timing for connection release.
+
+    进线程后必须先把 ``_owned_session_var`` 清空：``asyncio.to_thread`` 拷贝的是
+    调用方的 contextvars 快照，事件循环侧此前懒建的 Session 会被原样带进工作
+    线程。若不清空，(1) 同一个 Session 会被事件循环线程与工作线程交替使用
+    （SQLAlchemy Session 非线程安全），(2) 下面 finally 里的 ``_cleanup_owned_session``
+    会把这个**属于事件循环上下文**的 Session 直接 close 掉，而事件循环那边的
+    ContextVar 仍指向它（线程里的 set 对调用方不可见），后续调用拿到的是一个
+    已关闭的 Session。清空后，本线程按需自建、用完即关，生命周期完全自洽。
+
+    同理，``context["session"]``（调用方显式塞进来的**请求级** Session）也不能
+    在工作线程里复用：``get_session()`` 的第一分支就是它，绕不过 _owned_session_var
+    与 SESSION_ISOLATION_KEY。SDK 同一 turn 里的多个 tool_call 会并发成多个
+    asyncio Task，各自 ``to_thread`` 出一个工作线程，一起在同一个 Session 上
+    flush/commit/refresh。因此这里把上下文浅拷贝一份、抹掉 session 并打上隔离
+    标记，让本线程按需自建。只有在拿得到 ``create_session_func`` 时才这么做——
+    否则自建无从谈起，只能沿用调用方给的 session（测试里的典型用法）。
     """
+    _owned_session_var.set(None)
+
+    context = _tool_context_var.get()
+    if (
+        isinstance(context, dict)
+        and context.get("session") is not None
+        and context.get("create_session_func")
+    ):
+        isolated_context = dict(context)
+        isolated_context["session"] = None
+        isolated_context[SESSION_ISOLATION_KEY] = True
+        # 这是工作线程私有的 contextvars 快照，set 不会影响事件循环侧。
+        _tool_context_var.set(isolated_context)
+
     try:
         return sync_func(args)
     finally:
@@ -106,6 +152,20 @@ _pending_empty_file_var: contextvars.ContextVar[dict[str, str] | None] = context
     'pending_empty_file', default=None
 )
 
+# 并发子任务的 session 隔离标记（见 ToolContext.get_session 与
+# parallel_executor.execute_task）。放在工具上下文 dict 里而不是 ContextVar，
+# 因为它必须随 task_ctx 的浅拷贝一起进到 asyncio.to_thread 的线程副本。
+SESSION_ISOLATION_KEY = "isolated_session"
+
+
+# 守卫连续拒绝多少次之后，认为标记已经"陈旧"并自愈清除。
+# 背景：writing_graph 的纠偏配额用尽后不再清除标记（rank 29），而工具层对该标记
+# 是硬拦截，"不带 content 的 create_file + <file> 流式写入"又是本项目文档规定的
+# 标准建档协议——一个永不消失的守卫会让本次请求后续**所有**建档失败。模型连着
+# 两次被拒仍在创建别的文件，说明它已经不打算再补写那个空文件了，此时保留标记
+# 只有坏处。
+_MAX_PENDING_EMPTY_FILE_REJECTIONS = 2
+
 
 class _PendingEmptyFileState:
     """待写入空文件标记的可变持有者，随请求上下文 dict 在所有子任务间共享。
@@ -118,12 +178,109 @@ class _PendingEmptyFileState:
     _tool_context_var 持有的 dict 后，所有子任务的上下文副本（含
     set_current_agent、parallel_executor task_ctx 的浅拷贝）引用的都是同一个
     实例，原地读写天然跨任务可见。
+
+    结构从"单槽"改成"按 file_id 的集合"，并把检查与置位收进同一把
+    ``threading.Lock``，原因有两条（均为实测缺陷）：
+
+    1. 单槽会被后写者静默覆盖。两个并发的空文件 create_file 各自置位时，先建
+       的那个空文件从此没有任何指针——文件躺在文件树里永远是空的，而工具却向
+       模型报告全部成功。
+    2. "先查 pending 再建文件"之间隔着 DB INSERT，PG 下还跨 asyncio.to_thread
+       的线程边界，是典型 TOCTOU：两个任务会同时通过检查。因此对外只暴露
+       ``try_reserve``（占坑）+ ``bind``（回填真实 file_id）/``release``（回滚）
+       这一组原子操作，调用方不得再自己"先查后置"。
     """
 
-    __slots__ = ("value",)
+    __slots__ = ("_lock", "_entries", "_reservations", "_reject_count")
 
     def __init__(self) -> None:
-        self.value: dict[str, str] | None = None
+        self._lock = threading.Lock()
+        # file_id -> title，按插入顺序保存全部待写入空文件
+        self._entries: dict[str, str] = {}
+        # ticket -> title，正在建库途中（还没拿到真实 file_id）的占坑
+        self._reservations: dict[str, str] = {}
+        self._reject_count = 0
+
+    # ---- 只读视图 ----------------------------------------------------------
+    def has_pending(self) -> bool:
+        with self._lock:
+            return bool(self._entries)
+
+    def latest(self) -> dict[str, str] | None:
+        """返回最近一次置位的待写入文件（与历史单槽语义一致）。"""
+        with self._lock:
+            if not self._entries:
+                return None
+            file_id, title = next(reversed(self._entries.items()))
+            return {"file_id": file_id, "title": title}
+
+    def snapshot(self) -> list[dict[str, str]]:
+        """返回全部待写入文件（按置位先后）。"""
+        with self._lock:
+            return [
+                {"file_id": file_id, "title": title}
+                for file_id, title in self._entries.items()
+            ]
+
+    # ---- 写入 --------------------------------------------------------------
+    def add(self, file_id: str, title: str) -> None:
+        with self._lock:
+            self._entries[file_id] = title
+            self._reject_count = 0
+
+    def discard(self, file_id: str | None = None) -> None:
+        """file_id 为 None 时清空全部，否则只摘掉指定条目。"""
+        with self._lock:
+            if file_id is None:
+                self._entries.clear()
+            else:
+                self._entries.pop(file_id, None)
+            self._reject_count = 0
+
+    def clear_all(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._reservations.clear()
+            self._reject_count = 0
+
+    # ---- 原子占坑 ----------------------------------------------------------
+    def try_reserve(self, ticket: str, title: str) -> tuple[bool, str | None]:
+        """原子地占用"待流式写入"名额。
+
+        Returns:
+            (ok, blocking_title)。ok 为 False 时 blocking_title 是挡住本次创建的
+            文件标题，供调用方拼错误信息。
+        """
+        with self._lock:
+            if self._reservations:
+                # 有别的 create_file 正在建库途中：这是真正的并发竞争，
+                # 直接拒绝且不计入陈旧计数（对方马上就会 bind 或 release）。
+                return False, next(iter(self._reservations.values()))
+
+            if self._entries:
+                self._reject_count += 1
+                if self._reject_count <= _MAX_PENDING_EMPTY_FILE_REJECTIONS:
+                    return False, next(reversed(self._entries.values()))
+                # 守卫已陈旧：放弃这些永远等不到正文的标记，放行本次创建，
+                # 否则本请求后续所有建档都会被硬拒。
+                self._entries.clear()
+                self._reject_count = 0
+
+            self._reservations[ticket] = title
+            return True, None
+
+    def bind(self, ticket: str, file_id: str, title: str) -> None:
+        """占坑成功且文件已落库：把票据换成真实 file_id。"""
+        with self._lock:
+            self._reservations.pop(ticket, None)
+            if file_id:
+                self._entries[file_id] = title
+                self._reject_count = 0
+
+    def release(self, ticket: str) -> None:
+        """占坑作废（创建失败 / 建出来的是文件夹）：只回滚票据。"""
+        with self._lock:
+            self._reservations.pop(ticket, None)
 
 
 class ToolContext:
@@ -171,14 +328,29 @@ class ToolContext:
         if context.get("session"):
             return context["session"]
 
+        # 隔离标记（parallel_executor 为每个并发子任务置位）：本任务**必须**
+        # 自建 session，绝不能复用 contextvars 快照从父上下文继承来的
+        # _owned_session_var。否则多个工作线程会共用同一个 SQLAlchemy Session
+        # （非线程安全），且先结束的线程会在 finally 里把它 close 掉，另一个
+        # 线程还在同一 Session 上跑事务。
+        # 注意不能用「context 里 session 键为 None」当判据：正常请求路径
+        # （service.py 的 _should_offload_session_work 分支）本来就写的是
+        # session=None + create_session_func，那时必须允许复用自有 session。
+        isolated = bool(context.get(SESSION_ISOLATION_KEY))
+
         owned = _owned_session_var.get()
-        if owned is not None:
+        if owned is not None and not isolated:
             return owned
 
         create_func = context.get("create_session_func")
         if create_func:
             new_session = create_func()
             _owned_session_var.set(new_session)
+            if isolated:
+                # 本任务已经拥有自己的 session，隔离标记完成使命：就地摘掉，
+                # 后续 get_session() 复用它而不是每次新建（否则会泄漏连接）。
+                # context 是本任务专属的 dict 副本，原地改不影响兄弟任务。
+                context.pop(SESSION_ISOLATION_KEY, None)
             return new_session
 
         raise RuntimeError("No session available in ToolContext")
@@ -252,7 +424,7 @@ class ToolContext:
         # 仅把本上下文的 ContextVar 置 None 无法让它们看到清理结果。
         state = cls._get_pending_empty_file_state()
         if state is not None:
-            state.value = None
+            state.clear_all()
         _tool_context_var.set(None)
         _pending_empty_file_var.set(None)
 
@@ -268,21 +440,32 @@ class ToolContext:
 
     @classmethod
     def set_pending_empty_file(cls, file_id: str, title: str) -> None:
-        """标记有一个空文件等待流式写入。"""
+        """标记有一个空文件等待流式写入（追加进集合，不覆盖已有条目）。"""
         state = cls._get_pending_empty_file_state()
         if state is not None:
-            state.value = {"file_id": file_id, "title": title}
+            state.add(file_id, title)
             return
         # 未调用 set_context 的场景（如直接 set/get 的单测）退回本上下文的 ContextVar
         _pending_empty_file_var.set({"file_id": file_id, "title": title})
 
     @classmethod
-    def clear_pending_empty_file(cls) -> None:
-        """清除待写入文件标记。"""
+    def clear_pending_empty_file(cls, file_id: str | None = None) -> None:
+        """清除待写入文件标记。
+
+        Args:
+            file_id: 传入时只摘掉指向该文件的条目（流式写入收尾用）；
+                省略表示无条件清空全部（请求/流结束时的兜底清理，以及
+                writing_graph 纠偏边界的清理）。
+        """
         state = cls._get_pending_empty_file_state()
         if state is not None:
-            state.value = None
-        _pending_empty_file_var.set(None)
+            state.discard(file_id)
+        if file_id is None:
+            _pending_empty_file_var.set(None)
+        else:
+            fallback = _pending_empty_file_var.get()
+            if fallback is not None and fallback.get("file_id") == file_id:
+                _pending_empty_file_var.set(None)
 
     @classmethod
     def has_pending_empty_file(cls) -> bool:
@@ -291,11 +474,63 @@ class ToolContext:
 
     @classmethod
     def get_pending_empty_file(cls) -> dict[str, str] | None:
-        """获取待写入的空文件信息。"""
+        """获取最近一个待写入的空文件信息（与历史单槽语义保持一致）。"""
         state = cls._get_pending_empty_file_state()
         if state is not None:
-            return state.value
+            return state.latest()
         return _pending_empty_file_var.get()
+
+    @classmethod
+    def try_reserve_pending_empty_file(
+        cls, ticket: str, title: str
+    ) -> tuple[bool, str | None]:
+        """原子地占用"待流式写入"名额（检查 + 置位在同一把锁内完成）。
+
+        Args:
+            ticket: 调用方生成的唯一票据；成功后必须用它调 bind/release 收尾。
+            title: 本次要创建的文件标题（占坑期间用于拼错误信息）。
+
+        Returns:
+            (是否占坑成功, 挡住本次创建的文件标题)。
+        """
+        state = cls._get_pending_empty_file_state()
+        if state is not None:
+            return state.try_reserve(ticket, title)
+
+        # 未调用 set_context 的降级路径：没有共享持有者可锁，退回单槽检查。
+        pending = _pending_empty_file_var.get()
+        if pending is not None:
+            return False, pending.get("title")
+        return True, None
+
+    @classmethod
+    def bind_pending_empty_file(cls, ticket: str, file_id: str, title: str) -> None:
+        """占坑成功且文件已落库：把票据换成真实 file_id。"""
+        state = cls._get_pending_empty_file_state()
+        if state is not None:
+            state.bind(ticket, file_id, title)
+            return
+        _pending_empty_file_var.set({"file_id": file_id, "title": title})
+
+    @classmethod
+    def release_pending_empty_file(cls, ticket: str) -> None:
+        """占坑作废（创建失败 / 建出来的是文件夹）：回滚票据，不留残留守卫。"""
+        state = cls._get_pending_empty_file_state()
+        if state is not None:
+            state.release(ticket)
+
+    @classmethod
+    def get_pending_empty_files(cls) -> list[dict[str, str]]:
+        """获取**全部**待写入空文件（按置位先后）。
+
+        单槽时代只能看到最后一个，先建的空文件会成为无人认领的孤儿；
+        需要逐个补写/逐个上报的调用方（如 writing_graph 的纠偏分支）用这个。
+        """
+        state = cls._get_pending_empty_file_state()
+        if state is not None:
+            return state.snapshot()
+        fallback = _pending_empty_file_var.get()
+        return [fallback] if fallback is not None else []
 
     @classmethod
     def get_executor(cls) -> FileToolExecutor:
@@ -325,12 +560,12 @@ class ToolContext:
         from models import File
         from utils.title_sequence import build_sequence_sort_key
 
+        # 桶必须覆盖除 folder 外的**全部**实体类型：漏掉的类型会在下面的
+        # `if file_type not in inventory: continue` 处被整类丢弃，Agent 交接后
+        # 看不见自己刚建的 script/document 文件，于是重复创建。
+        # 用共享常量而非就地硬编码，保证与 ContextAssembler 的清单同集合。
         inventory: dict[str, list[dict[str, Any]]] = {
-            "outline": [],
-            "draft": [],
-            "character": [],
-            "lore": [],
-            "snippet": [],
+            file_type: [] for file_type in INVENTORY_FILE_TYPES
         }
 
         # Column-only select: avoids loading File.content (expensive on PG TOAST).
@@ -369,6 +604,9 @@ class ToolContext:
                     {
                         "id": file_id,
                         "title": title,
+                        # 渲染端（writing_graph._format_file_inventory）要按类型
+                        # 分桶并标注，行里必须自带 file_type，不能只靠桶名。
+                        "file_type": file_type,
                         "word_count": None,
                     },
                 )
@@ -386,6 +624,35 @@ class ToolContext:
 def _make_result(data: Any, *, tool_name: str | None = None) -> dict[str, Any]:
     """Create a tool result in MCP format."""
     return _make_mcp_payload(data, tool_name=tool_name)
+
+
+def _elide_reused_file_content(result: Any) -> Any:
+    """剧本分集幂等复用分支的 tool result 省略正文，只留长度元信息。
+
+    复用分支返回的 content 是目标文件**已有的整集正文**（实测一集 8000 字）。
+    它只服务于服务端判据（StreamAdapter 的截断覆盖保护），模型一个字都用不到；
+    原样序列化进回给模型的 tool result 里，等于每次分集复用都白烧几千 token。
+
+    这里只对复用分支下手，判据是 crud 复用分支才会置的 reused_existing。
+    用户显式带 content 调 create_file 建新文件时回显 content 是既有行为，不受影响。
+
+    显式字段 reused_existing / original_content_length 必须原样保留：
+    StreamAdapter._resolve_original_content_length 优先读它们判定
+    「目标文件原本非空」，不依赖 content 本身，所以省略正文不削弱覆盖保护。
+    """
+    if not isinstance(result, dict) or not result.get("reused_existing"):
+        return result
+
+    elided = dict(result)
+    original_content = elided.get("content")
+    if isinstance(original_content, str) and original_content:
+        elided["content"] = ""
+        elided["content_elided"] = True
+        # crud 层正常会给出 original_content_length；这里兜底补齐，
+        # 避免上游漏填时把「原本非空」丢成 0。
+        if not isinstance(elided.get("original_content_length"), int):
+            elided["original_content_length"] = len(original_content)
+    return elided
 
 
 def _make_error(error: str, *, tool_name: str | None = None) -> dict[str, Any]:
@@ -915,15 +1182,24 @@ def _create_file_sync(args: dict[str, Any]) -> dict[str, Any]:
     content = args.get("content", "")
     title = args.get("title", "")
 
-    # 检查是否已有待写入的空文件（防止连续创建空文件导致内容丢失）
-    if not content and ToolContext.has_pending_empty_file():
-        pending = ToolContext.get_pending_empty_file()
-        pending_title = pending.get("title", "未知") if pending else "未知"
-        return _make_error(
-            f"请先完成上一个文件「{pending_title}」的内容写入（使用 <file>内容</file> 标记），"
-            f"然后再创建新文件「{title}」。一次只能流式写入一个文件。",
-            tool_name=tool_name,
+    # 检查是否已有待写入的空文件（防止连续创建空文件导致内容丢失）。
+    # 检查与置位必须原子完成：两者之间隔着 DB INSERT（还跨 asyncio.to_thread
+    # 的线程边界），先查后置会让并发的两次空文件创建同时通过检查，各自建出一个
+    # 空文件，后置位的把先置位的覆盖掉——先建的空文件从此没有任何指针。
+    # 因此这里先 try_reserve 占坑，落库后再 bind 真实 file_id。
+    reservation: str | None = None
+    if not content:
+        reservation = f"reserve-{uuid4().hex}"
+        acquired, blocking_title = ToolContext.try_reserve_pending_empty_file(
+            reservation, title
         )
+        if not acquired:
+            return _make_error(
+                f"请先完成上一个文件「{blocking_title or '未知'}」的内容写入"
+                f"（使用 <file>内容</file> 标记），"
+                f"然后再创建新文件「{title}」。一次只能流式写入一个文件。",
+                tool_name=tool_name,
+            )
 
     try:
         order_value = args.get("order") if "order" in args else None
@@ -943,14 +1219,17 @@ def _create_file_sync(args: dict[str, Any]) -> dict[str, Any]:
             metadata=args.get("metadata"),
         )
 
-        # 如果创建的是空文件，标记为待写入
+        # 如果创建的是空文件，把占坑换成真实 file_id
         # folder 例外：文件夹是纯容器节点，永远不会收到 <file>…</file> 正文，
         # 给它置标记后无人清除（标记跨子任务可见），会硬阻断本轮后续所有建档，
         # 并让 writing_graph 的纠偏分支把章节正文追加到文件夹节点上。
-        if not content and not _is_folder_file_type(result, args):
+        if reservation is not None:
             file_id = result.get("id", "")
-            if file_id:
-                ToolContext.set_pending_empty_file(file_id, title)
+            if file_id and not _is_folder_file_type(result, args):
+                ToolContext.bind_pending_empty_file(reservation, file_id, title)
+            else:
+                ToolContext.release_pending_empty_file(reservation)
+            reservation = None
 
         _record_artifact_ledger(
             action=tool_name,
@@ -959,9 +1238,17 @@ def _create_file_sync(args: dict[str, Any]) -> dict[str, Any]:
             payload={"title": result.get("title"), "file_type": result.get("file_type")},
         )
 
-        return _make_result({"status": "success", "data": result}, tool_name=tool_name)
+        return _make_result(
+            {"status": "success", "data": _elide_reused_file_content(result)},
+            tool_name=tool_name,
+        )
     except Exception as e:
         return _make_error(str(e), tool_name=tool_name)
+    finally:
+        # 创建失败（异常或提前 return）时必须回滚占坑，否则这个永远不会被
+        # bind 的票据会把本请求后续所有空文件创建全部挡在门外。
+        if reservation is not None:
+            ToolContext.release_pending_empty_file(reservation)
 
 
 async def edit_file(args: dict[str, Any]) -> dict[str, Any]:
@@ -1014,7 +1301,11 @@ def _edit_file_sync(args: dict[str, Any]) -> dict[str, Any]:
         result = executor.edit_file(
             id=file_id,
             edits=edits,
-            continue_on_error=bool(args.get("continue_on_error", False)),
+            # 必须走 coerce_bool：strict_json_schema=False 让 schema 里的
+            # "type": "boolean" 在运行时毫无约束力，模型常把它序列化成
+            # "false"/"0"，而 bool("false") is True——一次编辑失败后本该中止的
+            # 批量编辑会继续往下做，且整体仍被报成 success。
+            continue_on_error=coerce_bool(args.get("continue_on_error")),
         )
         _record_artifact_ledger(
             action=tool_name,
@@ -1022,9 +1313,37 @@ def _edit_file_sync(args: dict[str, Any]) -> dict[str, Any]:
             artifact_refs=_extract_tool_artifact_refs(tool_name, args, result),
             payload={"edits_applied": result.get("edits_applied")},
         )
-        return _make_result({"status": "success", "data": result}, tool_name=tool_name)
+        # status 必须按实际结果降级：continue_on_error 下部分/全部 edit 失败时，
+        # 恒返回 "success" 会让模型以为改动已经落地、继续往下写，
+        # 失败的 edit 只藏在 data.failed_edits 里没人看。
+        return _make_result(
+            {"status": _derive_edit_status(result), "data": result},
+            tool_name=tool_name,
+        )
     except Exception as e:
         return _make_error(str(e), tool_name=tool_name)
+
+
+def _derive_edit_status(result: dict[str, Any]) -> str:
+    """由 edit_file 的执行结果推导返回给 LLM 的 status。
+
+    - 全部 edit 失败 → "error"（模型必须重新定位再试）
+    - 部分成功部分失败 → "partial"（模型需要针对失败项补做）
+    - 其余 → "success"
+    """
+    if not isinstance(result, dict):
+        return "success"
+    if coerce_bool(result.get("all_failed")):
+        return "error"
+    if coerce_bool(result.get("partial_success")):
+        return "partial"
+    # 兜底：即便上游没给汇总标志，只要有 failed_edits 也不能报纯 success
+    failed_edits = result.get("failed_edits")
+    if isinstance(failed_edits, list) and failed_edits:
+        applied = result.get("edits_applied")
+        applied_count = applied if isinstance(applied, int) else len(applied or [])
+        return "partial" if applied_count else "error"
+    return "success"
 
 
 async def delete_file(args: dict[str, Any]) -> dict[str, Any]:
@@ -1046,15 +1365,19 @@ def _delete_file_sync(args: dict[str, Any]) -> dict[str, Any]:
         return _make_error("project_id not set", tool_name=tool_name)
 
     try:
+        # recursive 是本项目破坏性最强的布尔参数：判真会软删除整棵子树。
+        # 模型传来的 "false"/"0"/被截断修复出来的 "fals" 在朴素真值判断下全是
+        # True，历史上把"删一个文件"变成"删掉整个文件夹的所有章节"。
+        recursive = coerce_bool(args.get("recursive"))
         result = executor.delete_file(
             id=args.get("id", ""),
-            recursive=args.get("recursive", False),
+            recursive=recursive,
         )
         _record_artifact_ledger(
             action=tool_name,
             tool_name=tool_name,
             artifact_refs=_extract_tool_artifact_refs(tool_name, args, result),
-            payload={"recursive": bool(args.get("recursive", False))},
+            payload={"recursive": recursive},
         )
         return _make_result({"status": "success", "data": result}, tool_name=tool_name)
     except Exception as e:
@@ -1092,7 +1415,13 @@ def _query_files_sync(args: dict[str, Any]) -> dict[str, Any]:
         optional_keys = ("id", "response_mode", "content_preview_chars", "include_content")
         for key in optional_keys:
             if key in args:
-                query_kwargs[key] = args.get(key)
+                value = args.get(key)
+                if key == "include_content" and value is not None:
+                    # 三值语义：None 表示"未指定，按 response_mode 决定"，必须原样透传；
+                    # 显式传值时才强转——下游用的是 `include_content is True`，
+                    # 模型传字符串 "true" 会被判成"不含正文"，语义直接反了。
+                    value = coerce_bool(value)
+                query_kwargs[key] = value
 
         try:
             result = executor.query_files(**query_kwargs)
@@ -1227,12 +1556,15 @@ def _extract_phase_chapter_number(phase_text: str | None) -> int | None:
 
 def _suggest_auto_current_phase_from_drafts(project_id: str) -> str | None:
     """
-    Suggest monotonic chapter phase text from draft files.
+    Suggest monotonic chapter phase text from content files.
 
     Rules:
-    - Only infer from draft titles with explicit sequence numbers.
+    - Only infer from content-file titles with explicit sequence numbers.
     - If existing current_phase has chapter number >= inferred, keep unchanged.
     - If existing current_phase is non-empty but not chapter-like, do not override.
+
+    注意这里必须覆盖 CONTENT_FILE_TYPES 全部类型（draft + script），
+    否则短剧项目（正文是 script）永远推不出 current_phase。
     """
     if not project_id:
         return None
@@ -1244,22 +1576,22 @@ def _suggest_auto_current_phase_from_drafts(project_id: str) -> str | None:
     if not project:
         return None
 
-    draft_titles = session.exec(
+    content_titles = session.exec(
         select(File.title).where(
             and_(
                 File.project_id == project_id,
-                File.file_type == "draft",
+                File.file_type.in_(CONTENT_FILE_TYPES),
                 File.is_deleted.is_(False),
             )
         )
     ).all()
-    if not draft_titles:
+    if not content_titles:
         return None
 
     inferred_latest = max(
         (
             seq
-            for title in draft_titles
+            for title in content_titles
             if (seq := extract_chapter_like_sequence_number(title)) is not None
         ),
         default=None,
