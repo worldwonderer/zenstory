@@ -10,12 +10,13 @@ the LLM provides slightly different text.
 Extracted from the monolithic file_executor.py for better maintainability.
 """
 
+import threading
 from typing import Any
 
 from services.file_version import FileVersionService
 from sqlmodel import Session, select
 
-from agent.tools.permissions import check_project_ownership
+from agent.tools.permissions import check_file_access_in_tool_context
 from config.datetime_utils import utcnow
 from models import File
 from models.file_version import (
@@ -33,6 +34,25 @@ from .text_matching import (
 )
 
 logger = get_logger(__name__)
+
+# Cap for replace_all fuzzy scanning. The exact-match path replaces EVERY
+# occurrence, so the fuzzy path must not silently stop at a handful; this cap
+# only guards pathological inputs and is surfaced as an explicit warning when
+# actually hit.
+REPLACE_ALL_MAX_FUZZY_MATCHES = 1000
+
+# SQLite has no row-level locks, so same-file read-modify-write sections are
+# serialized with in-process striped locks instead (the default SQLite
+# deployment runs a single server process; cross-process SQLite writers are
+# not covered). Striping keeps memory bounded; distinct files may share a
+# stripe, which only costs some extra serialization.
+_FILE_WRITE_LOCK_STRIPES = 64
+_file_write_locks = [threading.Lock() for _ in range(_FILE_WRITE_LOCK_STRIPES)]
+
+
+def file_write_lock(file_id: str) -> threading.Lock:
+    """Return the in-process write lock striped by ``file_id``."""
+    return _file_write_locks[hash(file_id) % _FILE_WRITE_LOCK_STRIPES]
 
 
 def _exact_spans(content: str, sub: str, limit: int = 3) -> list[tuple[int, int]]:
@@ -111,20 +131,44 @@ class FileEditor:
             ValueError: If file not found or edit operation fails
             PermissionError: If user doesn't have permission
         """
+        from database import is_postgres
+
+        if is_postgres:
+            return self._edit_file_impl(id, edits, continue_on_error)
+        # SQLite has no row locks: serialize same-file read-modify-write with
+        # the in-process per-file lock so a concurrent edit (parallel_execute
+        # runs each task on its own session/thread) cannot interleave between
+        # our read and commit.
+        with file_write_lock(id):
+            return self._edit_file_impl(id, edits, continue_on_error)
+
+    def _edit_file_impl(
+        self,
+        id: str,
+        edits: list[dict[str, Any]],
+        continue_on_error: bool,
+    ) -> dict[str, Any]:
         # Get file. On PostgreSQL take a row lock so concurrent edit_file tasks
         # (parallel_execute runs each on its own session) targeting the SAME file
-        # serialize: the second SELECT ... FOR UPDATE blocks until the first
-        # commits and then re-reads the updated content, preventing a lost update
-        # where the later commit overwrites the earlier edit. SQLite has no row
-        # locking (and its file lock already serializes writers), so fall back.
+        # serialize: the second locked SELECT blocks until the first commits and
+        # then re-reads the updated content, preventing a lost update where the
+        # later commit overwrites the earlier edit. FOR NO KEY UPDATE (not FOR
+        # UPDATE) so the version snapshot's FK insert from its independent
+        # session (KEY SHARE on this row) is not blocked by the held lock.
         from database import is_postgres
 
         if is_postgres:
             file = self.session.exec(
-                select(File).where(File.id == id).with_for_update()
+                select(File).where(File.id == id).with_for_update(key_share=True)
             ).first()
         else:
-            file = self.session.get(File, id)
+            # The shared per-request session may already hold this File in its
+            # identity map from context assembly (minutes before this edit);
+            # Session.get would return that cached snapshot without any SQL.
+            # Force a re-SELECT so the read-modify-write is based on the
+            # current DB content, not on a stale copy that would silently
+            # overwrite a concurrent user save.
+            file = self.session.get(File, id, populate_existing=True)
 
         if not file or file.is_deleted:
             # Do not leak internal IDs to end users
@@ -137,8 +181,8 @@ class FileEditor:
             )
             raise ValueError("文件不存在或已删除")
 
-        # Check permission
-        check_project_ownership(self.session, file.project_id, self.user_id)
+        # Check permission (target must belong to the current tool-context project)
+        check_file_access_in_tool_context(self.session, file, self.user_id)
 
         old_content = file.content or ""
         content = old_content
@@ -270,16 +314,25 @@ class FileEditor:
                 })
                 warnings.append(f"Edit {i}: failed and skipped ({e})")
 
-        # Update file only when content changed.
+        # Update file only when content changed. The version snapshot must
+        # stay ordered with the content commit for the same file:
+        # - PostgreSQL: write the snapshot BEFORE committing, because commit
+        #   releases the row lock and a competing edit could then commit and
+        #   snapshot first, leaving the newest version number pointing at
+        #   older content. Snapshot failure never blocks the edit itself.
+        # - SQLite: the in-process per-file lock (see edit_file) covers both
+        #   the commit and the snapshot, but the snapshot's independent
+        #   session must commit while this session holds no write
+        #   transaction, so it runs AFTER the content commit.
         if content != old_content:
             file.content = content
             file.updated_at = utcnow()
+            if is_postgres:
+                self._create_edit_version(id, content, applied_edits)
             self.session.commit()
             self.session.refresh(file)
-
-        # Create version history for AI edit
-        if content != old_content:
-            self._create_edit_version(id, content, applied_edits)
+            if not is_postgres:
+                self._create_edit_version(id, content, applied_edits)
 
         return {
             "id": file.id,
@@ -407,11 +460,20 @@ class FileEditor:
                 )
 
             # 2) Fuzzy match (ignore punctuation/whitespace)
+            # replace_all mirrors the exact path (which replaces EVERY
+            # occurrence), so it must not stop at the default 20-match cap.
+            fuzzy_stats: dict[str, int] = {}
             spans = find_fuzzy_spans(
                 content,
                 old_text,
                 ignore_punct_whitespace=ignore_punct_whitespace,
+                max_matches=REPLACE_ALL_MAX_FUZZY_MATCHES if replace_all else 20,
+                stats=fuzzy_stats,
             )
+            if fuzzy_stats.get("boundary_rejected"):
+                warnings.append(
+                    f"Edit {edit_index}: {fuzzy_stats['boundary_rejected']} 处候选匹配因字符归一化展开边界不对齐被跳过（如罗马数字/合字），已避免吞掉未匹配的原文"
+                )
 
             # 3) If fuzzy match fails, try approximate match (handles word errors)
             approx_match = None
@@ -447,17 +509,34 @@ class FileEditor:
                 )
 
             if replace_all:
-                # Replace from tail to head to keep indices stable
-                for start, end in reversed(spans):
-                    content = content[:start] + new_text + content[end:]
-                applied_edits.append({
+                # Stitch segments in one pass (spans are sorted and
+                # non-overlapping); repeated re-slicing would be O(n·k).
+                parts: list[str] = []
+                prev = 0
+                for start, end in spans:
+                    parts.append(content[prev:start])
+                    parts.append(new_text)
+                    prev = end
+                parts.append(content[prev:])
+                content = "".join(parts)
+
+                truncated = len(spans) >= REPLACE_ALL_MAX_FUZZY_MATCHES
+                if truncated:
+                    warnings.append(
+                        f"Edit {edit_index}: replace_all 近似匹配达到 {REPLACE_ALL_MAX_FUZZY_MATCHES} 处上限，"
+                        f"可能仍有未替换的出现，请检查剩余内容"
+                    )
+                detail = {
                     "op": "replace",
                     "match_mode": "fuzzy",
                     "ignore_punct_whitespace": ignore_punct_whitespace,
                     "old_preview": old_text[:200] + ("..." if len(old_text) > 200 else ""),
                     "new_preview": new_text[:200] + ("..." if len(new_text) > 200 else ""),
                     "count": len(spans),
-                })
+                }
+                if truncated:
+                    detail["truncated"] = True
+                applied_edits.append(detail)
             else:
                 if len(spans) != 1:
                     previews = build_span_previews(content, spans)
@@ -484,7 +563,7 @@ class FileEditor:
         edit: dict[str, Any],
         edit_index: int,
         applied_edits: list[dict[str, Any]],
-        _warnings: list[str],
+        warnings: list[str],
     ) -> str:
         """Apply an insert_after edit operation."""
         anchor = edit.get("anchor", "")
@@ -518,11 +597,17 @@ class FileEditor:
                     f"Edit {edit_index}: anchor text not found in content (exact match)"
                 )
 
+            fuzzy_stats: dict[str, int] = {}
             spans = find_fuzzy_spans(
                 content,
                 anchor,
                 ignore_punct_whitespace=ignore_punct_whitespace,
+                stats=fuzzy_stats,
             )
+            if fuzzy_stats.get("boundary_rejected"):
+                warnings.append(
+                    f"Edit {edit_index}: {fuzzy_stats['boundary_rejected']} 处候选锚点因字符归一化展开边界不对齐被跳过（如罗马数字/合字）"
+                )
             if not spans:
                 # Secondary fallback: approximate match (handles word errors)
                 approx_match = find_approximate_match(
@@ -617,7 +702,7 @@ class FileEditor:
         edit: dict[str, Any],
         edit_index: int,
         applied_edits: list[dict[str, Any]],
-        _warnings: list[str],
+        warnings: list[str],
     ) -> str:
         """Apply an insert_before edit operation."""
         anchor = edit.get("anchor", "")
@@ -650,11 +735,17 @@ class FileEditor:
                     f"Edit {edit_index}: anchor text not found in content (exact match)"
                 )
 
+            fuzzy_stats: dict[str, int] = {}
             spans = find_fuzzy_spans(
                 content,
                 anchor,
                 ignore_punct_whitespace=ignore_punct_whitespace,
+                stats=fuzzy_stats,
             )
+            if fuzzy_stats.get("boundary_rejected"):
+                warnings.append(
+                    f"Edit {edit_index}: {fuzzy_stats['boundary_rejected']} 处候选锚点因字符归一化展开边界不对齐被跳过（如罗马数字/合字）"
+                )
             if not spans:
                 # Secondary fallback: approximate match (handles word errors)
                 approx_match = find_approximate_match(
@@ -784,11 +875,17 @@ class FileEditor:
                     f"Edit {edit_index}: text to delete not found in content (exact match)"
                 )
 
+            fuzzy_stats: dict[str, int] = {}
             spans = find_fuzzy_spans(
                 content,
                 old_text,
                 ignore_punct_whitespace=ignore_punct_whitespace,
+                stats=fuzzy_stats,
             )
+            if fuzzy_stats.get("boundary_rejected"):
+                warnings.append(
+                    f"Edit {edit_index}: {fuzzy_stats['boundary_rejected']} 处候选匹配因字符归一化展开边界不对齐被跳过（如罗马数字/合字），已避免误删原文"
+                )
             if not spans:
                 suggestions = suggest_similar_lines(
                     content,

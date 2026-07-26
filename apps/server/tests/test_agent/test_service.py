@@ -9,6 +9,7 @@ Updated for LangGraph architecture.
 
 import asyncio
 import json
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -907,9 +908,468 @@ class TestAgentServiceProcessStream:
                 await task
 
         mock_cleanup.assert_not_awaited()
-        assert mock_schedule_cleanup.call_count == 1
-        _args, kwargs = mock_schedule_cleanup.call_args
-        assert kwargs["description"] == "cleanup_steering_queue_async"
+        descriptions = [
+            kwargs["description"] for _args, kwargs in mock_schedule_cleanup.call_args_list
+        ]
+        assert "cleanup_steering_queue_async" in descriptions
+        # Cancellation also schedules the partial-history save in the background.
+        assert "save_partial_history_after_cancellation" in descriptions
+
+    async def test_process_stream_persists_partial_history_on_cancellation(
+        self, mock_agent_service, test_user_with_project, db_session: Session
+    ):
+        """Cancellation must still persist the user message + partial assistant reply."""
+        from agent.core.workflow_events import StreamEvent, StreamEventType
+
+        service, _ = mock_agent_service
+        project = test_user_with_project["project"]
+        user = test_user_with_project["user"]
+
+        started = asyncio.Event()
+
+        async def mock_slow_stream():
+            yield StreamEvent(type=StreamEventType.TEXT, data={"text": "partial reply"})
+            started.set()
+            await asyncio.sleep(3600)
+
+        events: list[str] = []
+
+        async def consume():
+            async for event in service.process_stream(
+                project_id=str(project.id),
+                user_id=str(user.id),
+                message="cancel me please",
+                session=db_session,
+            ):
+                events.append(event)
+
+        def _fresh_session():
+            return Session(db_session.get_bind())
+
+        with (
+            patch("agent.service.run_writing_workflow_streaming", return_value=mock_slow_stream()),
+            patch("agent.service.create_session", side_effect=_fresh_session),
+        ):
+            task = asyncio.create_task(consume())
+            await started.wait()
+            await asyncio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            session_started_events = [e for e in events if "event: session_started" in e]
+            assert session_started_events, "Expected session_started event"
+            session_id = json.loads(
+                session_started_events[0].split("data:", 1)[1].strip()
+            )["session_id"]
+
+            # The save runs as a background task with an independent session;
+            # poll until it lands (rollback releases this session's read txn).
+            saved_messages: list[ChatMessage] = []
+            for _ in range(100):
+                await asyncio.sleep(0.05)
+                db_session.rollback()
+                saved_messages = db_session.exec(
+                    select(ChatMessage).where(ChatMessage.session_id == session_id)
+                ).all()
+                if len(saved_messages) >= 2:
+                    break
+
+        assert len(saved_messages) == 2
+        assert any(
+            m.role == "user" and m.content == "cancel me please" for m in saved_messages
+        )
+        assert any(
+            m.role == "assistant" and m.content == "partial reply" for m in saved_messages
+        )
+
+    async def test_process_stream_prompt_ledger_counts_embedded_sections_once(
+        self, mock_agent_service, test_user_with_project, db_session: Session
+    ):
+        """reserved_prompt_tokens must charge the final system prompt exactly once."""
+        from agent.context.budget import compute_history_token_budget as real_compute
+        from agent.core.workflow_events import StreamEvent, StreamEventType
+        from agent.schemas.context import ContextData
+        from agent.utils.token_utils import estimate_text_tokens
+        from config.agent_runtime import AGENT_CHAT_HISTORY_TOKEN_BUDGET
+
+        service, mock_context_assembler = mock_agent_service
+        project = test_user_with_project["project"]
+        user = test_user_with_project["user"]
+
+        assembled_context = "主角在北境雪原遇到了会说话的狐狸。" * 200
+        mock_context_assembler.assemble.return_value = ContextData(
+            items=[],
+            context=assembled_context,
+            token_estimate=estimate_text_tokens(assembled_context),
+        )
+
+        captured: dict[str, int] = {}
+
+        def fake_compute(*, configured_history_budget, reserved_prompt_tokens):
+            captured["reserved"] = reserved_prompt_tokens
+            result = real_compute(
+                configured_history_budget=configured_history_budget,
+                reserved_prompt_tokens=reserved_prompt_tokens,
+            )
+            captured["effective"] = result
+            return result
+
+        async def mock_stream():
+            yield StreamEvent(type=StreamEventType.TEXT, data={"text": "ok"})
+            yield StreamEvent(type=StreamEventType.MESSAGE_END, data={"stop_reason": "end_turn"})
+
+        with (
+            patch("agent.service.run_writing_workflow_streaming") as mock_workflow,
+            patch("agent.service.compute_history_token_budget", side_effect=fake_compute),
+        ):
+            mock_workflow.return_value = mock_stream()
+
+            async for _ in service.process_stream(
+                project_id=str(project.id),
+                user_id=str(user.id),
+                message="预算测试",
+                session=db_session,
+            ):
+                pass
+
+        writing_state = mock_workflow.call_args[0][0]
+        system_prompt = writing_state["system_prompt"]
+        assert assembled_context[:200] in system_prompt  # context 确实内嵌于 system_prompt
+
+        # Ledger charges the final prompt once — no re-adding of skill
+        # catalog/reference/context that build_system_prompt already embedded.
+        assert captured["reserved"] == estimate_text_tokens(system_prompt)
+
+        legacy_reserved = captured["reserved"] + estimate_text_tokens(assembled_context)
+        assert captured["reserved"] < legacy_reserved
+        assert captured["effective"] == real_compute(
+            configured_history_budget=AGENT_CHAT_HISTORY_TOKEN_BUDGET,
+            reserved_prompt_tokens=captured["reserved"],
+        )
+        assert captured["effective"] >= real_compute(
+            configured_history_budget=AGENT_CHAT_HISTORY_TOKEN_BUDGET,
+            reserved_prompt_tokens=legacy_reserved,
+        )
+
+    async def test_process_stream_persists_unconsumed_steering_before_cleanup(
+        self, mock_agent_service, test_user_with_project, db_session: Session
+    ):
+        """流结束时队列里仍未消费的 steering 必须随本轮历史落库，
+        不能被 cleanup 静默删除（POST /steer 已经向用户确认 queued）。"""
+        from agent.core.workflow_events import StreamEvent, StreamEventType
+
+        service, _ = mock_agent_service
+        project = test_user_with_project["project"]
+        user = test_user_with_project["user"]
+
+        def fake_workflow(writing_state, **_kwargs):
+            async def _stream():
+                # 模拟用户在生成期间通过 POST /agent/steer 入队，而工作流
+                # 全程没有任何消费点取走它（单迭代 quick 工作流的真实形态）
+                from agent.core.steering import get_steering_queue_for_user_async
+
+                queue = await get_steering_queue_for_user_async(
+                    writing_state["session_id"], str(user.id)
+                )
+                await queue.add("生成中途的引导：改成第一人称")
+                yield StreamEvent(type=StreamEventType.TEXT, data={"text": "正文"})
+                yield StreamEvent(
+                    type=StreamEventType.MESSAGE_END, data={"stop_reason": "end_turn"}
+                )
+
+            return _stream()
+
+        with patch(
+            "agent.service.run_writing_workflow_streaming", side_effect=fake_workflow
+        ):
+            events: list[str] = []
+            async for event in service.process_stream(
+                project_id=str(project.id),
+                user_id=str(user.id),
+                message="写一段",
+                session=db_session,
+            ):
+                events.append(event)
+
+        session_started_events = [e for e in events if "event: session_started" in e]
+        assert session_started_events, "Expected session_started event"
+        session_id = json.loads(
+            session_started_events[0].split("data:", 1)[1].strip()
+        )["session_id"]
+
+        db_session.rollback()
+        persisted = db_session.exec(
+            select(ChatMessage).where(ChatMessage.session_id == session_id)
+        ).all()
+        assert any(
+            m.role == "user" and m.content == "生成中途的引导：改成第一人称"
+            for m in persisted
+        ), "未消费的 steering 消息必须持久化为用户消息"
+
+    async def test_process_stream_cancellation_persists_queued_steering(
+        self, mock_agent_service, test_user_with_project, db_session: Session
+    ):
+        """取消路径同样不能丢弃已入队未消费的 steering：后台保存任务先 drain
+        队列再落库，cleanup 在保存完成后才删除队列。"""
+        from agent.core.workflow_events import StreamEvent, StreamEventType
+
+        service, _ = mock_agent_service
+        project = test_user_with_project["project"]
+        user = test_user_with_project["user"]
+
+        started = asyncio.Event()
+
+        def fake_workflow(writing_state, **_kwargs):
+            async def _stream():
+                from agent.core.steering import get_steering_queue_for_user_async
+
+                queue = await get_steering_queue_for_user_async(
+                    writing_state["session_id"], str(user.id)
+                )
+                await queue.add("取消前入队的引导")
+                yield StreamEvent(type=StreamEventType.TEXT, data={"text": "部分内容"})
+                started.set()
+                await asyncio.sleep(3600)
+
+            return _stream()
+
+        events: list[str] = []
+
+        async def consume():
+            async for event in service.process_stream(
+                project_id=str(project.id),
+                user_id=str(user.id),
+                message="取消我",
+                session=db_session,
+            ):
+                events.append(event)
+
+        def _fresh_session():
+            return Session(db_session.get_bind())
+
+        with (
+            patch("agent.service.run_writing_workflow_streaming", side_effect=fake_workflow),
+            patch("agent.service.create_session", side_effect=_fresh_session),
+        ):
+            task = asyncio.create_task(consume())
+            await started.wait()
+            await asyncio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            session_started_events = [e for e in events if "event: session_started" in e]
+            assert session_started_events, "Expected session_started event"
+            session_id = json.loads(
+                session_started_events[0].split("data:", 1)[1].strip()
+            )["session_id"]
+
+            steering_rows: list[ChatMessage] = []
+            for _ in range(100):
+                await asyncio.sleep(0.05)
+                db_session.rollback()
+                steering_rows = [
+                    m
+                    for m in db_session.exec(
+                        select(ChatMessage).where(ChatMessage.session_id == session_id)
+                    ).all()
+                    if m.role == "user" and m.content == "取消前入队的引导"
+                ]
+                if steering_rows:
+                    break
+
+        assert steering_rows, "取消时已入队未消费的 steering 必须先落库再清理队列"
+
+    async def test_cancellation_during_history_save_does_not_duplicate_history(
+        self, mock_agent_service, test_user_with_project, db_session: Session
+    ):
+        """取消恰好落在 save_messages 的工作线程期间：线程照样提交完整历史，
+        补偿保存必须等它的真实结果，不能把同一轮再写一遍。"""
+        from agent.core.message_manager import MessageManager
+        from agent.core.workflow_events import StreamEvent, StreamEventType
+
+        service, _ = mock_agent_service
+        project = test_user_with_project["project"]
+        user = test_user_with_project["user"]
+
+        bind = db_session.get_bind()
+        worker_started = threading.Event()
+        allow_commit = threading.Event()
+        real_save_with_session = MessageManager._save_messages_with_session
+
+        async def mock_stream():
+            yield StreamEvent(type=StreamEventType.TEXT, data={"text": "完整回复"})
+            yield StreamEvent(
+                type=StreamEventType.MESSAGE_END, data={"stop_reason": "end_turn"}
+            )
+
+        async def fake_save_messages(self, session, *args, **kwargs):
+            # 复刻 PG 路径：save_messages 走 asyncio.to_thread，工作线程一旦
+            # 启动就无法取消，awaiting 侧抛 CancelledError 也照样提交。
+            def _commit_in_worker():
+                worker_started.set()
+                allow_commit.wait(5)
+                with Session(bind) as worker_session:
+                    return real_save_with_session(self, worker_session, *args, **kwargs)
+
+            return await asyncio.to_thread(_commit_in_worker)
+
+        events: list[str] = []
+
+        async def consume():
+            async for event in service.process_stream(
+                project_id=str(project.id),
+                user_id=str(user.id),
+                message="保存中途取消",
+                session=db_session,
+            ):
+                events.append(event)
+
+        scheduled: list[asyncio.Task] = []
+        real_schedule = service._schedule_background_cleanup
+
+        def _tracking_schedule(coro, **kwargs):
+            task = real_schedule(coro, **kwargs)
+            scheduled.append(task)
+            return task
+
+        with (
+            patch("agent.service.run_writing_workflow_streaming", return_value=mock_stream()),
+            patch("agent.service.create_session", side_effect=lambda: Session(bind)),
+            patch.object(MessageManager, "save_messages", new=fake_save_messages),
+            patch.object(
+                service, "_schedule_background_cleanup", side_effect=_tracking_schedule
+            ),
+        ):
+            task = asyncio.create_task(consume())
+            for _ in range(500):
+                if worker_started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            assert worker_started.is_set(), "落库工作线程未启动，测试前置条件不成立"
+
+            task.cancel()
+            allow_commit.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            # 等所有后台任务（补偿保存 + 队列清理）跑完再断言，避免竞态假绿
+            if scheduled:
+                await asyncio.gather(*scheduled, return_exceptions=True)
+
+            session_started_events = [e for e in events if "event: session_started" in e]
+            assert session_started_events, "Expected session_started event"
+            session_id = json.loads(
+                session_started_events[0].split("data:", 1)[1].strip()
+            )["session_id"]
+
+            db_session.rollback()
+            persisted = db_session.exec(
+                select(ChatMessage).where(ChatMessage.session_id == session_id)
+            ).all()
+
+        user_rows = [m for m in persisted if m.role == "user"]
+        assistant_rows = [m for m in persisted if m.role == "assistant"]
+        assert len(user_rows) == 1, (
+            f"整轮历史必须恰好落库一次（不重复、不丢失）: {[m.content for m in user_rows]}"
+        )
+        assert len(assistant_rows) == 1, "assistant 消息必须恰好落库一次"
+        assert assistant_rows[0].content == "完整回复"
+
+        chat_session = db_session.get(ChatSession, session_id)
+        assert chat_session is not None
+        assert chat_session.message_count == 2, "message_count 被重复累加"
+
+    async def test_cancellation_falls_back_to_partial_save_when_history_save_fails(
+        self, mock_agent_service, test_user_with_project, db_session: Session
+    ):
+        """落库任务自身失败时，取消路径仍要补偿保存，不能因为「已尝试保存」就丢历史。"""
+        from agent.core.message_manager import MessageManager
+        from agent.core.workflow_events import StreamEvent, StreamEventType
+
+        service, _ = mock_agent_service
+        project = test_user_with_project["project"]
+        user = test_user_with_project["user"]
+
+        bind = db_session.get_bind()
+        worker_started = threading.Event()
+        allow_fail = threading.Event()
+
+        async def mock_stream():
+            yield StreamEvent(type=StreamEventType.TEXT, data={"text": "部分回复"})
+            yield StreamEvent(
+                type=StreamEventType.MESSAGE_END, data={"stop_reason": "end_turn"}
+            )
+
+        async def failing_save_messages(self, session, *args, **kwargs):
+            def _fail_in_worker():
+                worker_started.set()
+                allow_fail.wait(5)
+                raise RuntimeError("db unavailable")
+
+            return await asyncio.to_thread(_fail_in_worker)
+
+        events: list[str] = []
+
+        async def consume():
+            async for event in service.process_stream(
+                project_id=str(project.id),
+                user_id=str(user.id),
+                message="落库失败后取消",
+                session=db_session,
+            ):
+                events.append(event)
+
+        scheduled: list[asyncio.Task] = []
+        real_schedule = service._schedule_background_cleanup
+
+        def _tracking_schedule(coro, **kwargs):
+            task = real_schedule(coro, **kwargs)
+            scheduled.append(task)
+            return task
+
+        with (
+            patch("agent.service.run_writing_workflow_streaming", return_value=mock_stream()),
+            patch("agent.service.create_session", side_effect=lambda: Session(bind)),
+            patch.object(MessageManager, "save_messages", new=failing_save_messages),
+            patch.object(
+                service, "_schedule_background_cleanup", side_effect=_tracking_schedule
+            ),
+        ):
+            task = asyncio.create_task(consume())
+            for _ in range(500):
+                if worker_started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            assert worker_started.is_set(), "落库工作线程未启动，测试前置条件不成立"
+
+            task.cancel()
+            allow_fail.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            if scheduled:
+                await asyncio.gather(*scheduled, return_exceptions=True)
+
+            session_started_events = [e for e in events if "event: session_started" in e]
+            assert session_started_events, "Expected session_started event"
+            session_id = json.loads(
+                session_started_events[0].split("data:", 1)[1].strip()
+            )["session_id"]
+
+            db_session.rollback()
+            persisted = db_session.exec(
+                select(ChatMessage).where(ChatMessage.session_id == session_id)
+            ).all()
+
+        assert any(
+            m.role == "user" and m.content == "落库失败后取消" for m in persisted
+        ), "落库失败 + 取消时必须补偿保存用户消息"
+        assert any(
+            m.role == "assistant" and m.content == "部分回复" for m in persisted
+        ), "落库失败 + 取消时必须补偿保存已生成内容"
+
 
 @pytest.mark.unit
 class TestAgentServiceHelpers:

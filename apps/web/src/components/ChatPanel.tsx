@@ -394,9 +394,11 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
   // Use the useChatStreaming hook for streaming UI state management
   const {
     streamRenderItems,
+    clearStreamItems,
     editProgress,
     setEditProgress,
     matchedSkills,
+    setMatchedSkills,
     getStreamCallbacks,
   } = useChatStreaming();
   const [suggestionDisplayState, setSuggestionDisplayState] = useState<SuggestionDisplayState>("loading");
@@ -1030,6 +1032,12 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
     setMessages([]);
     setFeedbackPendingMessageId(null);
     setEditProgress(null);
+    // 旧项目的流式渲染残留（半截正文/工具卡片/技能芯片/冲突）不能带进新项目会话：
+    // 旧流已被 useAgentStream 的项目切换 effect 中止，其 onComplete 永远不会执行，
+    // 所以必须在这里主动清空。
+    clearStreamItems();
+    setMatchedSkills([]);
+    reset();
     setAiSuggestions([]);
     setSuggestionDisplayState("loading");
     contextItemsRef.current = [];
@@ -1039,7 +1047,7 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
       const loadedMessages = await loadChatHistory(currentProjectId);
       await requestInitialSuggestions(currentProjectId, loadedMessages);
     })();
-  }, [currentProjectId, loadChatHistory, requestInitialSuggestions, setAiSuggestions, setEditProgress]); // 依赖 loadChatHistory
+  }, [currentProjectId, loadChatHistory, requestInitialSuggestions, setAiSuggestions, setEditProgress, clearStreamItems, setMatchedSkills, reset]); // 依赖 loadChatHistory
 
   // Auto-scroll to bottom when new messages arrive or streaming content meaningfully changes.
   // Coalesce scrolls in a single RAF to avoid completion-time jitter from multiple back-to-back
@@ -1307,6 +1315,9 @@ const ChatPanelComponent: React.FC<ChatPanelProps> = () => {
       await createNewSession(currentProjectId);
       setMessages([]);
       setFeedbackPendingMessageId(null);
+      // 上一轮若被取消/出错，流式渲染残留不会被 onComplete 清理，这里一并清空。
+      clearStreamItems();
+      setMatchedSkills([]);
       reset();
       await requestInitialSuggestions(currentProjectId, []);
     } catch (err) {

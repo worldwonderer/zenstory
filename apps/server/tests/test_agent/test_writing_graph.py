@@ -2,6 +2,7 @@
 Tests for agent/graph/writing_graph.py
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -814,6 +815,58 @@ class TestWritingGraphFileCorrection:
         assert any(event.type == StreamEventType.WORKFLOW_COMPLETE for event in events)
 
     @pytest.mark.asyncio
+    async def test_empty_file_flag_set_in_tool_subtask_still_triggers_correction(self):
+        """标记在 SDK 包的工具子任务里设置时，图循环（父上下文）仍必须触发纠偏重跑。
+
+        openai-agents SDK 为每次 function tool 调用包一层 asyncio.create_task，
+        create_file 的 pending 标记就是在那个子任务里设置的。
+        """
+        from agent.graph.writing_graph import run_writing_workflow_streaming
+
+        calls: list[str] = []
+
+        async def fake_run_streaming_agent(state, agent_type, *_args, **_kwargs):
+            calls.append(agent_type)
+            if len(calls) == 1:
+                # 模拟 SDK 在独立子任务里执行 create_file 工具并设置标记
+                async def tool_task():
+                    ToolContext.set_pending_empty_file("file-X", "第51章")
+
+                await asyncio.create_task(tool_task())
+                yield StreamEvent(
+                    type=StreamEventType.TEXT,
+                    data={"text": "正文文件已创建，需直接写入内容。[TASK_COMPLETE]"},
+                )
+            else:
+                ToolContext.clear_pending_empty_file()
+                yield StreamEvent(
+                    type=StreamEventType.TEXT,
+                    data={"text": "已用 edit_file 补全正文。[TASK_COMPLETE]"},
+                )
+
+        state = {"user_message": "写第51章", "messages": [], "system_prompt": ""}
+
+        ToolContext.set_context(
+            session=None, user_id="u", project_id="p", session_id="s",
+        )
+        try:
+            with (
+                patch("agent.graph.writing_graph.router_node", AsyncMock(return_value={})),
+                patch("agent.graph.writing_graph.get_next_node", return_value="writer"),
+                patch("agent.graph.writing_graph.run_streaming_agent", new=fake_run_streaming_agent),
+            ):
+                _ = [
+                    event async for event in run_writing_workflow_streaming(
+                        state=state, thread_id="t",
+                    )
+                ]
+        finally:
+            ToolContext.clear_context()
+
+        # 原始一轮 + 一次纠偏重跑
+        assert calls == ["writer", "writer"]
+
+    @pytest.mark.asyncio
     async def test_correction_is_bounded_and_does_not_loop_forever(self):
         from agent.graph.writing_graph import MAX_FILE_CORRECTION_ATTEMPTS, run_writing_workflow_streaming
 
@@ -849,3 +902,307 @@ class TestWritingGraphFileCorrection:
 
         # Initial turn + at most MAX_FILE_CORRECTION_ATTEMPTS corrective re-runs.
         assert len(calls) <= 1 + MAX_FILE_CORRECTION_ATTEMPTS
+
+
+@pytest.mark.unit
+class TestWritingGraphFileCorrectionDbVerification:
+    """纠偏必须先落库核验正文，避免 edit_file 已写完正文时被误判为空文件。
+
+    pending-empty-file 标记只表示"没走 <file>…</file> 流式写入"，edit_file
+    写正文不会清除它，所以标记仍在不等于正文为空。
+    """
+
+    @staticmethod
+    def _make_file(db_session, *, content: str, is_deleted: bool = False):
+        from models import File
+
+        file = File(
+            project_id="project-empty-guard",
+            title="第一章",
+            content=content,
+            file_type="draft",
+            is_deleted=is_deleted,
+        )
+        db_session.add(file)
+        db_session.commit()
+        db_session.refresh(file)
+        return file
+
+    @staticmethod
+    async def _run(db_session, file_id: str, title: str) -> list[dict]:
+        """跑一轮 writer：工具阶段置上 pending 标记，正文由 edit_file 侧写库。"""
+        from agent.graph.writing_graph import run_writing_workflow_streaming
+
+        calls: list[dict] = []
+
+        async def fake_run_streaming_agent(state, agent_type, *_args, **_kwargs):
+            calls.append({"agent": agent_type, "user_message": state.get("user_message", "")})
+            if len(calls) == 1:
+                # 只有第一轮调用了 create_file(空)，标记因此只置一次
+                ToolContext.set_pending_empty_file(file_id, title)
+            yield StreamEvent(
+                type=StreamEventType.TEXT,
+                data={"text": "已写入正文。[TASK_COMPLETE]"},
+            )
+
+        state = {"user_message": "写第一章", "messages": [], "system_prompt": ""}
+
+        ToolContext.set_context(
+            session=db_session, user_id="u", project_id="project-empty-guard", session_id="s",
+        )
+        try:
+            with (
+                patch("agent.graph.writing_graph.router_node", AsyncMock(return_value={})),
+                patch("agent.graph.writing_graph.get_next_node", return_value="writer"),
+                patch("agent.graph.writing_graph.run_streaming_agent", new=fake_run_streaming_agent),
+            ):
+                _ = [
+                    event async for event in run_writing_workflow_streaming(
+                        state=state, thread_id="t",
+                    )
+                ]
+        finally:
+            ToolContext.clear_context()
+
+        return calls
+
+    @pytest.mark.asyncio
+    async def test_body_written_by_edit_file_does_not_trigger_rerun(self, db_session):
+        """create_file(空) + edit_file(op=append) 写完正文后，绝不能再跑一轮纠偏。
+
+        否则纠偏轮会按"正文仍为空"的指令再 append 一遍完整正文，文件里出现两份正文。
+        """
+        file = self._make_file(db_session, content="第一章正文" * 50)
+
+        calls = await self._run(db_session, file.id, file.title)
+
+        assert len(calls) == 1, "正文已落库时不得触发纠偏重跑"
+
+    @pytest.mark.asyncio
+    async def test_still_empty_body_triggers_rerun(self, db_session):
+        """正文确实为空时，纠偏兜底必须保留。"""
+        file = self._make_file(db_session, content="   \n  ")
+
+        calls = await self._run(db_session, file.id, file.title)
+
+        assert len(calls) == 2
+        assert "正文仍为空" in calls[1]["user_message"]
+        assert file.id in calls[1]["user_message"]
+
+    @pytest.mark.asyncio
+    async def test_deleted_file_does_not_trigger_rerun(self, db_session):
+        """文件已被删除时无正文可补，不应白烧一轮 writer。"""
+        file = self._make_file(db_session, content="", is_deleted=True)
+
+        calls = await self._run(db_session, file.id, file.title)
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_missing_file_does_not_trigger_rerun(self, db_session):
+        calls = await self._run(db_session, "file-not-in-db", "第一章")
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_body_written_in_other_session_is_seen(self, db_session):
+        """正文由工具自己的 session 写入时，核验必须读数据库最新值。
+
+        offload 路径下 edit_file 用独立 session 提交，图上下文的 session 里可能
+        还缓存着 content="" 的旧实例；按缓存判断会把已写完的文件误判为空文件。
+        """
+        from sqlmodel import Session
+
+        from agent.graph.writing_graph import run_writing_workflow_streaming
+        from models import File
+
+        file = self._make_file(db_session, content="")
+        # 让图上下文的 session 先缓存一份 content="" 的实例
+        assert db_session.get(File, file.id).content == ""
+
+        engine = db_session.get_bind()
+        calls: list[str] = []
+
+        async def fake_run_streaming_agent(state, agent_type, *_args, **_kwargs):
+            calls.append(agent_type)
+            if len(calls) == 1:
+                ToolContext.set_pending_empty_file(file.id, file.title)
+                with Session(engine) as tool_session:
+                    target = tool_session.get(File, file.id)
+                    target.content = "第一章正文" * 50
+                    tool_session.add(target)
+                    tool_session.commit()
+            yield StreamEvent(
+                type=StreamEventType.TEXT,
+                data={"text": "已写入正文。[TASK_COMPLETE]"},
+            )
+
+        state = {"user_message": "写第一章", "messages": [], "system_prompt": ""}
+
+        ToolContext.set_context(
+            session=db_session, user_id="u", project_id="project-empty-guard", session_id="s",
+        )
+        try:
+            with (
+                patch("agent.graph.writing_graph.router_node", AsyncMock(return_value={})),
+                patch("agent.graph.writing_graph.get_next_node", return_value="writer"),
+                patch("agent.graph.writing_graph.run_streaming_agent", new=fake_run_streaming_agent),
+            ):
+                _ = [
+                    event async for event in run_writing_workflow_streaming(
+                        state=state, thread_id="t",
+                    )
+                ]
+        finally:
+            ToolContext.clear_context()
+
+        assert calls == ["writer"]
+
+
+@pytest.mark.unit
+class TestWritingGraphSteeringFollowup:
+    """运行期间到达的 steering 必须在本次请求内触发追加轮，而不是被丢弃。"""
+
+    @pytest.mark.asyncio
+    async def test_mid_run_steering_triggers_writer_followup(self):
+        """runner 在工具边界消费到的 steering（steering_received 事件）应让
+        graph 在工作流收尾前追加一轮 writer。"""
+        from agent.core.events import steering_received_event
+        from agent.graph.writing_graph import run_writing_workflow_streaming
+
+        calls: list[dict] = []
+
+        async def fake_run_streaming_agent(state, agent_type, get_steering_messages=None):
+            calls.append({"agent_type": agent_type, "state": dict(state)})
+            if len(calls) == 1:
+                yield StreamEvent(type=StreamEventType.MESSAGE_START, data={})
+                yield StreamEvent(type=StreamEventType.TEXT, data={"text": "第一章内容"})
+                # 模拟 runner 在工具输出边界消费到 steering：发确认事件并把
+                # 内容作为用户消息写回 state（与真实 runner 行为一致）。
+                yield steering_received_event(message_id="steer-1", preview="改成第一人称")
+                state["messages"] = list(state.get("messages") or []) + [
+                    {"role": "user", "content": "改成第一人称"}
+                ]
+            else:
+                yield StreamEvent(type=StreamEventType.MESSAGE_START, data={})
+                yield StreamEvent(type=StreamEventType.TEXT, data={"text": "已按引导调整"})
+
+        async def get_steering_messages():
+            # 队列已被 runner 在边界消费，graph 边界轮询拿不到新消息
+            return []
+
+        state = {"user_message": "写第一章", "messages": [], "system_prompt": ""}
+
+        with (
+            patch("agent.graph.writing_graph.router_node", AsyncMock(return_value={})),
+            patch("agent.graph.writing_graph.get_next_node", return_value="writer"),
+            patch("agent.graph.writing_graph.run_streaming_agent", new=fake_run_streaming_agent),
+        ):
+            events = [
+                event async for event in run_writing_workflow_streaming(
+                    state=state,
+                    thread_id="t",
+                    get_steering_messages=get_steering_messages,
+                )
+            ]
+
+        assert len(calls) == 2, "运行中消费到 steering 后必须追加一轮 writer"
+        assert calls[1]["agent_type"] == "writer"
+        followup_message = calls[1]["state"]["user_message"]
+        assert "引导" in followup_message
+        # 引导内容已在会话历史中，追加轮能看到
+        assert {"role": "user", "content": "改成第一人称"} in calls[1]["state"]["messages"]
+        assert not any(
+            event.type == StreamEventType.ITERATION_EXHAUSTED for event in events
+        )
+
+    @pytest.mark.asyncio
+    async def test_boundary_steering_consumed_before_workflow_stops(self):
+        """纯文本生成期间到达、run 内没有工具边界可消费的 steering，必须在
+        工作流收尾前由 graph 消费并触发追加轮（而不是留给 cleanup 删除）。"""
+        from agent.graph.writing_graph import run_writing_workflow_streaming
+
+        calls: list[dict] = []
+
+        async def fake_run_streaming_agent(state, agent_type, get_steering_messages=None):
+            calls.append({"agent_type": agent_type, "state": dict(state)})
+            yield StreamEvent(type=StreamEventType.MESSAGE_START, data={})
+            yield StreamEvent(type=StreamEventType.TEXT, data={"text": "一段生成内容"})
+
+        steering_polls = {"n": 0}
+
+        async def get_steering_messages():
+            steering_polls["n"] += 1
+            if steering_polls["n"] == 1:
+                return [{"id": "steer-2", "content": "结尾加一个反转"}]
+            return []
+
+        state = {"user_message": "写一段", "messages": [], "system_prompt": ""}
+
+        with (
+            patch("agent.graph.writing_graph.router_node", AsyncMock(return_value={})),
+            patch("agent.graph.writing_graph.get_next_node", return_value="writer"),
+            patch("agent.graph.writing_graph.run_streaming_agent", new=fake_run_streaming_agent),
+        ):
+            events = [
+                event async for event in run_writing_workflow_streaming(
+                    state=state,
+                    thread_id="t",
+                    get_steering_messages=get_steering_messages,
+                )
+            ]
+
+        assert steering_polls["n"] >= 1, "graph 必须在 agent 边界轮询 steering 队列"
+        assert len(calls) == 2, "边界消费到 steering 后必须追加一轮 writer"
+        # 消费到的消息要向前端确认，并作为用户消息进入追加轮的会话历史
+        assert any(
+            getattr(event.type, "value", "") == "steering_received" for event in events
+        )
+        assert {"role": "user", "content": "结尾加一个反转"} in calls[1]["state"]["messages"]
+
+    @pytest.mark.asyncio
+    async def test_steering_followup_skipped_when_planned_agent_remains(self):
+        """已有计划中的下一个 agent 时不追加 writer 轮：steering 会经由下一个
+        agent 的起始注入/会话历史生效，避免打乱计划工作流。"""
+        from agent.core.events import steering_received_event
+        from agent.graph.writing_graph import run_writing_workflow_streaming
+
+        calls: list[str] = []
+
+        async def fake_run_streaming_agent(state, agent_type, get_steering_messages=None):
+            calls.append(agent_type)
+            yield StreamEvent(type=StreamEventType.MESSAGE_START, data={})
+            if agent_type == "planner":
+                yield steering_received_event(message_id="steer-3", preview="主角改名林川")
+                state["messages"] = list(state.get("messages") or []) + [
+                    {"role": "user", "content": "主角改名林川"}
+                ]
+            yield StreamEvent(type=StreamEventType.TEXT, data={"text": f"{agent_type} 输出"})
+
+        async def get_steering_messages():
+            return []
+
+        router_result = {
+            "current_agent": "planner",
+            "workflow_plan": "standard",
+            "workflow_agents": ["writer"],
+            "routing_metadata": {},
+        }
+
+        state = {"user_message": "规划并写作", "messages": [], "system_prompt": ""}
+
+        with (
+            patch("agent.graph.writing_graph.router_node", AsyncMock(return_value=router_result)),
+            patch("agent.graph.writing_graph.get_next_node", return_value="planner"),
+            patch("agent.graph.writing_graph.run_streaming_agent", new=fake_run_streaming_agent),
+        ):
+            _ = [
+                event async for event in run_writing_workflow_streaming(
+                    state=state,
+                    thread_id="t",
+                    get_steering_messages=get_steering_messages,
+                )
+            ]
+
+        # planner -> writer（计划交接），writer 收尾后无新 steering，不再追加
+        assert calls == ["planner", "writer"]

@@ -107,6 +107,25 @@ _pending_empty_file_var: contextvars.ContextVar[dict[str, str] | None] = context
 )
 
 
+class _PendingEmptyFileState:
+    """待写入空文件标记的可变持有者，随请求上下文 dict 在所有子任务间共享。
+
+    IMPORTANT — 该标记不能存成独立 ContextVar：openai-agents SDK 会为 run loop
+    以及每一次 function tool 调用各包一层 asyncio.create_task，而 create_task 只
+    拷贝当前 contextvars 快照，子任务里对 ContextVar 的重绑定对父上下文与兄弟
+    任务均不可见（同理 asyncio.to_thread / asyncio.gather 的子任务）。因此这里
+    只能原地修改这个持有者对象——set_context 在请求主上下文把它放进
+    _tool_context_var 持有的 dict 后，所有子任务的上下文副本（含
+    set_current_agent、parallel_executor task_ctx 的浅拷贝）引用的都是同一个
+    实例，原地读写天然跨任务可见。
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self) -> None:
+        self.value: dict[str, str] | None = None
+
+
 class ToolContext:
     """
     Holds session and user_id for tool execution.
@@ -134,6 +153,7 @@ class ToolContext:
             "session_id": session_id,
             "create_session_func": create_session_func,
             "current_agent": current_agent,
+            "pending_empty_file_state": _PendingEmptyFileState(),
         })
         _owned_session_var.set(None)
         _pending_empty_file_var.set(None)
@@ -228,27 +248,53 @@ class ToolContext:
     def clear_context(cls) -> None:
         """Clear context and clean up owned session."""
         cls._cleanup_owned_session()
+        # 先清空共享持有者：其它任务里仍存活的上下文副本引用同一个对象，
+        # 仅把本上下文的 ContextVar 置 None 无法让它们看到清理结果。
+        state = cls._get_pending_empty_file_state()
+        if state is not None:
+            state.value = None
         _tool_context_var.set(None)
         _pending_empty_file_var.set(None)
 
     @classmethod
+    def _get_pending_empty_file_state(cls) -> _PendingEmptyFileState | None:
+        """获取请求上下文中跨任务共享的待写入文件持有者（未建上下文时为 None）。"""
+        context = _tool_context_var.get()
+        if isinstance(context, dict):
+            state = context.get("pending_empty_file_state")
+            if isinstance(state, _PendingEmptyFileState):
+                return state
+        return None
+
+    @classmethod
     def set_pending_empty_file(cls, file_id: str, title: str) -> None:
         """标记有一个空文件等待流式写入。"""
+        state = cls._get_pending_empty_file_state()
+        if state is not None:
+            state.value = {"file_id": file_id, "title": title}
+            return
+        # 未调用 set_context 的场景（如直接 set/get 的单测）退回本上下文的 ContextVar
         _pending_empty_file_var.set({"file_id": file_id, "title": title})
 
     @classmethod
     def clear_pending_empty_file(cls) -> None:
         """清除待写入文件标记。"""
+        state = cls._get_pending_empty_file_state()
+        if state is not None:
+            state.value = None
         _pending_empty_file_var.set(None)
 
     @classmethod
     def has_pending_empty_file(cls) -> bool:
         """检查是否有待写入的空文件。"""
-        return _pending_empty_file_var.get() is not None
+        return cls.get_pending_empty_file() is not None
 
     @classmethod
     def get_pending_empty_file(cls) -> dict[str, str] | None:
         """获取待写入的空文件信息。"""
+        state = cls._get_pending_empty_file_state()
+        if state is not None:
+            return state.value
         return _pending_empty_file_var.get()
 
     @classmethod
@@ -837,40 +883,23 @@ def _format_tool_result_overflow_backfill_context(backfills: list[dict[str, Any]
     return "\n".join(lines)
 
 
-def _extract_created_empty_file_id(result: dict[str, Any]) -> str:
-    """Pull the new file id out of a successful create_file MCP result envelope."""
-    try:
-        content = result.get("content") if isinstance(result, dict) else None
-        if not isinstance(content, list) or not content:
-            return ""
-        text = content[0].get("text", "") if isinstance(content[0], dict) else ""
-        payload = json.loads(text) if text else {}
-        if not isinstance(payload, dict) or payload.get("status") != "success":
-            return ""
-        data = payload.get("data")
-        return data.get("id", "") if isinstance(data, dict) else ""
-    except Exception:
-        return ""
+def _is_folder_file_type(result: dict[str, Any], args: dict[str, Any]) -> bool:
+    """判断刚创建的节点是否是文件夹（以执行器落库后的类型为准，回退到入参）。"""
+    raw = result.get("file_type") if isinstance(result, dict) else None
+    if not isinstance(raw, str) or not raw.strip():
+        raw = args.get("file_type") if isinstance(args, dict) else None
+    return isinstance(raw, str) and raw.strip().lower() == "folder"
 
 
 async def create_file(args: dict[str, Any]) -> dict[str, Any]:
     """创建新文件。"""
     if _should_offload_tool_execution():
-        result = await asyncio.to_thread(
+        # asyncio.to_thread 运行在拷贝上下文中，但 pending-empty-file 标记通过
+        # 请求上下文 dict 里的共享持有者原地修改，_create_file_sync 在工作线程
+        # 里设置后对主上下文同样可见，无需在此回填。
+        return await asyncio.to_thread(
             _run_sync_tool_with_owned_session_cleanup, _create_file_sync, args
         )
-        # The pending-empty-file marker is a ContextVar. On the Postgres offload
-        # path _create_file_sync runs inside asyncio.to_thread, which executes in
-        # a COPIED context, so the marker it sets there never reaches this
-        # (event-loop) context. Re-apply it here so the consecutive-empty-file
-        # guard and the writing_graph abandoned-empty-file correction loop — both
-        # of which read has_pending_empty_file() in the main context — work in
-        # production, not just under SQLite (where no offload happens).
-        if not args.get("content", ""):
-            file_id = _extract_created_empty_file_id(result)
-            if file_id:
-                ToolContext.set_pending_empty_file(file_id, args.get("title", ""))
-        return result
     return _create_file_sync(args)
 
 
@@ -915,7 +944,10 @@ def _create_file_sync(args: dict[str, Any]) -> dict[str, Any]:
         )
 
         # 如果创建的是空文件，标记为待写入
-        if not content:
+        # folder 例外：文件夹是纯容器节点，永远不会收到 <file>…</file> 正文，
+        # 给它置标记后无人清除（标记跨子任务可见），会硬阻断本轮后续所有建档，
+        # 并让 writing_graph 的纠偏分支把章节正文追加到文件夹节点上。
+        if not content and not _is_folder_file_type(result, args):
             file_id = result.get("id", "")
             if file_id:
                 ToolContext.set_pending_empty_file(file_id, title)
@@ -943,6 +975,12 @@ def _edit_file_sync(args: dict[str, Any]) -> dict[str, Any]:
     """Synchronous edit_file implementation."""
     tool_name = "edit_file"
     executor = ToolContext.get_executor()
+    project_id = ToolContext._get_context().get("project_id")
+
+    # 写工具必须运行在绑定了项目的上下文中；执行器层会进一步校验目标文件
+    # 属于该项目（check_file_access_in_tool_context）。
+    if project_id is None:
+        return _make_error("project_id not set", tool_name=tool_name)
 
     try:
         file_id_raw = args.get("id") or args.get("file_id") or args.get("fileId")
@@ -1000,6 +1038,12 @@ def _delete_file_sync(args: dict[str, Any]) -> dict[str, Any]:
     """Synchronous delete_file implementation."""
     tool_name = "delete_file"
     executor = ToolContext.get_executor()
+    project_id = ToolContext._get_context().get("project_id")
+
+    # 删除工具必须运行在绑定了项目的上下文中；执行器层会进一步校验目标文件
+    # 属于该项目（check_file_access_in_tool_context）。
+    if project_id is None:
+        return _make_error("project_id not set", tool_name=tool_name)
 
     try:
         result = executor.delete_file(

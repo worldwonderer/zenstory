@@ -148,6 +148,42 @@ class TestSessionLoaderHistoryBudget:
         assert assistant_content[0] == {"type": "thinking", "thinking": "kept reasoning"}
         assert assistant_content[1] == {"type": "text", "text": "m4" * 8}
 
+    def test_history_window_budget_ignores_ui_only_reasoning_content(
+        self,
+        db_session: Session,
+        session_loader_test_data,
+        monkeypatch,
+    ):
+        """Reasoning is dropped before replay, so it must not eat the history window."""
+        monkeypatch.setattr("agent.core.session_loader.AGENT_CHAT_HISTORY_TOKEN_BUDGET", 60)
+        heavy_reasoning = "推理" * 800  # 单条即远超整个预算
+        _add_chat_messages(
+            db_session,
+            session_loader_test_data["chat_session"].id,
+            [
+                {"role": "user", "content": "写下一章"},
+                {"role": "assistant", "content": "好的", "reasoning_content": heavy_reasoning},
+                {"role": "user", "content": "继续"},
+                {"role": "assistant", "content": "收到", "reasoning_content": heavy_reasoning},
+            ],
+        )
+
+        loader = SessionLoader(
+            project_id=session_loader_test_data["project"].id,
+            user_id=session_loader_test_data["user"].id,
+        )
+        session_data = loader.load_chat_session(db_session)
+
+        # 正文 token 很小，四条消息都应留在窗口内
+        assert len(session_data.history_messages) == 4
+        assert session_data.history_messages[0]["content"] == "写下一章"
+
+        # thinking 块仍保留在内容里供 UI/历史使用
+        last_content = session_data.history_messages[-1]["content"]
+        assert isinstance(last_content, list)
+        assert last_content[0] == {"type": "thinking", "thinking": heavy_reasoning}
+        assert last_content[1] == {"type": "text", "text": "收到"}
+
     def test_load_chat_session_returns_empty_history_for_no_messages(
         self,
         db_session: Session,

@@ -203,4 +203,56 @@ describe('MobileChatInput', () => {
     expect(removeMaterial).toHaveBeenCalledWith('material-1')
     expect(removeQuote).toHaveBeenCalledWith('quote-1')
   })
+
+  describe('IME composition (中文/日文输入法)', () => {
+    it('does not send when Enter keydown carries isComposing (Chrome/Edge 确认候选词)', () => {
+      const onSend = vi.fn()
+      render(<MobileChatInput onSend={onSend} />)
+
+      const textarea = screen.getByPlaceholderText('Type a message')
+      fireEvent.change(textarea, { target: { value: 'ni hao' } })
+      fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
+
+      expect(onSend).not.toHaveBeenCalled()
+      expect(textarea).toHaveValue('ni hao')
+    })
+
+    it('does not send on Enter between compositionstart and compositionend', () => {
+      const onSend = vi.fn()
+      render(<MobileChatInput onSend={onSend} />)
+
+      const textarea = screen.getByPlaceholderText('Type a message')
+      fireEvent.compositionStart(textarea)
+      fireEvent.change(textarea, { target: { value: 'nihao' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+
+      expect(onSend).not.toHaveBeenCalled()
+    })
+
+    it('does not send when the confirming Enter arrives after compositionend with keyCode 229 (Safari)', () => {
+      const onSend = vi.fn()
+      render(<MobileChatInput onSend={onSend} />)
+
+      const textarea = screen.getByPlaceholderText('Type a message')
+      fireEvent.compositionStart(textarea)
+      fireEvent.change(textarea, { target: { value: '你好' } })
+      fireEvent.compositionEnd(textarea)
+      fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229 })
+
+      expect(onSend).not.toHaveBeenCalled()
+    })
+
+    it('sends normally on Enter after composition has ended', () => {
+      const onSend = vi.fn()
+      render(<MobileChatInput onSend={onSend} />)
+
+      const textarea = screen.getByPlaceholderText('Type a message')
+      fireEvent.compositionStart(textarea)
+      fireEvent.change(textarea, { target: { value: '你好' } })
+      fireEvent.compositionEnd(textarea)
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+
+      expect(onSend).toHaveBeenCalledWith('你好')
+    })
+  })
 })

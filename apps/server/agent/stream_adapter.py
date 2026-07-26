@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from models.file_model import FILE_TYPE_FOLDER
 from utils.logger import get_logger, log_with_context
 
 from .core.events import (
@@ -67,6 +68,15 @@ STREAM_SKILL_USAGE_RECORD_TIMEOUT_S = _get_positive_float_env(
 
 # Regex pattern for skill usage marker: [使用技能: xxx]
 SKILL_USAGE_PATTERN = re.compile(r"\[使用技能:\s*(.+?)\]")
+
+
+def is_folder_file_type(raw: Any) -> bool:
+    """判断一个 file_type 值是否是文件夹（strip + lower 归一化，容忍 None/非字符串）。
+
+    与 mcp_tools 的 pending-empty-file 守卫必须用同一套判定：一处放行、一处
+    拦截会让 folder 只在其中一条路径上被排除（本次 C2 缺口的成因）。
+    """
+    return isinstance(raw, str) and raw.strip().lower() == FILE_TYPE_FOLDER
 
 
 @dataclass
@@ -177,7 +187,23 @@ class StreamAdapter:
             file_id: ID of the created file
             file_type: Type of the file
             title: Title of the file
+
+        Note:
+            start_file_write() 会清空 StreamProcessor 的缓冲。调用方若可能在
+            捕获进行中调用（正常路径就是「上一份文件还没写完又建了新档」），
+            必须先用 _flush_active_capture() 把已缓冲的内容吐出去，否则那段
+            叙述/正文会被静默丢弃。适配器自身的 create_file 处理已这样做。
         """
+        if self.config.process_file_markers and self._stream_processor.is_active:
+            log_with_context(
+                logger,
+                30,  # WARNING
+                "Overwriting an active file capture without flushing it first",
+                file_id=file_id,
+                previous_state=str(self._stream_processor.state),
+                previous_file_id=self._stream_processor.file_id,
+            )
+
         self._pending_file_write = PendingFileWrite(
             file_id=file_id,
             file_type=file_type,
@@ -244,9 +270,7 @@ class StreamAdapter:
         # so it cannot block create_file in any subsequent processing/request.
         if self._pending_file_write is not None:
             self._pending_file_write = None
-            with contextlib.suppress(Exception):
-                from agent.tools.mcp_tools import ToolContext
-                ToolContext.clear_pending_empty_file()
+            self._clear_pending_empty_file_guard()
 
         # Ensure content_end is sent if content was started
         if self._content_started:
@@ -486,7 +510,8 @@ class StreamAdapter:
 
             # Handle file creation
             if tool_name == "create_file" and status == "success":
-                await self._handle_create_file_result(result_data)
+                async for event in self._handle_create_file_result(result_data):
+                    yield event
                 file_data = result_data if isinstance(result_data, dict) else {}
                 if file_data:
                     file_id = file_data.get("id", "")
@@ -565,16 +590,63 @@ class StreamAdapter:
 
         return ""
 
-    async def _handle_create_file_result(self, result_data: Any) -> None:
-        """Set up pending file write if file was created empty."""
+    async def _handle_create_file_result(
+        self,
+        result_data: Any,
+    ) -> AsyncIterator[SSEEvent]:
+        """Set up pending file write if a content-bearing file was created empty.
+
+        Yields SSE events for the previous capture when a new pending write
+        displaces one that is still buffering.
+        """
         file_data = result_data if isinstance(result_data, dict) else {}
-        if file_data:
-            file_id = file_data.get("id", "")
-            file_type = file_data.get("file_type", "")
-            title = file_data.get("title", "")
-            content = file_data.get("content", "")
-            if not content and file_id:
-                self.set_pending_file_write(file_id, file_type, title)
+        if not file_data:
+            return
+
+        file_id = file_data.get("id", "")
+        content = file_data.get("content", "")
+        if content or not file_id:
+            return
+
+        file_type = file_data.get("file_type", "")
+        # folder 是纯容器节点，永远不会收到 <file>…</file> 正文。给它开启流式
+        # 捕获会把后续叙述全部扣在 WAITING_START 缓冲里（前端长时间无输出），
+        # 并让流结束时的 at_eof 兜底把叙述当正文 update_file 写进文件夹行。
+        # 与 mcp_tools 的 pending-empty-file 守卫保持同一套 folder 判定。
+        if is_folder_file_type(file_type):
+            log_with_context(
+                logger,
+                20,  # INFO
+                "Skipping pending file write for folder node",
+                file_id=file_id,
+                file_type=file_type,
+                title=file_data.get("title", ""),
+            )
+            return
+
+        # 上一段捕获可能仍在缓冲（WAITING_START 的叙述 / WRITING 的正文）：
+        # 先收尾并把内容吐出去，再切到新文件，避免 start_file_write() 清空
+        # 缓冲造成静默丢失。
+        async for sse_event in self._flush_active_capture():
+            yield sse_event
+        if self._fatal_stream_error:
+            return
+
+        self.set_pending_file_write(file_id, file_type, file_data.get("title", ""))
+
+    async def _flush_active_capture(self) -> AsyncIterator[SSEEvent]:
+        """收尾仍在进行中的流式捕获，并发出对应的 SSE 事件。
+
+        复用 finalize_on_stream_end 的语义：WAITING_START 的缓冲原样回到对话，
+        WRITING 的正文按截断补全（含 control-marker 污染守卫），DRAINING 的
+        溢出尾部丢弃。
+        """
+        if not (self.config.process_file_markers and self._stream_processor.is_active):
+            return
+
+        result = self._stream_processor.finalize_on_stream_end()
+        async for sse_event in self._emit_stream_result(result):
+            yield sse_event
 
     async def _handle_text_content(self, text: str) -> AsyncIterator[SSEEvent]:
         """
@@ -630,9 +702,7 @@ class StreamAdapter:
                 self._fatal_stream_error = True
                 # Clear pending state to avoid blocking future create_file calls.
                 self._pending_file_write = None
-                with contextlib.suppress(Exception):
-                    from agent.tools.mcp_tools import ToolContext
-                    ToolContext.clear_pending_empty_file()
+                self._clear_pending_empty_file_guard(result.file_id)
                 yield error_event(
                     message="Failed to persist streamed file content",
                     code="FILE_SAVE_FAILED",
@@ -646,8 +716,25 @@ class StreamAdapter:
         self._pending_file_write = None
 
         # Also clear ToolContext pending state, allowing next create_file.
+        self._clear_pending_empty_file_guard(result.file_id)
+
+    def _clear_pending_empty_file_guard(self, file_id: str = "") -> None:
+        """清除 ToolContext 的 pending-empty-file 标记。
+
+        传入 file_id 时只清除指向该文件的标记：一份仍在缓冲的文件被新的
+        create_file 顶掉时，标记可能已经指向新建的空文件，若被上一份文件的
+        收尾误清，「空文件必须被补写」的信号就丢了（writing_graph 再也不会
+        安排补写）。file_id 为空表示流结束时的无条件清理，避免标记泄漏到
+        下一个请求。
+        """
         with contextlib.suppress(Exception):
             from agent.tools.mcp_tools import ToolContext
+
+            if file_id:
+                pending = ToolContext.get_pending_empty_file()
+                pending_id = pending.get("file_id") if pending else ""
+                if pending_id and pending_id != file_id:
+                    return
             ToolContext.clear_pending_empty_file()
 
     async def _save_file_content(self, file_id: str, content: str) -> bool:
@@ -1031,4 +1118,5 @@ __all__ = [
     "StreamAdapterConfig",
     "PendingFileWrite",
     "create_stream_adapter",
+    "is_folder_file_type",
 ]

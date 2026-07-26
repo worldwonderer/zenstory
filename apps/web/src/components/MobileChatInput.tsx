@@ -197,6 +197,7 @@ export const MobileChatInput: React.FC<MobileChatInputProps> = ({
 }) => {
   const { t } = useTranslation(["chat", "common"]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingRef = useRef(false);
   const longPressTimerRef = useRef<number | null>(null);
   const isLongPressRef = useRef(false);
 
@@ -274,6 +275,17 @@ export const MobileChatInput: React.FC<MobileChatInputProps> = ({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // IME 组字期间（拼音/日文输入法）按 Enter 只是确认候选词，不能触发发送。
+    // Safari 会在 compositionend 之后才派发确认键的 keydown（此时 isComposing 已为
+    // false，但 keyCode 仍是 229），所以需要 composition 事件 + isComposing/keyCode 双重判断。
+    if (
+      isComposingRef.current ||
+      e.nativeEvent.isComposing ||
+      e.nativeEvent.keyCode === 229
+    ) {
+      return;
+    }
+
     // Enter sends message
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -470,6 +482,12 @@ export const MobileChatInput: React.FC<MobileChatInputProps> = ({
             value={input}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+            }}
             placeholder={displayPlaceholder}
             disabled={disabled}
             className="flex-1 bg-[hsl(var(--bg-tertiary))] rounded-2xl px-4 py-3 text-base text-[hsl(var(--text-primary))] placeholder-[hsl(var(--text-secondary)/0.5)] outline-none resize-none overflow-y-auto transition-all disabled:opacity-50 focus:ring-2 focus:ring-[hsl(var(--accent-primary)/0.3)]"

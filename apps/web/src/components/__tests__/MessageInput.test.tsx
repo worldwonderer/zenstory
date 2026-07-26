@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
-import { render, screen, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MessageInput } from '../MessageInput'
 import { skillsApi } from '../../lib/api'
@@ -566,6 +566,77 @@ describe('MessageInput', () => {
       expect(
         screen.queryByPlaceholderText('chat:input.steerPlaceholder')
       ).not.toBeInTheDocument()
+    })
+  })
+
+  describe('IME composition (中文/日文输入法)', () => {
+    it('does not send when Enter keydown carries isComposing (Chrome/Edge 确认候选词)', () => {
+      const onSend = vi.fn()
+      render(<MessageInput {...defaultProps} onSend={onSend} />)
+
+      const textarea = screen.getByPlaceholderText('chat:input.placeholder')
+      fireEvent.change(textarea, { target: { value: 'ni hao' } })
+      fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
+
+      expect(onSend).not.toHaveBeenCalled()
+      expect(textarea).toHaveValue('ni hao')
+    })
+
+    it('does not send on Enter between compositionstart and compositionend', () => {
+      const onSend = vi.fn()
+      render(<MessageInput {...defaultProps} onSend={onSend} />)
+
+      const textarea = screen.getByPlaceholderText('chat:input.placeholder')
+      fireEvent.compositionStart(textarea)
+      fireEvent.change(textarea, { target: { value: 'nihao' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+
+      expect(onSend).not.toHaveBeenCalled()
+    })
+
+    it('does not send when the confirming Enter arrives after compositionend with keyCode 229 (Safari)', () => {
+      const onSend = vi.fn()
+      render(<MessageInput {...defaultProps} onSend={onSend} />)
+
+      const textarea = screen.getByPlaceholderText('chat:input.placeholder')
+      fireEvent.compositionStart(textarea)
+      fireEvent.change(textarea, { target: { value: '你好' } })
+      fireEvent.compositionEnd(textarea)
+      fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229 })
+
+      expect(onSend).not.toHaveBeenCalled()
+    })
+
+    it('sends normally on Enter after composition has ended', () => {
+      const onSend = vi.fn()
+      render(<MessageInput {...defaultProps} onSend={onSend} />)
+
+      const textarea = screen.getByPlaceholderText('chat:input.placeholder')
+      fireEvent.compositionStart(textarea)
+      fireEvent.change(textarea, { target: { value: '你好' } })
+      fireEvent.compositionEnd(textarea)
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+
+      expect(onSend).toHaveBeenCalledWith('你好')
+    })
+
+    it('does not steer when Enter keydown carries isComposing while generating', () => {
+      const onSteer = vi.fn()
+      render(
+        <MessageInput
+          {...defaultProps}
+          sendDisabled={true}
+          onCancel={vi.fn()}
+          onSteer={onSteer}
+          canSteer={true}
+        />
+      )
+
+      const textarea = screen.getByPlaceholderText('chat:input.steerPlaceholder')
+      fireEvent.change(textarea, { target: { value: 'jia yi duan xuan nian' } })
+      fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
+
+      expect(onSteer).not.toHaveBeenCalled()
     })
   })
 })

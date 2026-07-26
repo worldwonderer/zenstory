@@ -330,6 +330,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     }
   }, [externalDraft]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingRef = useRef(false);
   const { attachedMaterials, removeMaterial } = useMaterialAttachment();
   const { quotes, removeQuote } = useTextQuote();
   const { pendingTrigger, consumeTrigger } = useSkillTrigger();
@@ -499,6 +500,17 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // IME 组字期间（拼音/日文输入法）按 Enter 只是确认候选词，不能触发发送等快捷键。
+    // Safari 会在 compositionend 之后才派发确认键的 keydown（此时 isComposing 已为
+    // false，但 keyCode 仍是 229），所以需要 composition 事件 + isComposing/keyCode 双重判断。
+    if (
+      isComposingRef.current ||
+      e.nativeEvent.isComposing ||
+      e.nativeEvent.keyCode === 229
+    ) {
+      return;
+    }
+
     // Handle skill menu navigation
     if (showSkillMenu && filteredSkills.length > 0) {
       if (e.key === "ArrowDown") {
@@ -885,6 +897,12 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           value={input}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            isComposingRef.current = false;
+          }}
           placeholder={displayPlaceholder}
           disabled={inputDisabled}
           className={`flex-1 bg-[hsl(var(--bg-tertiary))] border border-transparent rounded-lg text-sm text-[hsl(var(--text-primary))] placeholder-[hsl(var(--text-secondary)/0.5)] outline-none resize-none overflow-y-auto transition-all disabled:opacity-50 focus:border-[hsl(var(--accent-primary)/0.5)] focus:shadow-[inset_0_1px_2px_hsl(0_0%_0%_/_0.1),_0_0_0_2px_hsl(var(--accent-primary)/0.15)] ${

@@ -504,18 +504,13 @@ class FileVersionService:
         lines = content.splitlines(keepends=True)
         result_lines = []
         line_idx = 0
+        in_hunk = False
 
-        i = 0
-        while i < len(diff_lines):
-            line = diff_lines[i]
-
-            # Skip header lines
-            if line.startswith("---") or line.startswith("+++"):
-                i += 1
-                continue
-
-            # Parse hunk header
+        for line in diff_lines:
+            # Parse hunk header (in-hunk content lines always start with
+            # " ", "-" or "+", so "@@" here is unambiguous)
             if line.startswith("@@"):
+                in_hunk = True
                 # Extract line numbers from @@ -start,count +start,count @@
                 match = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
                 if match:
@@ -525,8 +520,13 @@ class FileVersionService:
                     while line_idx < old_start and line_idx < len(lines):
                         result_lines.append(lines[line_idx])
                         line_idx += 1
+                continue
 
-                i += 1
+            # File headers ("---"/"+++") only appear before the first hunk;
+            # inside a hunk the same prefixes can be real content (e.g. a
+            # removed "---" separator line becomes "----"), so header
+            # skipping must stop once the first hunk starts
+            if not in_hunk:
                 continue
 
             # Process diff content
@@ -546,8 +546,6 @@ class FileVersionService:
                 if line_idx < len(lines):
                     result_lines.append(lines[line_idx])
                     line_idx += 1
-
-            i += 1
 
         # Add remaining lines
         while line_idx < len(lines):

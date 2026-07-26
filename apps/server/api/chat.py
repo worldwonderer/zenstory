@@ -291,10 +291,12 @@ async def get_session_messages(
             )
         )
         .where(ChatMessage.session_id == chat_session.id)
-        .order_by(ChatMessage.created_at.asc())
+        .order_by(ChatMessage.created_at.desc())
         .limit(limit)
     )
-    messages = session.exec(stmt).all()
+    # 取最近 limit 条再反转为时间升序输出；asc+limit 会永远取最旧的一页，
+    # 导致超过 limit 的会话尾部消息结构性不可达。
+    messages = list(reversed(session.exec(stmt).all()))
 
     log_with_context(
         logger,

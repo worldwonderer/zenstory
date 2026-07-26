@@ -46,6 +46,44 @@ ESCAPED_FILE_PATTERNS = [
     r'&lt;file&gt;',       # HTML 转义
 ]
 
+# 代码块围栏定界符（与 ESCAPED_FILE_PATTERNS 中代码块模式的定界一致）
+FENCE = "```"
+
+# 标记判定结果：真实标记 / 代码上下文中的字面量 / 需要更多 chunk 才能判定
+_MARKER_REAL = "real"
+_MARKER_PROTECTED = "protected"
+_MARKER_AMBIGUOUS = "ambiguous"
+
+
+def _classify_marker(
+    buffer: str,
+    match: "re.Match[str]",
+    prev_char: str,
+    fence_open: bool,
+    at_eof: bool,
+) -> str:
+    """判定 buffer 中一个 <file>/</file> 命中是真实标记还是代码上下文中的字面量。
+
+    与 ESCAPED_FILE_PATTERNS 共用同一套语义：紧邻反引号的行内代码、闭合 ```
+    围栏内的命中都是字面量。流式场景下反引号/围栏可能尚未闭合，此时返回
+    ambiguous 表示需等待后续 chunk；at_eof 时不会再有后续内容，按闭合永远
+    不会发生处理（即视为真实标记）。
+
+    prev_char / fence_open 提供 buffer 之前已被消费内容的上下文（紧邻的
+    前一个字符、``` 围栏的开合奇偶性），使判定不受 flush 边界影响。
+    """
+    start, end = match.start(), match.end()
+    if fence_open:
+        if FENCE in buffer[end:]:
+            return _MARKER_PROTECTED
+        return _MARKER_REAL if at_eof else _MARKER_AMBIGUOUS
+    before = buffer[start - 1] if start > 0 else prev_char
+    if before == "`":
+        if end < len(buffer):
+            return _MARKER_PROTECTED if buffer[end] == "`" else _MARKER_REAL
+        return _MARKER_REAL if at_eof else _MARKER_AMBIGUOUS
+    return _MARKER_REAL
+
 # Buffer size limit (1MB)
 BUFFER_MAX_SIZE = 1024 * 1024
 
@@ -170,6 +208,11 @@ class StreamProcessor:
     temp_buffer: str = ""  # Buffer for potential partial markers
     history_buffer: str = ""  # Content for LLM history
 
+    # 跨 flush 的标记判定上下文：temp_buffer 之前最后一个已消费字符（判断
+    # 行内代码的前置反引号）、已消费内容中 ``` 围栏的开合奇偶性
+    prev_char: str = ""
+    fence_open: bool = False
+
     def reset(self) -> None:
         """Reset processor to idle state."""
         self.state = StreamState.IDLE
@@ -177,6 +220,8 @@ class StreamProcessor:
         self.content_buffer = ""
         self.temp_buffer = ""
         self.history_buffer = ""
+        self.prev_char = ""
+        self.fence_open = False
 
     def start_file_write(self, file_id: str) -> None:
         """
@@ -190,6 +235,8 @@ class StreamProcessor:
         self.content_buffer = ""
         self.temp_buffer = ""
         self.history_buffer = ""
+        self.prev_char = ""
+        self.fence_open = False
 
         log_with_context(
             logger,
@@ -236,7 +283,9 @@ class StreamProcessor:
         # Match against the accumulated buffer with the fault-tolerant regex (not
         # the exact literal), so a case/whitespace variant marker split across
         # chunks (e.g. "<FI" + "LE>") is still detected once reassembled.
-        start_match = FILE_START_PATTERN.search(self.temp_buffer)
+        # 叙述中处于行内代码/``` 围栏内的 <file> 是字面量，跳过继续向后找；
+        # 尚无法判定（反引号/围栏未闭合）时继续缓冲等待后续 chunk。
+        start_match = self._find_real_start_marker()
         if start_match:
             # Found start marker - split content around the matched span
             before_marker = self.temp_buffer[: start_match.start()]
@@ -245,6 +294,8 @@ class StreamProcessor:
             # Transition to writing state
             self.state = StreamState.WRITING
             self.temp_buffer = after_marker
+            self.prev_char = ""
+            self.fence_open = False
 
             log_with_context(
                 logger,
@@ -284,36 +335,122 @@ class StreamProcessor:
         # Keep buffering
         return StreamResult()
 
+    def _find_real_start_marker(self, at_eof: bool = False) -> "re.Match[str] | None":
+        """在 WAITING_START 缓冲中找第一个真实的 <file> 开始标记。
+
+        WAITING_START 不 flush，缓冲从头累积，围栏/反引号上下文直接在
+        缓冲内计算。命中为字面量则跳过；命中歧义（需等待后续 chunk）则
+        返回 None 继续缓冲。
+
+        at_eof 时不会再有后续 chunk：歧义按「闭合永不发生」判为真实标记；
+        若首轮仍无命中，再放宽 ``` 围栏保护兜底扫一遍（见
+        _search_start_marker）。
+        """
+        match = self._search_start_marker(at_eof=at_eof, ignore_fence=False)
+        if match is None and at_eof:
+            return self._search_start_marker(at_eof=True, ignore_fence=True)
+        return match
+
+    def _search_start_marker(
+        self, at_eof: bool, ignore_fence: bool
+    ) -> "re.Match[str] | None":
+        """扫描 WAITING_START 缓冲中的 <file> 候选。
+
+        ignore_fence 是流结束时的兜底：模型常照抄提示词范例，把整块
+        <file>…</file> 包在 ``` 围栏里输出，此时围栏保护会让开始标记永远
+        判为字面量。create_file 已产出空文件、缓冲本就应当是文件正文，把带
+        标记的整章正文倒进聊天严格劣于当作正文写入。为避免把纯格式说明写进
+        文件，兜底只认围栏内成对出现的 <file>…</file>；行内代码保护不放宽。
+        """
+        buffer = self.temp_buffer
+        pos = 0
+        fence_open = False
+        counted = 0
+        while True:
+            match = FILE_START_PATTERN.search(buffer, pos)
+            if match is None:
+                return None
+            if ignore_fence:
+                if FILE_END_PATTERN.search(buffer, match.end()) is None:
+                    return None
+            else:
+                if buffer.count(FENCE, counted, match.start()) % 2 == 1:
+                    fence_open = not fence_open
+                counted = match.start()
+            verdict = _classify_marker(buffer, match, "", fence_open, at_eof=at_eof)
+            if verdict == _MARKER_REAL:
+                return match
+            if verdict == _MARKER_AMBIGUOUS:
+                return None
+            pos = match.end()
+
     def _process_writing(self, content: str) -> StreamResult:
         """Process content while writing file."""
         self.temp_buffer += content
+        return self._scan_writing_buffer(at_eof=False)
 
-        # 检测嵌套的 <file> 标记（异常情况），容忍大小写/空白变体
-        # 这可能是 LLM 幻觉或用户在内容中讨论 XML 标签
-        if FILE_START_PATTERN.search(self.temp_buffer):
-            nested_count = len(FILE_START_PATTERN.findall(self.temp_buffer))
+    def _scan_writing_buffer(self, at_eof: bool) -> StreamResult:
+        """扫描 WRITING 缓冲：跳过代码上下文中的字面量标记，转义真实的
+        嵌套 <file>，在真实 </file> 处完成文件。"""
+        buffer = self.temp_buffer
+        pos = 0
+        fence_open = self.fence_open
+        counted = 0
+        while True:
+            start_match = FILE_START_PATTERN.search(buffer, pos)
+            end_match = FILE_END_PATTERN.search(buffer, pos)
+            if start_match is None and end_match is None:
+                break
+            if end_match is None or (
+                start_match is not None and start_match.start() < end_match.start()
+            ):
+                kind, match = "start", start_match
+            else:
+                kind, match = "end", end_match
+            if buffer.count(FENCE, counted, match.start()) % 2 == 1:
+                fence_open = not fence_open
+            counted = match.start()
+            verdict = _classify_marker(
+                buffer, match, self.prev_char, fence_open, at_eof
+            )
+            if verdict == _MARKER_PROTECTED:
+                pos = match.end()
+                continue
+            if verdict == _MARKER_AMBIGUOUS:
+                # 反引号/围栏是否闭合尚无法判定：flush 命中点之前的内容，
+                # 其余留在缓冲等待后续 chunk。挂起的尾部同样受总量上限
+                # 约束，超限时整体走溢出强制完成，防止缓冲无界增长。
+                self.temp_buffer = buffer
+                if len(self.content_buffer) + len(buffer) > BUFFER_MAX_SIZE:
+                    return self._flush_file_content(len(buffer))
+                return self._flush_file_content(match.start())
+            if kind == "end":
+                self.temp_buffer = buffer
+                return self._handle_end_marker(match)
+            # 真实的嵌套 <file> 标记（异常情况），容忍大小写/空白变体
+            # 这可能是 LLM 幻觉或用户在内容中讨论 XML 标签
             log_with_context(
                 logger,
                 30,  # WARNING
-                "Detected nested <file> markers in content, escaping them",
-                count=nested_count,
+                "Detected nested <file> marker in content, escaping it",
                 project_id=self.project_id,
                 user_id=self.user_id,
                 file_id=self.file_id,
             )
-            # 转义所有嵌套的开始标记变体
-            self.temp_buffer = FILE_START_PATTERN.sub('&lt;file&gt;', self.temp_buffer)
+            buffer = buffer[: match.start()] + '&lt;file&gt;' + buffer[match.end():]
+            pos = match.start() + len('&lt;file&gt;')
+            counted = pos
 
-        end_match = FILE_END_PATTERN.search(self.temp_buffer)
-        if end_match:
-            return self._handle_end_marker(end_match)
+        self.temp_buffer = buffer
+        if at_eof:
+            return StreamResult()
 
         # No end marker yet - check if we have safe content to send. Reserve a
         # full marker-variant's worth of trailing chars (not just len('</file>'))
         # so a split whitespace variant like "< /file >" is never flushed before
         # it can be reassembled and matched.
-        if len(self.temp_buffer) > MAX_MARKER_LEN:
-            return self._send_safe_content(MAX_MARKER_LEN)
+        if len(buffer) > MAX_MARKER_LEN:
+            return self._flush_file_content(len(buffer) - MAX_MARKER_LEN)
 
         # Buffer too small, just accumulate
         return StreamResult()
@@ -356,9 +493,23 @@ class StreamProcessor:
             conversation_content_after_file=after_marker if after_marker else "",
         )
 
-    def _send_safe_content(self, reserve: int) -> StreamResult:
+    def _adjust_cut_for_backtick_run(self, cut: int) -> int:
+        """把切分点左移出反引号连续段，避免 ``` 围栏被 flush 边界拆散后
+        无法再按整体统计开合奇偶性。"""
+        while (
+            0 < cut < len(self.temp_buffer)
+            and self.temp_buffer[cut] == "`"
+            and self.temp_buffer[cut - 1] == "`"
+        ):
+            cut -= 1
+        return cut
+
+    def _flush_file_content(self, cut: int) -> StreamResult:
         """Send content that's safe (not potentially part of end marker)."""
-        safe_content = self.temp_buffer[:-reserve]
+        cut = self._adjust_cut_for_backtick_run(cut)
+        safe_content = self.temp_buffer[:cut]
+        if not safe_content:
+            return StreamResult()
 
         # Check content_buffer size limit
         new_content_size = len(self.content_buffer) + len(safe_content)
@@ -379,6 +530,9 @@ class StreamProcessor:
             content_length = len(final_content)
             file_id = self.file_id
 
+            if safe_content.count(FENCE) % 2 == 1:
+                self.fence_open = not self.fence_open
+            self.prev_char = safe_content[-1]
             self._begin_draining()
 
             return StreamResult(
@@ -393,7 +547,10 @@ class StreamProcessor:
         # Add to buffers and keep remaining in temp
         self.content_buffer += safe_content
         self.history_buffer += safe_content
-        self.temp_buffer = self.temp_buffer[-reserve:]
+        self.temp_buffer = self.temp_buffer[cut:]
+        if safe_content.count(FENCE) % 2 == 1:
+            self.fence_open = not self.fence_open
+        self.prev_char = safe_content[-1]
 
         return StreamResult(
             file_content=safe_content,
@@ -411,6 +568,17 @@ class StreamProcessor:
         self.history_buffer = ""
         self.temp_buffer = ""
 
+    def _discard_drained(self, cut: int) -> None:
+        """丢弃 drain 缓冲的前段，并维护标记判定所需的跨段上下文。"""
+        cut = self._adjust_cut_for_backtick_run(cut)
+        dropped = self.temp_buffer[:cut]
+        if not dropped:
+            return
+        if dropped.count(FENCE) % 2 == 1:
+            self.fence_open = not self.fence_open
+        self.prev_char = dropped[-1]
+        self.temp_buffer = self.temp_buffer[cut:]
+
     def _process_draining(self, content: str) -> StreamResult:
         """Swallow the overflow tail of a force-completed file until </file>.
 
@@ -419,15 +587,38 @@ class StreamProcessor:
         leaks into the chat transcript.
         """
         self.temp_buffer += content
-        end_match = FILE_END_PATTERN.search(self.temp_buffer)
-        if end_match:
-            after_marker = self.temp_buffer[end_match.end():]
+        buffer = self.temp_buffer
+        pos = 0
+        fence_open = self.fence_open
+        counted = 0
+        while True:
+            end_match = FILE_END_PATTERN.search(buffer, pos)
+            if end_match is None:
+                break
+            if buffer.count(FENCE, counted, end_match.start()) % 2 == 1:
+                fence_open = not fence_open
+            counted = end_match.start()
+            verdict = _classify_marker(
+                buffer, end_match, self.prev_char, fence_open, at_eof=False
+            )
+            if verdict == _MARKER_PROTECTED:
+                pos = end_match.end()
+                continue
+            if verdict == _MARKER_AMBIGUOUS:
+                # 保留待判定的尾部，前段照常丢弃；歧义迟迟不消除时按未闭合
+                # 围栏内容处理（连同候选一起丢弃），保证 drain 缓冲有界
+                if len(buffer) > BUFFER_MAX_SIZE:
+                    self._discard_drained(len(buffer) - MAX_MARKER_LEN)
+                else:
+                    self._discard_drained(end_match.start())
+                return StreamResult()
+            after_marker = buffer[end_match.end():]
             self.reset()
             return StreamResult(conversation_content=after_marker or "")
 
         # Bound the drain buffer — only the tail is needed to spot a split </file>.
         if len(self.temp_buffer) > MAX_MARKER_LEN:
-            self.temp_buffer = self.temp_buffer[-MAX_MARKER_LEN:]
+            self._discard_drained(len(self.temp_buffer) - MAX_MARKER_LEN)
         return StreamResult()
 
     def finalize_on_stream_end(self) -> StreamResult:
@@ -448,6 +639,24 @@ class StreamProcessor:
             return StreamResult()
 
         if self.state == StreamState.WAITING_START:
+            # 流结束后悬置的反引号/围栏不会再闭合：先按 at_eof 语义复扫开始
+            # 标记，否则叙述里一个未闭合的 ``` 就会让整章正文（连同 <file>
+            # 原始标记）当作对话倒进聊天、文件留空。命中后转入 WRITING 并复用
+            # 下方 WRITING 分支（含 control-marker 污染守卫）完成文件。
+            start_match = self._find_real_start_marker(at_eof=True)
+            if start_match is not None:
+                before_marker = self.temp_buffer[: start_match.start()]
+                self.state = StreamState.WRITING
+                self.temp_buffer = self.temp_buffer[start_match.end():]
+                self.prev_char = ""
+                self.fence_open = False
+                result = self.finalize_on_stream_end()
+                if before_marker:
+                    result.conversation_content = (
+                        before_marker + result.conversation_content
+                    )
+                return result
+
             buffered = self.temp_buffer
             log_with_context(
                 logger,
@@ -462,6 +671,12 @@ class StreamProcessor:
             return StreamResult(conversation_content=buffered)
 
         if self.state == StreamState.WRITING:
+            # 流结束后悬置的反引号/围栏不会再闭合：先按 at_eof 语义重扫缓冲，
+            # 此前因歧义挂起的 </file> 到这里可确认为真实结束标记
+            scanned = self._scan_writing_buffer(at_eof=True)
+            if scanned.file_complete:
+                return scanned
+
             trailing = self.temp_buffer
             if trailing:
                 self.content_buffer += trailing
