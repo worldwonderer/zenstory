@@ -11,7 +11,9 @@ export class SettingsPOM extends BasePage {
   constructor(page: Page) {
     super(page);
     this.settingsDialog = page.locator('[role="dialog"]');
-    this.closeButton = page.getByRole('button', { name: 'Close modal' });
+    this.closeButton = this.settingsDialog.getByRole('button', {
+      name: /Close modal|关闭对话框/,
+    });
     this.profileTab = page.getByTestId('settings-tab-profile');
     this.generalTab = page.getByTestId('settings-tab-general');
     this.logoutButton = page.getByTestId('settings-logout-button');

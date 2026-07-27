@@ -476,10 +476,7 @@ test.describe('Copy Invite Code to Clipboard', () => {
     await setupReferralMocking(page);
   });
 
-  test('should copy code to clipboard', async ({ context }) => {
-    // Grant clipboard permissions
-    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-
+  test('should expose the code that the clipboard action copies', async () => {
     // In a real test, we would:
     // 1. Navigate to settings page with invite codes
     // 2. Click copy button
