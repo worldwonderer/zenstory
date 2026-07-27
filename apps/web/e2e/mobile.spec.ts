@@ -3,6 +3,9 @@ import { LoginPage } from './fixtures/page-objects';
 import { TEST_USERS, config } from './config';
 import { TIMEOUTS } from './constants';
 
+const MICROPHONE_PERMISSION_BROWSER_MESSAGE =
+  'Playwright can grant microphone permission only in Chromium.'
+
 /**
  * Mobile Responsive Tests
  * Tests mobile-specific functionality and responsive layouts across different viewport sizes.
@@ -1422,7 +1425,8 @@ test.describe('Mobile Responsive Tests', () => {
       }
     });
 
-    test('mobile long press on voice button triggers recording', async ({ page, context }) => {
+    test('mobile long press on voice button triggers recording', async ({ page, context, browserName }) => {
+      test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE);
       // Grant microphone permission
       await context.grantPermissions(['microphone']);
 
@@ -1533,7 +1537,8 @@ test.describe('Mobile Responsive Tests', () => {
       }
     });
 
-    test('mobile voice input shows duration during recording', async ({ page, context }) => {
+    test('mobile voice input shows duration during recording', async ({ page, context, browserName }) => {
+      test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE);
       // Grant microphone permission
       await context.grantPermissions(['microphone']);
 
@@ -1613,7 +1618,8 @@ test.describe('Mobile Responsive Tests', () => {
       }
     });
 
-    test('mobile voice button touch cancel handles correctly', async ({ page, context }) => {
+    test('mobile voice button touch cancel handles correctly', async ({ page, context, browserName }) => {
+      test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE);
       // Grant microphone permission
       await context.grantPermissions(['microphone']);
 

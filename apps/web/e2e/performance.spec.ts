@@ -1,5 +1,6 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { TEST_USERS } from './config'
+import { login } from './helpers/common'
 
 const ENABLE_PERFORMANCE_E2E = process.env.E2E_ENABLE_PERFORMANCE_E2E === 'true'
 const PERFORMANCE_OPT_IN_MESSAGE =
@@ -31,6 +32,15 @@ const PERFORMANCE_THRESHOLDS = {
 // Test credentials
 const TEST_EMAIL = TEST_USERS.standard.email
 const TEST_PASSWORD = TEST_USERS.standard.password
+
+async function loginAndOpenDashboard(page: Page) {
+  // The login page intentionally redirects existing users to their most
+  // recent project. Using the API-backed helper avoids racing that async
+  // redirect when a performance case specifically needs the dashboard.
+  await login(page)
+  await page.goto('/dashboard')
+  await expect(page.getByTestId('dashboard-inspiration-input')).toBeVisible({ timeout: 15000 })
+}
 
 /**
  * Helper to generate large content for performance testing
@@ -90,17 +100,7 @@ test.describe('Performance', () => {
   })
 
   test('file tree renders 100+ items smoothly', async ({ page }) => {
-    // Login and navigate to dashboard
-    await page.goto('/login')
-    await page.locator('#identifier').fill(TEST_EMAIL)
-    await page.locator('#password').fill(TEST_PASSWORD)
-    await page.locator('button[type="submit"]').click()
-    await page.waitForURL(/\/(dashboard|project)/, { timeout: 10000 })
-
-    // Navigate to dashboard if needed
-    if (page.url().includes('/project/')) {
-      await page.goto('/dashboard')
-    }
+    await loginAndOpenDashboard(page)
 
     // Create a test project for file operations
     const inspirationInput = page.locator('[data-testid="dashboard-inspiration-input"]')
@@ -162,16 +162,7 @@ test.describe('Performance', () => {
   })
 
   test('editor handles 10k+ word documents', async ({ page }) => {
-    // Login and setup project
-    await page.goto('/login')
-    await page.locator('#identifier').fill(TEST_EMAIL)
-    await page.locator('#password').fill(TEST_PASSWORD)
-    await page.locator('button[type="submit"]').click()
-    await page.waitForURL(/\/(dashboard|project)/, { timeout: 10000 })
-
-    if (page.url().includes('/project/')) {
-      await page.goto('/dashboard')
-    }
+    await loginAndOpenDashboard(page)
 
     const inspirationInput = page.locator('[data-testid="dashboard-inspiration-input"]')
     await inspirationInput.fill(`编辑器性能测试 ${Date.now()}`)
@@ -246,16 +237,7 @@ test.describe('Performance', () => {
   })
 
   test('chat scroll remains smooth with 100+ messages', async ({ page }) => {
-    // Login and setup
-    await page.goto('/login')
-    await page.locator('#identifier').fill(TEST_EMAIL)
-    await page.locator('#password').fill(TEST_PASSWORD)
-    await page.locator('button[type="submit"]').click()
-    await page.waitForURL(/\/(dashboard|project)/, { timeout: 10000 })
-
-    if (page.url().includes('/project/')) {
-      await page.goto('/dashboard')
-    }
+    await loginAndOpenDashboard(page)
 
     const projectCard = page.locator('[data-testid="project-card"]').first()
     if (await projectCard.isVisible()) {
@@ -367,11 +349,8 @@ test.describe('Performance', () => {
     const dashboardStart = Date.now()
 
     await page.waitForURL(/\/(dashboard|project)/, { timeout: 10000 })
-
-    // Navigate to dashboard if on project page
-    if (page.url().includes('/project/')) {
-      await page.goto('/dashboard')
-    }
+    await page.waitForLoadState('networkidle')
+    await page.goto('/dashboard')
 
     // Wait for interactive elements on dashboard
     await page.waitForSelector('[data-testid="project-card"], button:has-text("创建")', {
@@ -390,17 +369,7 @@ test.describe('Performance', () => {
   })
 
   test('project page time to interactive', async ({ page }) => {
-    // Login first
-    await page.goto('/login')
-    await page.locator('#identifier').fill(TEST_EMAIL)
-    await page.locator('#password').fill(TEST_PASSWORD)
-    await page.locator('button[type="submit"]').click()
-    await page.waitForURL(/\/(dashboard|project)/, { timeout: 10000 })
-
-    // Navigate to dashboard
-    if (page.url().includes('/project/')) {
-      await page.goto('/dashboard')
-    }
+    await loginAndOpenDashboard(page)
 
     // Click on a project
     const projectCard = page.locator('[data-testid="project-card"]').first()
@@ -430,16 +399,7 @@ test.describe('Performance', () => {
   })
 
   test('memory usage remains stable during extended use', async ({ page }) => {
-    // Login and setup
-    await page.goto('/login')
-    await page.locator('#identifier').fill(TEST_EMAIL)
-    await page.locator('#password').fill(TEST_PASSWORD)
-    await page.locator('button[type="submit"]').click()
-    await page.waitForURL(/\/(dashboard|project)/, { timeout: 10000 })
-
-    if (page.url().includes('/project/')) {
-      await page.goto('/dashboard')
-    }
+    await loginAndOpenDashboard(page)
 
     // Get initial memory metrics
     const initialMetrics = await page.evaluate(() => {

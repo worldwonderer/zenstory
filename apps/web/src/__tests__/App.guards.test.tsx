@@ -10,6 +10,14 @@ const state = vi.hoisted(() => ({
   requireOnboarding: false,
   shouldRequireCalls: [] as unknown[],
   initialPath: "/",
+  project: {
+    currentProject: null as { id: string; name?: string } | null,
+    projects: [] as Array<{ id: string; name?: string }>,
+    setCurrentProjectId: vi.fn(),
+    refreshProjects: vi.fn(),
+    setSelectedItem: vi.fn(),
+  },
+  fileGet: vi.fn(),
 }));
 
 vi.mock("react-router-dom", async () => {
@@ -81,13 +89,13 @@ vi.mock("../contexts/AuthContext", () => ({
 
 vi.mock("../contexts/ProjectContext", () => ({
   useProject: () => ({
-    setCurrentProjectId: vi.fn(),
-    currentProject: null,
+    setCurrentProjectId: state.project.setCurrentProjectId,
+    currentProject: state.project.currentProject,
     loading: false,
     error: null,
-    refreshProjects: vi.fn(),
-    projects: [],
-    setSelectedItem: vi.fn(),
+    refreshProjects: state.project.refreshProjects,
+    projects: state.project.projects,
+    setSelectedItem: state.project.setSelectedItem,
   }),
 }));
 
@@ -111,7 +119,7 @@ vi.mock("../lib/logger", () => ({
 
 vi.mock("../lib/api", () => ({
   fileApi: {
-    get: vi.fn(),
+    get: state.fileGet,
   },
 }));
 
@@ -174,6 +182,12 @@ describe("App route guards", () => {
     state.requireOnboarding = false;
     state.shouldRequireCalls = [];
     state.initialPath = "/";
+    state.project.currentProject = null;
+    state.project.projects = [];
+    state.project.setCurrentProjectId.mockReset();
+    state.project.refreshProjects.mockReset();
+    state.project.setSelectedItem.mockReset();
+    state.fileGet.mockReset();
   });
 
   it("redirects unauthenticated users from protected routes to login", async () => {
@@ -249,5 +263,36 @@ describe("App route guards", () => {
     });
     expect(state.shouldRequireCalls.length).toBeGreaterThan(0);
     expect(state.shouldRequireCalls).toContainEqual({ id: "user-3" });
+  });
+
+  it("waits for the route project before selecting a deep-linked file", async () => {
+    state.auth.user = { id: "user-4" };
+    state.project.currentProject = { id: "previous-project" };
+    state.project.projects = [{ id: "target-project" }];
+    state.fileGet.mockResolvedValue({
+      id: "file-1",
+      title: "Deep-linked file",
+      file_type: "draft",
+      project_id: "target-project",
+    });
+
+    const view = renderAppAt("/project/target-project?file=file-1");
+
+    await waitFor(() => {
+      expect(state.project.setCurrentProjectId).toHaveBeenCalledWith("target-project");
+    });
+    expect(state.fileGet).not.toHaveBeenCalled();
+
+    state.project.currentProject = { id: "target-project" };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(state.fileGet).toHaveBeenCalledWith("file-1");
+      expect(state.project.setSelectedItem).toHaveBeenCalledWith({
+        id: "file-1",
+        title: "Deep-linked file",
+        type: "draft",
+      });
+    });
   });
 });

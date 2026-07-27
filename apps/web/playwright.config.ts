@@ -23,6 +23,7 @@ ensureLocalNoProxy()
 const useExternalBackend = process.env.PLAYWRIGHT_EXTERNAL_BACKEND === '1'
 const reuseExistingServer = process.env.E2E_REUSE_EXISTING_SERVER !== 'false'
 const authStateFile = process.env.PLAYWRIGHT_AUTH_FILE
+const ciMaxFailures = Number.parseInt(process.env.E2E_MAX_FAILURES ?? '5', 10)
 
 /**
  * Performance-optimized Playwright configuration
@@ -50,7 +51,7 @@ export default defineConfig({
   // Use optimal workers: 1 in CI for stability, 50% of cores locally
   workers: process.env.CI ? 1 : '50%',
   // Fail fast in CI for quicker feedback
-  maxFailures: process.env.CI ? 5 : 0,
+  maxFailures: process.env.CI ? ciMaxFailures : 0,
   // Multiple reporters for better CI output and flaky test tracking
   // Blob reporter caches results for cross-run comparison
   reporter: process.env.CI
@@ -88,6 +89,11 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         ...(authStateFile ? { storageState: authStateFile } : {}),
+        launchOptions: {
+          // CI runners do not expose a physical microphone. Permission is
+          // still controlled by each test; this only supplies an audio source.
+          args: ['--use-fake-device-for-media-stream'],
+        },
       },
       dependencies: ['setup'],
     },

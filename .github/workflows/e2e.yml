@@ -53,6 +53,7 @@ jobs:
     if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         browser: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.suite == 'full')) && fromJson('["chromium", "firefox"]') || fromJson('["chromium"]') }}
         shard: ${{ (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.suite == 'full' || github.event.inputs.suite == 'default'))) && fromJson('["1/2", "2/2"]') || fromJson('["1/1"]') }}
@@ -118,10 +119,19 @@ jobs:
         elif [ "${{ github.event.inputs.suite }}" == "full" ]; then
           E2E_ENABLE_VERSION_HISTORY_E2E=true \
           E2E_ENABLE_SKILL_CREATE_E2E=true \
+          E2E_ENABLE_CHAT_E2E=true \
+          E2E_ENABLE_CONCURRENT_E2E=true \
+          E2E_ENABLE_DEEP_LINK_E2E=true \
+          E2E_ENABLE_ERROR_RECOVERY_E2E=true \
+          E2E_ENABLE_EXPORT_E2E=true \
+          E2E_ENABLE_FILES_E2E=true \
+          E2E_ENABLE_FILE_SEARCH_E2E=true \
+          E2E_ENABLE_MOCKED_CHAT=true \
           E2E_ENABLE_VOICE_INPUT_E2E=true \
           E2E_ENABLE_VISUAL_REGRESSION_E2E=true \
           E2E_ENABLE_PERFORMANCE_E2E=true \
           E2E_ENABLE_LARGE_DOCUMENT_E2E=true \
+          E2E_MAX_FAILURES=0 \
           pnpm exec playwright test --project=${{ matrix.browser }} --shard=${{ matrix.shard }}
         elif [ "${{ github.event.inputs.suite }}" == "release" ]; then
           if [ "${{ matrix.shard }}" != "1/1" ]; then

@@ -212,7 +212,10 @@ function ProjectEditor() {
 
   // Select target file from query parameter: /project/:projectId?file=:fileId
   React.useEffect(() => {
-    if (!currentProject || !projectId) return;
+    // Wait until the route's project is active. On a direct link the provider
+    // can briefly expose the previously selected project; selecting the file
+    // during that window is then cleared by setCurrentProjectId().
+    if (!currentProject || !projectId || currentProject.id !== projectId) return;
 
     const searchParams = new URLSearchParams(location.search);
     const fileId = searchParams.get("file");
