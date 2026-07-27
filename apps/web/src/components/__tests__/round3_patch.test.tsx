@@ -208,8 +208,10 @@ describe('Editor: 整篇覆盖写的两条入口都不得丢用户输入', () =>
 
   it('handleFinishReview 带上 base_updated_at，并把返回的 updated_at 回填', async () => {
     const applyDiffReviewChanges = vi.fn().mockReturnValue('审阅后的定稿')
+    const exitDiffReview = vi.fn()
     mockProjectContext = createContext({
       applyDiffReviewChanges,
+      exitDiffReview,
       diffReviewState: {
         isReviewing: true,
         fileId: 'file-1',
@@ -235,6 +237,17 @@ describe('Editor: 整篇覆盖写的两条入口都不得丢用户输入', () =>
         expect.objectContaining({ base_updated_at: BASE_UPDATED_AT }),
       ),
     )
+
+    // `fileApi.update` being called only proves the request started. Wait for
+    // the resolved response to be committed to Editor state before simulating
+    // the user's next save; otherwise this assertion races React's state update
+    // and intermittently observes the pre-review concurrency token in CI.
+    await waitFor(() => {
+      expect(exitDiffReview).toHaveBeenCalled()
+      expect((screen.getByTestId('content-input') as HTMLTextAreaElement).value).toBe(
+        '审阅后的定稿',
+      )
+    })
 
     // 审阅之后紧接一次保存：必须带**新**令牌，否则服务端必判 stale_write
     fireEvent.click(screen.getByTestId('save-button'))
