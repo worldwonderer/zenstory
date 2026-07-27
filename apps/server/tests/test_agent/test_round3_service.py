@@ -14,10 +14,10 @@
 
 import asyncio
 import json
+from unittest.mock import patch
 
 import pytest
 from sqlmodel import Session, select
-from unittest.mock import patch
 
 from models import ChatMessage, ChatSession, File, Project, User
 from services.core.auth_service import hash_password

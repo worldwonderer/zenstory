@@ -228,7 +228,6 @@ def require_user_rate_limit(key: str, max_requests: int, window_seconds: int):
     """
     # 延迟 import：services.auth 会反向依赖 middleware，模块级 import 会成环
     from fastapi import Depends
-
     from services.auth import get_current_active_user
 
     def check(

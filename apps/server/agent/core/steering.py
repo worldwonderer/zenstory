@@ -328,6 +328,34 @@ class SteeringQueueManager:
             self._reap_stale_runs(session_id, entry)
             return any(rid != run_id for rid in entry.active_runs)
 
+    async def requeue_if_other_active(
+        self,
+        session_id: str,
+        run_id: str,
+        owner_user_id: str,
+        contents: list[str],
+    ) -> bool:
+        """Atomically requeue messages while another run still owns the session.
+
+        The manager lock intentionally remains held through ``queue.add``.  Without
+        that lifetime guard, the final concurrent run can delete the manager entry
+        after the holder check but before the append, leaving messages on a detached
+        ``SteeringQueue`` object that can never be looked up again.
+        """
+        if not contents:
+            return False
+
+        async with self._lock:
+            entry = self._queues.get(session_id)
+            if entry is None or entry.owner_user_id != owner_user_id:
+                return False
+            self._reap_stale_runs(session_id, entry)
+            if not any(rid != run_id for rid in entry.active_runs):
+                return False
+            for content in contents:
+                await entry.queue.add(content)
+            return True
+
     async def cleanup(self, session_id: str, run_id: str | None = None) -> None:
         """Release a run's hold on the queue; delete only when no runs remain.
 
@@ -647,6 +675,34 @@ end
 return n
 """
 
+# 把「确认还有其它活跃 run」与「消息重新入队」放在同一个 Redis 原子单元里。
+# 若拆成 COUNT / GET owner / RPUSH 三次 round-trip，最后一个并发 run 可以在
+# GET 与 RPUSH 之间释放并删除 owner/msgs/runs；随后 RPUSH 会只复活 msgs，留下
+# 无 owner、无消费者的孤儿列表，而 service 又会把这些消息从本轮历史中移除。
+#
+# KEYS: runs, owner, msgs
+# ARGV: current_run_id, heartbeat_cutoff, owner_user_id, ttl, payload...
+_REQUEUE_IF_OTHER_ACTIVE_SCRIPT: Final[str] = """
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[2])
+local n = redis.call('ZCARD', KEYS[1])
+if redis.call('ZSCORE', KEYS[1], ARGV[1]) then
+    n = n - 1
+end
+if n <= 0 then
+    return 0
+end
+local owner = redis.call('GET', KEYS[2])
+if not owner or owner ~= ARGV[3] then
+    return 0
+end
+for i = 5, #ARGV do
+    redis.call('RPUSH', KEYS[3], ARGV[i])
+end
+redis.call('EXPIRE', KEYS[3], ARGV[4])
+redis.call('EXPIRE', KEYS[2], ARGV[4])
+return 1
+"""
+
 
 def _redis_has_other_active_runs_sync(session_id: str, run_id: str) -> bool:
     from services.infra.redis_client import get_redis_client
@@ -662,6 +718,48 @@ def _redis_has_other_active_runs_sync(session_id: str, run_id: str) -> bool:
         return int(others) > 0
     except (TypeError, ValueError):  # pragma: no cover — 替身返回了非数值
         return False
+
+
+def _redis_requeue_if_other_active_sync(
+    session_id: str,
+    run_id: str,
+    owner_user_id: str,
+    contents: list[str],
+) -> bool:
+    """Atomically append ``contents`` only while another run is still active."""
+    from services.infra.redis_client import get_redis_client
+
+    payloads: list[str] = []
+    for content in contents:
+        sanitized = sanitize_steering_content(content)
+        message = SteeringMessage(
+            id=f"steer-{datetime.now().timestamp()}",
+            content=sanitized,
+            created_at=datetime.now(),
+        )
+        payloads.append(
+            json.dumps(
+                {
+                    "id": message.id,
+                    "content": message.content,
+                    "created_at": message.created_at.isoformat(),
+                }
+            )
+        )
+
+    accepted = get_redis_client().eval(
+        _REQUEUE_IF_OTHER_ACTIVE_SCRIPT,
+        3,
+        _runs_key(session_id),
+        _owner_key(session_id),
+        _msgs_key(session_id),
+        run_id,
+        time.time() - _RUN_HEARTBEAT_TTL_S,
+        owner_user_id,
+        _STEERING_TTL_S,
+        *payloads,
+    )
+    return bool(accepted)
 
 
 def _redis_reap_stale_runs_sync(session_id: str) -> bool:
@@ -773,6 +871,48 @@ async def has_other_active_runs_async(session_id: str, run_id: str) -> bool:
             _redis_has_other_active_runs_sync, session_id, run_id
         )
     return await _queue_manager.has_other_active_runs(session_id, run_id)
+
+
+async def requeue_steering_if_other_active_async(
+    session_id: str,
+    run_id: str,
+    owner_user_id: str,
+    contents: list[str],
+) -> bool:
+    """Requeue messages iff another active run can consume them.
+
+    The holder decision and append are one atomic lifetime operation on both
+    backends. ``False`` tells the caller to retain the messages in this run's
+    history instead of discarding them.
+    """
+    if not contents or not run_id or not owner_user_id:
+        return False
+    if await _redis_available():
+        accepted = await asyncio.to_thread(
+            _redis_requeue_if_other_active_sync,
+            session_id,
+            run_id,
+            owner_user_id,
+            contents,
+        )
+    else:
+        accepted = await _queue_manager.requeue_if_other_active(
+            session_id,
+            run_id,
+            owner_user_id,
+            contents,
+        )
+
+    if accepted:
+        log_with_context(
+            logger,
+            20,  # INFO
+            "Steering messages handed back to concurrent run",
+            session_id=session_id,
+            run_id=run_id,
+            count=len(contents),
+        )
+    return accepted
 
 
 async def cleanup_steering_queue_async(session_id: str, run_id: str | None = None) -> None:

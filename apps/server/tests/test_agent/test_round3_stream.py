@@ -24,7 +24,6 @@ from agent.core.workflow_events import StreamEvent as WorkflowStreamEvent
 from agent.core.workflow_events import StreamEventType
 from agent.stream_adapter import StreamAdapter, StreamAdapterConfig
 
-
 # ---------------------------------------------------------------- 通用脚手架 --
 
 
@@ -719,7 +718,6 @@ def _e2e_stream_save_session(monkeypatch):
     不复用 ToolContext 里的 session，不重定向就会写到真实的 zenstory.db。
     """
     import database
-
     from tests.conftest import TestSessionLocal
 
     def _get_session():

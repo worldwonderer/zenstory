@@ -22,7 +22,6 @@ from agent.stream_adapter import StreamAdapter, StreamAdapterConfig
 from agent.tools.mcp_tools import ToolContext, create_file
 from models import File, Project, User
 
-
 EPISODE_TITLE = "第7集 潮落"
 EPISODE_BODY = "旧正文。" * 2000  # 8000 字，与线上实测的一集体量一致
 TRUNCATED_PROSE = "（新版开场 300 字）"

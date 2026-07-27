@@ -55,8 +55,7 @@ from .core.session_loader import SessionLoader
 from .core.steering import (
     cleanup_steering_queue_async,
     create_steering_queue_async,
-    get_steering_queue_for_user_async,
-    has_other_active_runs_async,
+    requeue_steering_if_other_active_async,
 )
 from .graph.state import WritingState
 from .graph.writing_graph import run_writing_workflow_streaming
@@ -585,8 +584,9 @@ class AgentService:
 
             队列只按 chat session 寻址（POST /agent/steer 的请求体没有 run_id），
             无法把消息定向投给某个 run；能保证的不变量是「已经结束的 run 不得
-            吞掉本该由仍在生成的 run 消费的引导」。因此这里先探测除本 run 之外
-            是否还有活跃持有者，有就把消息原样放回队列。
+            吞掉本该由仍在生成的 run 消费的引导」。因此这里原子地确认除本 run
+            之外仍有活跃持有者并把消息放回队列，避免最后一个并发 run 恰好在
+            探测与回填之间退出、把消息写进已删除队列。
             返回 True 表示已交还，调用方不再把它们写进本轮历史。
 
             调用点有两处，本 run 是否已释放持有都成立：
@@ -597,43 +597,14 @@ class AgentService:
                 return False
 
             try:
-                if not await has_other_active_runs_async(session_id, steering_run_id):
-                    # 没有别的 run 在等这些消息，交给本轮历史落库保底。
-                    return False
-            except Exception as exc:
-                log_with_context(
-                    logger,
-                    30,  # WARNING
-                    "Failed to probe concurrent steering runs",
-                    session_id=session_id,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
+                return await requeue_steering_if_other_active_async(
+                    session_id,
+                    steering_run_id,
+                    user_id,
+                    pending,
                 )
-                return False
-
-            try:
-                queue = await get_steering_queue_for_user_async(session_id, user_id)
-            except (KeyError, PermissionError):
-                # 探测与取队列之间队列被删（并发 run 恰好在此刻全部退出）：
-                # 同样交给本轮历史落库保底。
-                return False
             except Exception as exc:
-                log_with_context(
-                    logger,
-                    30,  # WARNING
-                    "Failed to probe steering queue before handing messages back",
-                    session_id=session_id,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                )
-                return False
-
-            try:
-                for content in pending:
-                    await queue.add(content)
-            except Exception as exc:
-                # 回填中途失败：已回填的少数消息可能同时留在队列和历史里，
-                # 但重复展示远好于静默丢失，剩下的仍由本轮历史兜底。
+                # 原子回填失败时消息仍由本轮历史兜底，绝不静默丢弃。
                 log_with_context(
                     logger,
                     30,  # WARNING
@@ -643,16 +614,6 @@ class AgentService:
                     error_type=type(exc).__name__,
                 )
                 return False
-
-            log_with_context(
-                logger,
-                20,  # INFO
-                "Steering messages handed back to concurrent run",
-                session_id=session_id,
-                run_id=steering_run_id,
-                count=len(pending),
-            )
-            return True
 
         async def _release_run_and_requeue_steering(pending: list[str]) -> bool:
             """释放本 run 对 steering 队列的持有，必要时把消息交还给并发 run。

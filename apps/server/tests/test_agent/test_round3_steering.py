@@ -201,6 +201,18 @@ class _FakeRedis:
         keys = keys_and_args[:numkeys]
         args = keys_and_args[numkeys:]
         runs_key = keys[0]
+        if "RPUSH" in script:
+            # 原子 hand-back：回收僵尸 -> 确认还有其它 run + owner -> 批量入队。
+            self._impl_zremrangebyscore(runs_key, "-inf", args[1])
+            n = self._impl_zcard(runs_key)
+            if self._impl_zscore(runs_key, args[0]) is not None:
+                n -= 1
+            if n <= 0 or self._impl_get(keys[1]) != args[2]:
+                return 0
+            self._impl_rpush(keys[2], *args[4:])
+            self._impl_expire(keys[2], args[3])
+            self._impl_expire(keys[1], args[3])
+            return 1
         if "ZSCORE" in script:
             # 「除自己以外还有几个活跃持有者」：回收僵尸 -> ZCARD -> 减掉自己。
             # 只读判定，不删除任何键（本 run 通常仍持有队列）。

@@ -85,23 +85,50 @@ class FileVersionService:
         # {"change_source": "ai"} 就能无限建版本。因此判据独立成 quota_source，
         # 由服务端调用方决定；只有内部调用（agent / snapshot）才允许省略。
         effective_quota_source = quota_source if quota_source is not None else change_source
-        if user_id and not skip_quota and effective_quota_source == CHANGE_SOURCE_USER:
+        enforce_user_quota = (
+            bool(user_id)
+            and not skip_quota
+            and effective_quota_source == CHANGE_SOURCE_USER
+        )
+
+        # The quota count and version insert must share one per-file transaction
+        # boundary. Otherwise two authenticated requests can both observe N slots
+        # used and then insert N+1/N+2, exceeding the plan limit. PostgreSQL's file
+        # row is the serialization point; SQLite REST callers use the same striped
+        # process lock around this service call.
+        if enforce_user_quota:
+            from database import is_postgres
+
+            if is_postgres:
+                file = session.exec(
+                    select(File)
+                    .where(File.id == file_id)
+                    .with_for_update(key_share=True)
+                ).first()
+            else:
+                file = session.get(File, file_id, populate_existing=True)
+        else:
+            file = session.get(File, file_id)
+
+        if not file or file.is_deleted:
+            raise ValueError(f"File {file_id} not found")
+
+        if enforce_user_quota:
+            assert user_id is not None
             allowed, existing_count, max_versions = self.check_user_version_quota(
-                session, file_id, user_id
+                session,
+                file_id,
+                user_id,
             )
             if not allowed:
                 from core.error_codes import ErrorCode
                 from core.error_handler import APIException
+
                 raise APIException(
                     error_code=ErrorCode.QUOTA_FILE_VERSIONS_EXCEEDED,
                     status_code=402,
                     detail=f"Version limit reached ({existing_count}/{max_versions}). Please upgrade your plan.",
                 )
-
-        # Get the file
-        file = session.get(File, file_id)
-        if not file or file.is_deleted:
-            raise ValueError(f"File {file_id} not found")
 
         for attempt in range(1, MAX_CREATE_VERSION_RETRIES + 1):
             # Get latest version

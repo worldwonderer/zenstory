@@ -5,6 +5,7 @@ Provides REST endpoints for managing file version history.
 """
 
 
+import contextlib
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -240,16 +241,23 @@ def create_file_version(
         # 绕过配额闸门（闸门只拦 user）和配额计数（计数只数 user 行），
         # file_versions_per_file 会彻底失效。change_source 与 quota_source
         # 一起钉死成 user，闸门与计数口径才是同一个集合。
-        version = service.create_version(
-            session=session,
-            file_id=file_id,
-            new_content=request.content,
-            change_type=request.change_type,
-            change_source=CHANGE_SOURCE_USER,
-            change_summary=request.change_summary,
-            user_id=current_user.id,
-            quota_source=CHANGE_SOURCE_USER,
+        from agent.tools.file_ops.edit import file_write_lock
+        from database import is_postgres
+
+        lock_ctx = (
+            contextlib.nullcontext() if is_postgres else file_write_lock(file_id)
         )
+        with lock_ctx:
+            version = service.create_version(
+                session=session,
+                file_id=file_id,
+                new_content=request.content,
+                change_type=request.change_type,
+                change_source=CHANGE_SOURCE_USER,
+                change_summary=request.change_summary,
+                user_id=current_user.id,
+                quota_source=CHANGE_SOURCE_USER,
+            )
 
         log_with_context(
             logger,

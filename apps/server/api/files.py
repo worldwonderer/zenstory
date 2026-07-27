@@ -790,7 +790,11 @@ def update_file(
     # 请求参数校验必须先于任何写入：change_type/change_source 非法时若等到正文
     # commit 之后才抛 400，就又是一次「内容其实已保存却提示失败」的误导性失败。
     change_type = _resolve_change_type(file_data.change_type)
-    change_source = _resolve_change_source(file_data.change_source)
+    requested_change_source = _resolve_change_source(file_data.change_source)
+    # 这是带 Bearer token 的用户侧 PUT；客户端可以描述 AI 审阅意图，但不能决定
+    # 持久化版本的可信来源。否则伪造 ai/system 会同时绕过配额闸门和 user 行计数。
+    # AI 审阅语义由 change_type=ai_edit 保留，版本来源与 POST /versions 一样钉死 user。
+    change_source = CHANGE_SOURCE_USER
     change_summary = file_data.change_summary or "File updated"
 
     from agent.tools.file_ops.edit import file_write_lock
@@ -893,7 +897,7 @@ def update_file(
 
         file_version_service = get_file_version_service()
         create_version_needed = content_changed and not file_data.skip_version
-        if create_version_needed and change_source == CHANGE_SOURCE_USER:
+        if create_version_needed:
             has_quota, used_versions, max_versions = (
                 file_version_service.check_user_version_quota(
                     session,
@@ -928,10 +932,33 @@ def update_file(
                     change_source=change_source,
                     change_summary=change_summary,
                     user_id=current_user.id,
-                    # 额度已在 commit 之前预检过，这里再查一次只会重复计数；
-                    # 更重要的是正文此刻已落库，任何 402 都会变成误导性失败。
-                    skip_quota=True,
+                    # commit 之后在服务层的 per-file 行锁内再校验一次，闭合两个
+                    # 并发 PUT 都在首轮预检看到同一个余额的 TOCTOU 窗口。
+                    quota_source=CHANGE_SOURCE_USER,
                 )
+            except APIException as exc:
+                if exc.error_code == ErrorCode.QUOTA_FILE_VERSIONS_EXCEEDED:
+                    # 正文已经成功提交；竞态中的后到请求只跳过快照，并沿用 200 +
+                    # version_quota_exceeded 契约，不能把已保存正文报告成失败。
+                    session.rollback()
+                    version_quota_exceeded = True
+                    log_with_context(
+                        logger,
+                        logging.INFO,
+                        "File version quota reached after concurrent content save",
+                        user_id=current_user.id,
+                        file_id=file.id,
+                        operation="update_file_version_quota_race",
+                    )
+                else:
+                    log_with_context(
+                        logger,
+                        logging.WARNING,
+                        "Failed to create file version after content update",
+                        error=str(exc),
+                        file_id=file.id,
+                        operation="update_file_create_version",
+                    )
             except Exception as e:
                 log_with_context(
                     logger,
@@ -977,7 +1004,10 @@ def update_file(
                     },
                 )
 
-            if change_type == CHANGE_TYPE_AI_EDIT and change_source == CHANGE_SOURCE_AI:
+            if (
+                change_type == CHANGE_TYPE_AI_EDIT
+                and requested_change_source == CHANGE_SOURCE_AI
+            ):
                 activation_event_service.record_once(
                     session,
                     user_id=current_user.id,

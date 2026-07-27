@@ -45,6 +45,17 @@ def test_ai_usage_metrics():
 
     try:
         with Session(engine) as session:
+            # Keep every fixture row on the same UTC calendar day. Relative
+            # ``utcnow() - 2h`` data straddles midnight when this suite runs
+            # shortly after 00:00 UTC and makes the "latest day == 8" assertion
+            # time-of-day dependent.
+            test_day = datetime.utcnow().replace(
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+
             # Step 1: Create test user and project
             print("\n1. Creating test user and project...")
             test_user = User(
@@ -102,7 +113,7 @@ def test_ai_usage_metrics():
                 session_id=chat_session_1.id,
                 role="user",
                 content="Help me write the opening scene of my novel.",
-                created_at=datetime.utcnow() - timedelta(hours=2),
+                created_at=test_day + timedelta(minutes=1),
             )
             session.add(user_msg_1)
 
@@ -115,7 +126,7 @@ def test_ai_usage_metrics():
                 message_metadata=json.dumps(
                     {"usage": {"input_tokens": 120, "output_tokens": 80, "total_tokens": 200}}
                 ),
-                created_at=datetime.utcnow() - timedelta(hours=1, minutes=55),
+                created_at=test_day + timedelta(minutes=2),
             )
             session.add(assistant_msg_1)
 
@@ -126,7 +137,7 @@ def test_ai_usage_metrics():
                 role="tool",
                 content='{"action": "read_file", "result": "chapter1.md content..."}',
                 tool_call_id="call-001",
-                created_at=datetime.utcnow() - timedelta(hours=1, minutes=50),
+                created_at=test_day + timedelta(minutes=3),
             )
             session.add(tool_msg_1)
             session.commit()
@@ -174,7 +185,7 @@ def test_ai_usage_metrics():
                 session_id=chat_session_2.id,
                 role="user",
                 content="Can you help me develop my protagonist's backstory?",
-                created_at=datetime.utcnow() - timedelta(hours=1),
+                created_at=test_day + timedelta(minutes=4),
             )
             session.add(user_msg_2)
 
@@ -186,7 +197,7 @@ def test_ai_usage_metrics():
                 message_metadata=json.dumps(
                     {"usage": {"input_tokens": 140, "output_tokens": 90, "total_tokens": 230}}
                 ),
-                created_at=datetime.utcnow() - timedelta(minutes=55),
+                created_at=test_day + timedelta(minutes=5),
             )
             session.add(assistant_msg_2)
 
@@ -195,7 +206,7 @@ def test_ai_usage_metrics():
                 session_id=chat_session_2.id,
                 role="user",
                 content="They grew up in a small fishing village and lost their parents in a storm.",
-                created_at=datetime.utcnow() - timedelta(minutes=50),
+                created_at=test_day + timedelta(minutes=6),
             )
             session.add(user_msg_3)
 
@@ -207,7 +218,7 @@ def test_ai_usage_metrics():
                 message_metadata=json.dumps(
                     {"usage": {"input_tokens": 160, "output_tokens": 100, "total_tokens": 260}}
                 ),
-                created_at=datetime.utcnow() - timedelta(minutes=45),
+                created_at=test_day + timedelta(minutes=7),
             )
             session.add(assistant_msg_3)
 
@@ -217,7 +228,7 @@ def test_ai_usage_metrics():
                 role="tool",
                 content='{"action": "update_character", "result": "Character backstory updated"}',
                 tool_call_id="call-002",
-                created_at=datetime.utcnow() - timedelta(minutes=40),
+                created_at=test_day + timedelta(minutes=8),
             )
             session.add(tool_msg_2)
             session.commit()

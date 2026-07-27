@@ -11,16 +11,46 @@ file_versions_per_file 因此形同虚设。修复前该端点无论 change_sour
 都会被配额拦住，属于本次修复引入的回退。
 """
 
+import asyncio
+import contextlib
 from datetime import datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
 from sqlmodel import Session, select
 
+from database import get_session
+from main import app
 from models import File, FileVersion, Project, User
 from models.file_version import CHANGE_SOURCE_USER
 from models.subscription import SubscriptionPlan, UserSubscription
 from services.core.auth_service import hash_password
+
+
+@contextlib.contextmanager
+def _independent_request_sessions(db_session: Session):
+    """Make concurrent ASGI requests use production-like, distinct DB sessions.
+
+    The shared ``client`` fixture intentionally reuses ``db_session`` for ordinary
+    request/assertion convenience. Sharing one SQLAlchemy Session across worker
+    threads is invalid, though, and can turn a real concurrency assertion into a
+    Session state-machine failure before the per-file lock is exercised.
+    """
+    previous_override = app.dependency_overrides.get(get_session)
+    engine = db_session.get_bind()
+
+    def override_get_session():
+        with Session(engine, expire_on_commit=False) as request_session:
+            yield request_session
+
+    app.dependency_overrides[get_session] = override_get_session
+    try:
+        yield
+    finally:
+        if previous_override is None:
+            app.dependency_overrides.pop(get_session, None)
+        else:
+            app.dependency_overrides[get_session] = previous_override
 
 
 async def _setup_user(client: AsyncClient, db_session: Session, username: str):
@@ -161,3 +191,161 @@ async def test_post_version_rejects_unknown_change_source(
         headers=headers,
     )
     assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("spoofed_source", ["ai", "system"])
+async def test_put_file_cannot_bypass_quota_via_change_source(
+    client: AsyncClient, db_session: Session, spoofed_source: str
+):
+    """PUT 与 POST 一样不得让客户端来源逃离受限版本计数集合。"""
+    user, file, headers = await _setup_user(
+        client,
+        db_session,
+        f"r3p_put_quota_{spoofed_source}",
+    )
+    _bind_plan(db_session, user, max_versions=1)
+
+    first = await client.put(
+        f"/api/v1/files/{file.id}",
+        json={"content": "第一版", "change_source": spoofed_source},
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["version_quota_exceeded"] is False
+
+    second = await client.put(
+        f"/api/v1/files/{file.id}",
+        json={"content": "第二版", "change_source": spoofed_source},
+        headers=headers,
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["version_quota_exceeded"] is True
+
+    db_session.expire_all()
+    rows = db_session.exec(
+        select(FileVersion).where(FileVersion.file_id == file.id)
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].change_source == CHANGE_SOURCE_USER
+
+
+@pytest.mark.integration
+async def test_concurrent_authenticated_writes_cannot_overrun_single_version_slot(
+    client: AsyncClient,
+    db_session: Session,
+):
+    """两个并发 PUT 的预检都看到余额时，最终也只能有一个用户快照。"""
+    user, file, headers = await _setup_user(
+        client,
+        db_session,
+        "r3p_put_quota_race",
+    )
+    _bind_plan(db_session, user, max_versions=1)
+
+    with _independent_request_sessions(db_session):
+        responses = await asyncio.gather(
+            client.put(
+                f"/api/v1/files/{file.id}",
+                json={"content": "并发第一版", "change_source": "ai"},
+                headers=headers,
+            ),
+            client.put(
+                f"/api/v1/files/{file.id}",
+                json={"content": "并发第二版", "change_source": "system"},
+                headers=headers,
+            ),
+        )
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert sorted(
+        response.json()["version_quota_exceeded"] for response in responses
+    ) == [False, True]
+
+    db_session.expire_all()
+    rows = db_session.exec(
+        select(FileVersion).where(FileVersion.file_id == file.id)
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].change_source == CHANGE_SOURCE_USER
+
+
+@pytest.mark.integration
+async def test_put_reports_quota_race_as_saved_content_without_snapshot(
+    client: AsyncClient,
+    db_session: Session,
+    monkeypatch,
+):
+    """首轮预检后余额被并发请求占用时，正文成功、快照跳过且响应不谎报失败。"""
+    user, file, headers = await _setup_user(
+        client,
+        db_session,
+        "r3p_put_quota_race_contract",
+    )
+    _bind_plan(db_session, user, max_versions=1)
+
+    checks = 0
+
+    def staged_quota_check(_service, _session, _file_id, _user_id):
+        nonlocal checks
+        checks += 1
+        return (True, 0, 1) if checks == 1 else (False, 1, 1)
+
+    monkeypatch.setattr(
+        "services.features.file_version_service.FileVersionService.check_user_version_quota",
+        staged_quota_check,
+    )
+
+    response = await client.put(
+        f"/api/v1/files/{file.id}",
+        json={"content": "正文已经保存，但最后一个版本位被并发请求占用。"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["version_quota_exceeded"] is True
+    assert checks == 2
+    db_session.expire_all()
+    assert db_session.get(File, file.id).content.startswith("正文已经保存")
+    assert (
+        db_session.exec(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+        ).all()
+        == []
+    )
+
+
+@pytest.mark.integration
+async def test_concurrent_post_versions_cannot_overrun_single_version_slot(
+    client: AsyncClient,
+    db_session: Session,
+):
+    """显式建版本入口的配额检查与插入也必须按文件串行化。"""
+    user, file, headers = await _setup_user(
+        client,
+        db_session,
+        "r3p_post_quota_race",
+    )
+    _bind_plan(db_session, user, max_versions=1)
+
+    with _independent_request_sessions(db_session):
+        responses = await asyncio.gather(
+            client.post(
+                f"/api/v1/files/{file.id}/versions",
+                json={"content": "并发第一版", "change_source": "ai"},
+                headers=headers,
+            ),
+            client.post(
+                f"/api/v1/files/{file.id}/versions",
+                json={"content": "并发第二版", "change_source": "system"},
+                headers=headers,
+            ),
+        )
+
+    assert sorted(response.status_code for response in responses) == [200, 402]
+    db_session.expire_all()
+    rows = db_session.exec(
+        select(FileVersion).where(FileVersion.file_id == file.id)
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].change_source == CHANGE_SOURCE_USER

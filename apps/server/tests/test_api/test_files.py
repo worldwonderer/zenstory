@@ -1850,7 +1850,7 @@ async def test_update_file_creates_version_with_default_intent(client: AsyncClie
 
 @pytest.mark.integration
 async def test_update_file_respects_version_intent_fields(client: AsyncClient, db_session):
-    """Test content updates pass custom intent to backend-managed version creation."""
+    """Custom change intent is preserved without trusting the client as version author."""
     from services.core.auth_service import hash_password
 
     user = User(
@@ -1892,13 +1892,13 @@ async def test_update_file_respects_version_intent_fields(client: AsyncClient, d
     ).first()
     assert version is not None
     assert version.change_type == "auto_save"
-    assert version.change_source == "ai"
+    assert version.change_source == "user"
     assert version.change_summary == "Large document auto-save"
 
 
 @pytest.mark.integration
 async def test_update_file_respects_ai_review_version_intent(client: AsyncClient, db_session):
-    """Test AI review saves preserve ai_edit/ai version semantics."""
+    """AI review saves preserve ai_edit intent but remain authenticated user writes."""
     from services.core.auth_service import hash_password
 
     user = User(
@@ -1940,7 +1940,7 @@ async def test_update_file_respects_ai_review_version_intent(client: AsyncClient
     ).first()
     assert version is not None
     assert version.change_type == "ai_edit"
-    assert version.change_source == "ai"
+    assert version.change_source == "user"
     assert version.change_summary == "AI edit (reviewed)"
 
 

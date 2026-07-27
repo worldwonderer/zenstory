@@ -19,11 +19,12 @@ run B 永远收不到这条引导，历史里反而凭空多出一条挂在已�
    套后端必须给出同一个答案——这个模块反复出问题的根源就是两侧语义漂移。
 """
 
+import asyncio
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlmodel import Session, select
-from unittest.mock import MagicMock, patch
 
 from models import ChatMessage, File, Project, User
 from services.core.auth_service import hash_password
@@ -437,3 +438,72 @@ class TestHasOtherActiveRunsParity:
         assert [m.content for m in await queue.peek()] == ["别删我"]
 
         await st.cleanup_steering_queue_async(sid, run_id="runA")
+
+
+@pytest.mark.unit
+async def test_memory_handback_holds_session_lifetime_through_append(memory_steering):
+    """最后一个并发 run 的 cleanup 不能插进 holder 判定与消息入队之间。"""
+    st = memory_steering
+    sid = "gap-atomic-handback-memory"
+    user_id = "user-1"
+
+    await st.create_steering_queue_async(sid, user_id, run_id="runA")
+    queue = await st.create_steering_queue_async(sid, user_id, run_id="runB")
+    await st.cleanup_steering_queue_async(sid, run_id="runA")
+
+    original_add = queue.add
+    cleanup_task: asyncio.Task | None = None
+
+    async def add_while_run_b_exits(content: str):
+        nonlocal cleanup_task
+        cleanup_task = asyncio.create_task(
+            st.cleanup_steering_queue_async(sid, run_id="runB")
+        )
+        # 让 cleanup 开始竞争 manager lock。原子 hand-back 此刻仍持有该锁，
+        # 所以 cleanup 必须等待消息完成入队。
+        await asyncio.sleep(0)
+        assert cleanup_task is not None and not cleanup_task.done()
+        return await original_add(content)
+
+    queue.add = add_while_run_b_exits
+    accepted = await st.requeue_steering_if_other_active_async(
+        sid,
+        "runA",
+        user_id,
+        [LATE_TEXT],
+    )
+
+    assert accepted is True
+    # primitive 返回后、尚未让 cleanup 再次调度前，消息必须仍挂在可寻址 entry 上，
+    # 而不是旧实现那样写进已从 manager 删除的 detached queue。
+    entry = st._queue_manager._queues.get(sid)
+    assert entry is not None
+    assert [message.content for message in entry.queue._messages] == [LATE_TEXT]
+
+    assert cleanup_task is not None
+    await cleanup_task
+
+
+@pytest.mark.unit
+async def test_handback_falls_back_when_last_concurrent_run_already_exited(
+    steering_backend,
+):
+    """cleanup 先赢得竞态时原子原语返回 False，调用方据此保留历史兜底。"""
+    st = steering_backend
+    sid = "gap-atomic-handback-cleanup-wins"
+    user_id = "user-1"
+
+    await st.create_steering_queue_async(sid, user_id, run_id="runA")
+    await st.create_steering_queue_async(sid, user_id, run_id="runB")
+    await st.cleanup_steering_queue_async(sid, run_id="runA")
+    await st.cleanup_steering_queue_async(sid, run_id="runB")
+
+    assert (
+        await st.requeue_steering_if_other_active_async(
+            sid,
+            "runA",
+            user_id,
+            [LATE_TEXT],
+        )
+        is False
+    )

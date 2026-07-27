@@ -173,14 +173,13 @@ def _long_content_forcing_paragraph_fallback() -> tuple[str, str]:
     target = "天亮时林风背上行囊推门而出走进濛濛细雨里再没有回头看那座空荡荡的院子"
     content = filler + "\n\n" + target
     assert len(normalize_for_fuzzy_match(content)[0]) > 5000
-    # 中间改一个字：既不是精确/模糊子串命中，也让 SequenceMatcher 仍有 ~0.97
-    anchor = target.replace("推门而出", "排门而出")
     return content, target
 
 
 def test_fuzzy_paragraph_reports_confidence_and_fallback(editor):
     """兜底段落匹配必须自报置信度与兜底性质，不能伪装成确定无疑的唯一匹配。"""
     content, target = _long_content_forcing_paragraph_fallback()
+    # 中间改一个字：既不是精确/模糊子串命中，也让 SequenceMatcher 仍有 ~0.97
     anchor = target.replace("推门而出", "排门而出")
     applied: list[dict] = []
 
