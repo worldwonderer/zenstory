@@ -87,8 +87,11 @@ def test_create_file_reuses_existing_episode_when_streaming(db_session: Session,
     )
 
     assert second["id"] == first["id"]
-    # Streaming pipeline requires empty content in tool response to activate <file> capture mode.
-    assert second["content"] == ""
+    # 复用分支返回真实 content，并用显式字段告诉 StreamAdapter「这是复用、目标原本非空」。
+    # 旧契约把 content 谎报成 "" 当作进入 <file> 捕获的信号，导致截断补全时整集正文被残稿覆盖。
+    assert second["content"] == "OLD CONTENT"
+    assert second["reused_existing"] is True
+    assert second["original_content_length"] == len("OLD CONTENT")
 
     rows = db_session.exec(
         select(File).where(
@@ -126,7 +129,10 @@ def test_create_file_promotes_legacy_episode_draft_in_script_folder(db_session: 
 
     assert result["id"] == legacy.id
     assert result["file_type"] == "script"
-    assert result["content"] == ""
+    # 同上：复用分支返回真实 content + 显式复用标记
+    assert result["content"] == "LEGACY"
+    assert result["reused_existing"] is True
+    assert result["original_content_length"] == len("LEGACY")
 
     db_session.refresh(legacy)
     assert legacy.file_type == "script"

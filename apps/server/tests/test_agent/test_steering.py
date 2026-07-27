@@ -13,6 +13,7 @@ from agent.core.steering import (
     MAX_STEERING_MESSAGE_LENGTH,
     SteeringMessage,
     SteeringQueue,
+    SteeringSessionBusyError,
     cleanup_steering_queue_async,
     create_steering_queue_async,
     get_steering_queue_async,
@@ -454,6 +455,27 @@ class TestSteeringIntegration:
 @pytest.mark.asyncio
 class TestSteeringRunOwnership:
     """并发 stream run 共享同一 session 队列时的 run 级归属（内存路径）。"""
+
+    async def test_exclusive_generation_claim_rejects_second_run(self):
+        session_id = "exclusive-generation-session"
+        await cleanup_steering_queue_async(session_id)
+
+        try:
+            await create_steering_queue_async(
+                session_id,
+                "user-1",
+                run_id="run-a",
+                exclusive_run=True,
+            )
+            with pytest.raises(SteeringSessionBusyError):
+                await create_steering_queue_async(
+                    session_id,
+                    "user-1",
+                    run_id="run-b",
+                    exclusive_run=True,
+                )
+        finally:
+            await cleanup_steering_queue_async(session_id)
 
     async def test_first_finishing_run_does_not_delete_other_runs_queue(self):
         """先结束的 run 只释放自己的持有，另一个 run 的队列必须继续可用。"""

@@ -226,3 +226,22 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
         if '/tests/test_flows/integration/' in path and not _has_primary_marker(item):
             item.add_marker(pytest.mark.integration)
+
+
+@pytest.fixture(autouse=True)
+def _reset_tool_context():
+    """每个用例前后都把 Agent 的全局 ToolContext 清干净。
+
+    ToolContext 的 project_id / session / pending-empty-file 标记都存在
+    ContextVar 里，是跨用例可见的进程级状态。任何一个用例调了
+    ToolContext.set_context 而没收尾，后面所有"故意不设上下文"的用例就会
+    读到别人残留的 project_id——表现为按执行顺序随机红绿（xdist 每次分组
+    不同，更难复现）。这里统一兜底，用例自己就不必再各写一遍 try/finally。
+    """
+    from agent.tools.mcp_tools import ToolContext
+
+    ToolContext.clear_context()
+    try:
+        yield
+    finally:
+        ToolContext.clear_context()

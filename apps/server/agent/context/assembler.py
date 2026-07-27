@@ -20,11 +20,12 @@ from sqlmodel import Session, select
 # Local
 from utils.logger import get_logger, log_with_context
 
+from ..constants import CONTENT_FILE_TYPES, INVENTORY_FILE_TYPES
 from ..schemas.context import ContextData, ContextItem, ContextPriority
 from ..tools.permissions import ForbiddenError, NotFoundError, check_project_ownership
 from ..utils.aho_corasick import AhoCorasickMatcher, select_longest_non_ambiguous_matches
 from ..utils.token_utils import estimate_text_tokens
-from .budget import TokenBudget
+from .budget import TokenBudget, truncate_text_to_tokens
 from .prioritizer import ContextPrioritizer
 
 logger = get_logger(__name__)
@@ -33,6 +34,22 @@ logger = get_logger(__name__)
 # overhead, so a large project-status + inventory header can never starve the
 # priority-selected items down to nothing.
 MIN_ITEM_TOKEN_BUDGET = 512
+
+# 条目档（焦点文件 / 用户附加文件 / 用户引用文本所在的 CRITICAL 档）的保底比例。
+#
+# 历史缺陷：header（项目状态 + 文件清单）完全不受 max_tokens 约束，先渲染再用
+# `max_tokens - header_tokens` 给条目分预算，长篇项目下这个差值恒为负，
+# 条目预算永远触底到 MIN_ITEM_TOKEN_BUDGET，于是用户手动附加的文件和手动选中的
+# 引用文本被静默丢弃——最不重要的静态清单挤掉了最重要的用户意图。
+# 现在反过来：先给条目档留出这个比例，再把剩下的额度分给可裁剪的 header。
+ITEM_TOKEN_RESERVE_RATIO = 0.35
+
+# 项目状态段（简介 / 备注等自由文本）允许占用的最大比例，超出即裁剪。
+PROJECT_STATUS_TOKEN_RATIO = 0.25
+
+# 项目状态里单个长字段（summary / notes）无论如何都要保留的最小 token 数，
+# 免得极端预算下把项目简介裁成空字符串。
+MIN_PROJECT_STATUS_FIELD_TOKENS = 120
 
 
 class ContextAssembler:
@@ -192,13 +209,35 @@ class ContextAssembler:
         items = self._apply_query_recall_ranking(items, query)
 
         # 7. Prioritize and select within budget.
-        # Reserve tokens for the always-present framing (project-status +
-        # file-inventory blocks and section separators) so max_tokens bounds the
-        # WHOLE assembled block, not just the priority-selected items — otherwise
-        # the unbudgeted header overhead pushed the formatted context past
-        # max_tokens. Never starve item selection below a small floor.
+        #
+        # 分配顺序是**反的**：先给条目档留出保底额度，再把剩余额度分给 header
+        # （项目状态 + 文件清单），而不是先把 header 渲染满再拿剩下的给条目。
+        # 否则长篇项目的 header 会吃掉全部 max_tokens，条目预算触底到
+        # MIN_ITEM_TOKEN_BUDGET，用户显式附加的文件与引用文本被静默丢弃。
+        #
+        # header 的两段都是可裁剪的：项目状态按 PROJECT_STATUS_TOKEN_RATIO 裁剪
+        # 长字段，文件清单按剩余额度逐条填充并显式提示「已省略 N 个」。
+        reserved_for_items = max(
+            MIN_ITEM_TOKEN_BUDGET, int(max_tokens * ITEM_TOKEN_RESERVE_RATIO)
+        )
+        project_status = self._bound_project_status(
+            project_status,
+            max_tokens=int(max_tokens * PROJECT_STATUS_TOKEN_RATIO),
+        )
+        status_tokens = estimate_text_tokens(
+            self._format_context([], None, project_status)
+        )
+        inventory_token_budget = max(
+            0, max_tokens - reserved_for_items - status_tokens
+        )
+
         header_tokens = estimate_text_tokens(
-            self._format_context([], file_inventory, project_status)
+            self._format_context(
+                [],
+                file_inventory,
+                project_status,
+                inventory_token_budget=inventory_token_budget,
+            )
         )
         item_token_budget = max(MIN_ITEM_TOKEN_BUDGET, max_tokens - header_tokens)
         budget = TokenBudget(max_tokens=item_token_budget)
@@ -207,7 +246,12 @@ class ContextAssembler:
         selected, budget_used = budget.select_items(prioritized, groups)
 
         # 8. Format context with project status
-        formatted = self._format_context(selected, file_inventory, project_status)
+        formatted = self._format_context(
+            selected,
+            file_inventory,
+            project_status,
+            inventory_token_budget=inventory_token_budget,
+        )
 
         # 9. Collect referenced item IDs
         refs = [item.id for item in selected]
@@ -254,7 +298,17 @@ class ContextAssembler:
         is_focus: bool = False,
         relation: str = "",
     ) -> ContextItem:
-        """Convert a File to ContextItem based on its type."""
+        """Convert a File to ContextItem based on its type.
+
+        重要不变量：无论文件是什么类型，``is_focus`` / ``relation`` / ``file_type``
+        都必须落到 item.metadata 上。历史缺陷是只有 outline/draft 分支传了
+        is_focus，character/lore/snippet 三个分支把形参直接丢弃，导致
+        ContextItem.is_focus（读 metadata["is_focus"] 的属性）恒为 False，
+        下游整条焦点保护链（prioritizer 的 CRITICAL 提升与组内排序、
+        TokenBudget 的 CRITICAL 池化预算、渲染时的「← 当前焦点」标记）全部失效，
+        用户打开角色卡/设定条目再提问时焦点文件甚至会被检索片段挤出上下文。
+        因此这里统一走 `_finalize_context_item` 后处理，新增类型分支不会再漏。
+        """
         file_type = file.file_type
 
         # Parse metadata
@@ -277,14 +331,14 @@ class ContextAssembler:
             if metadata.get("personality"):
                 profile_parts.append(f"性格: {metadata['personality']}")
 
-            return ContextItem.from_character(
+            item = ContextItem.from_character(
                 id=file.id,
                 name=file.title,
                 profile="\n".join(profile_parts) if profile_parts else "",
             )
 
         elif file_type == "lore":
-            return ContextItem.from_lore(
+            item = ContextItem.from_lore(
                 id=file.id,
                 title=file.title,
                 content=file.content or "",
@@ -293,7 +347,7 @@ class ContextAssembler:
             )
 
         elif file_type == "snippet":
-            return ContextItem.from_snippet(
+            item = ContextItem.from_snippet(
                 id=file.id,
                 title=file.title,
                 content=file.content or "",
@@ -301,7 +355,7 @@ class ContextAssembler:
                 source=metadata.get("source", ""),
             )
 
-        else:  # outline, draft, or other
+        else:  # outline, draft, script, document, or other
             item = ContextItem.from_outline(
                 id=file.id,
                 title=file.title,
@@ -309,9 +363,41 @@ class ContextAssembler:
                 is_focus=is_focus,
                 relation=relation,
             )
-            # Add file_type to metadata
-            item.metadata["file_type"] = file_type
-            return item
+
+        return self._finalize_context_item(
+            item,
+            file_type=file_type,
+            is_focus=is_focus,
+            relation=relation,
+        )
+
+    @staticmethod
+    def _finalize_context_item(
+        item: ContextItem,
+        *,
+        file_type: str,
+        is_focus: bool,
+        relation: str,
+    ) -> ContextItem:
+        """统一补齐所有类型分支都必须携带的元数据 / 优先级。
+
+        放在一处而不是各分支各写一遍，是为了让「新增一种 file_type」不可能
+        再漏掉焦点标记（见 _file_to_context_item 的 docstring）。
+        """
+        item.metadata["file_type"] = file_type
+        item.metadata["is_focus"] = bool(is_focus)
+        # from_outline 已经写过 relation（可能是 None），这里只补未写过的分支，
+        # 避免把 outline 分支显式写入的 None 覆盖成 ""。
+        if "relation" not in item.metadata:
+            item.metadata["relation"] = relation or None
+
+        if is_focus:
+            # 与 from_outline(is_focus=True) 的行为保持一致：焦点文件必须进
+            # CRITICAL 档并拿到最高相关度，否则组内排序会把它排到检索片段之后。
+            item.priority = ContextPriority.CRITICAL
+            item.relevance_score = max(item.relevance_score or 0.0, 1.0)
+
+        return item
 
     def _get_related_files(
         self,
@@ -350,7 +436,9 @@ class ContextAssembler:
                     File.id != focus.id,
                     File.file_type != "folder",
                     File.is_deleted.is_(False),
-                    File.file_type.in_(["draft", "outline"]),
+                    # 同族修复：只写死 "draft" 会让短剧项目（正文是 script）永远找不到
+                    # "前一集"，续写时丢失上一集剧情。统一走 CONTENT_FILE_TYPES。
+                    File.file_type.in_([*CONTENT_FILE_TYPES, "outline"]),
                     File.order.is_not(None),
                     File.order < focus.order,
                 )
@@ -840,21 +928,27 @@ class ContextAssembler:
         if not file_types:
             return []
 
-        # Batch fetch all files of the requested types
-        # Note: We fetch more than needed and filter in Python to respect per-type limits
-        files = session.exec(
-            select(File).where(
-                File.project_id == project_id,
-                File.file_type.in_(file_types),
-                File.is_deleted.is_(False),
-            ).order_by(File.updated_at.desc(), File.id.asc())
-        ).all()
-
-        # Group files by type and apply per-type limits
+        # 每种类型各下推一条带 LIMIT 的查询。
+        #
+        # 之前是一条不带 .limit() 的 select(File)（含 content 正文列），
+        # 把项目里全部角色/设定的正文一次性读进内存，再在 Python 侧只留每类前
+        # limit_per_type 条——大项目下每次对话都做一次全表规模的正文读取，
+        # PostgreSQL 上还会触发大量 TOAST 解压，正是 _get_file_inventory 注释里
+        # 明确要避免的成本。类型数固定（character/lore），2 条小查询远优于全表。
         files_by_type: dict[str, list[File]] = {ft: [] for ft in file_types}
-        for file in files:
-            if file.file_type in files_by_type and len(files_by_type[file.file_type]) < limit_per_type:
-                files_by_type[file.file_type].append(file)
+        if limit_per_type > 0:
+            for file_type in file_types:
+                files_by_type[file_type] = list(
+                    session.exec(
+                        select(File).where(
+                            File.project_id == project_id,
+                            File.file_type == file_type,
+                            File.is_deleted.is_(False),
+                        )
+                        .order_by(File.updated_at.desc(), File.id.asc())
+                        .limit(limit_per_type)
+                    ).all()
+                )
 
         # Convert to ContextItems
         items = []
@@ -979,12 +1073,15 @@ class ContextAssembler:
         """
         from models import File
 
+        # 桶来自共享常量 INVENTORY_FILE_TYPES（folder 之外的全部实体类型）。
+        #
+        # 历史缺陷：这里把桶写死成 outline/draft/character/lore/snippet 五种，
+        # 再用 `if file_type not in inventory: continue` 丢掉其余类型，于是
+        # script（短剧分集正文）与 document（create_file 的默认类型）整体消失，
+        # _format_context 还在「请勿重复创建已存在的文件」标题下输出肯定断言
+        # 「正文: (暂无)」，直接驱动 AI 重复创建已经写好的分集。
         inventory: dict[str, list[dict[str, Any]]] = {
-            "outline": [],
-            "draft": [],
-            "character": [],
-            "lore": [],
-            "snippet": [],
+            ft: [] for ft in INVENTORY_FILE_TYPES
         }
 
         # Query only required columns to avoid loading full file content.
@@ -1014,8 +1111,9 @@ class ContextAssembler:
         }
 
         for file_id, title, file_type, file_order, created_at in file_rows:
-            if file_type not in inventory:
-                continue
+            # 未知/新增的类型也建桶，绝不静默丢弃——「看不见的文件」正是本缺陷
+            # 的根因，宁可多渲染一节「其他文件」也不能让文件凭空消失。
+            bucket = grouped.setdefault(file_type, [])
 
             word_count = None
 
@@ -1031,12 +1129,13 @@ class ContextAssembler:
 
             sort_key = (effective_order, seq_num, created_at, file_id)
 
-            grouped[file_type].append(
+            bucket.append(
                 (
                     sort_key,
                     {
                         "id": file_id,
                         "title": title,
+                        "file_type": file_type,
                         "word_count": word_count,
                     },
                 )
@@ -1217,11 +1316,461 @@ class ContextAssembler:
 
         return tags
 
+    def _bound_project_status(
+        self,
+        project_status: dict[str, Any] | None,
+        max_tokens: int,
+    ) -> dict[str, Any] | None:
+        """把项目状态段裁剪到 max_tokens 以内。
+
+        summary / notes 是用户可写入数千字符的自由文本（各 4000 字符上限），
+        满值时仅这一段就能吃掉几千 token。它属于 header 的一部分，
+        必须和文件清单一样受 max_tokens 约束，否则条目档的保底额度形同虚设。
+
+        只裁剪 summary / notes 两个长字段；name / current_phase / writing_style
+        都很短且是结构化信息，原样保留。
+        """
+        if not project_status:
+            return project_status
+
+        max_tokens = max(0, int(max_tokens or 0))
+        if estimate_text_tokens(self._format_context([], None, project_status)) <= max_tokens:
+            return project_status
+
+        bounded = dict(project_status)
+        long_fields = [
+            field
+            for field in ("summary", "notes")
+            if isinstance(bounded.get(field), str) and bounded[field].strip()
+        ]
+        if not long_fields:
+            return bounded
+
+        # 先扣掉框架与短字段的固定开销，剩下的额度在长字段之间平分
+        fixed_tokens = estimate_text_tokens(
+            self._format_context(
+                [],
+                None,
+                {**bounded, **dict.fromkeys(long_fields, "")},
+            )
+        )
+        remaining = max(0, max_tokens - fixed_tokens)
+        per_field = max(
+            MIN_PROJECT_STATUS_FIELD_TOKENS, remaining // len(long_fields)
+        )
+
+        for field in long_fields:
+            bounded[field] = truncate_text_to_tokens(bounded[field], per_field)
+
+        return bounded
+
+    @staticmethod
+    def _inventory_env_int(name: str, default: int) -> int:
+        """读取清单相关的整数型环境变量（非法值回落默认值）。"""
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        raw = raw.strip()
+        if not raw:
+            return default
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            return default
+
+    def _build_inventory_sections(
+        self,
+        file_inventory: dict[str, list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        """把 inventory 各桶整理成待渲染的小节（已按条数上限截断）。
+
+        分桶规则：
+        - 大纲：outline
+        - 正文：CONTENT_FILE_TYPES（draft + script）——短剧项目的分集正文是
+          script，必须和 draft 一起进「正文」小节，否则清单会在
+          「请勿重复创建已存在的文件」标题下输出「正文: (暂无)」这种肯定断言。
+        - 角色 / 设定：character / lore
+        - 其他文件：snippet、document 以及任何未预期的新类型，兜底展示，
+          保证没有任何文件会从清单里凭空消失。
+        """
+        max_outline = self._inventory_env_int("AGENT_FILE_INVENTORY_MAX_OUTLINE", 80)
+        max_draft = self._inventory_env_int("AGENT_FILE_INVENTORY_MAX_DRAFT", 80)
+        max_script = self._inventory_env_int("AGENT_FILE_INVENTORY_MAX_SCRIPT", 80)
+        max_character = self._inventory_env_int("AGENT_FILE_INVENTORY_MAX_CHARACTER", 40)
+        max_lore = self._inventory_env_int("AGENT_FILE_INVENTORY_MAX_LORE", 40)
+        max_other = self._inventory_env_int("AGENT_FILE_INVENTORY_MAX_OTHER", 40)
+
+        def _entries(file_type: str) -> list[dict[str, Any]]:
+            rows = file_inventory.get(file_type) or []
+            return [{**row, "file_type": row.get("file_type") or file_type} for row in rows]
+
+        content_limits = {"draft": max_draft, "script": max_script}
+        content_entries: list[dict[str, Any]] = []
+        content_total = 0
+        for file_type in CONTENT_FILE_TYPES:
+            rows = _entries(file_type)
+            content_total += len(rows)
+            limit = content_limits.get(file_type, max_draft)
+            content_entries.extend(rows[:limit] if limit > 0 else [])
+
+        other_entries: list[dict[str, Any]] = []
+        other_total = 0
+        for file_type in file_inventory:
+            if file_type in CONTENT_FILE_TYPES or file_type in ("outline", "character", "lore"):
+                continue
+            typed = _entries(file_type)
+            other_total += len(typed)
+            other_entries.extend(typed)
+        other_entries = other_entries[:max_other] if max_other > 0 else []
+
+        outlines = _entries("outline")
+        characters = _entries("character")
+        lores = _entries("lore")
+
+        return [
+            {
+                "key": "outline",
+                "leftover_rank": 1,
+                "label": "大纲",
+                "layout": "list",
+                "empty_text": "大纲: (暂无)",
+                "total": len(outlines),
+                "entries": outlines[:max_outline] if max_outline > 0 else [],
+                "show_type": False,
+            },
+            {
+                "key": "content",
+                "leftover_rank": 0,
+                "label": "正文",
+                "layout": "list",
+                "empty_text": "\n正文: (暂无)",
+                "total": content_total,
+                "entries": content_entries,
+                # 同时存在 draft 与 script 时标出类型，方便模型选对 file_type
+                "show_type": len({e["file_type"] for e in content_entries}) > 1,
+            },
+            {
+                "key": "character",
+                "leftover_rank": 2,
+                "label": "角色",
+                "layout": "inline",
+                "empty_text": "",
+                "total": len(characters),
+                "entries": characters[:max_character] if max_character > 0 else [],
+                "show_type": False,
+            },
+            {
+                "key": "lore",
+                "leftover_rank": 3,
+                "label": "设定",
+                "layout": "inline",
+                "empty_text": "",
+                "total": len(lores),
+                "entries": lores[:max_lore] if max_lore > 0 else [],
+                "show_type": False,
+            },
+            {
+                "key": "other",
+                "leftover_rank": 4,
+                "label": "其他文件",
+                "layout": "inline",
+                "empty_text": "",
+                "total": other_total,
+                "entries": other_entries,
+                "show_type": True,
+            },
+        ]
+
+    @staticmethod
+    def _render_inventory_entry(
+        entry: dict[str, Any],
+        *,
+        layout: str,
+        with_id: bool,
+        show_type: bool,
+    ) -> str:
+        """渲染单条清单条目。"""
+        meta: list[str] = []
+        if with_id:
+            meta.append(f"id={entry['id']}")
+        if show_type:
+            meta.append(f"类型={entry['file_type']}")
+        if entry.get("word_count"):
+            meta.append(f"{entry['word_count']}字")
+
+        suffix = f" ({', '.join(meta)})" if meta else ""
+        title = entry.get("title") or "(未命名)"
+        return f"  - {title}{suffix}" if layout == "list" else f"{title}{suffix}"
+
+    # 「…（中间省略 N 个）」这一行的粗略 token 成本
+    _INVENTORY_ELLIPSIS_COST = 24
+
+    @staticmethod
+    def _inventory_head_count(count: int) -> int:
+        """展示 count 条时，其中多少条取自开头（其余取自结尾）。"""
+        return max(1, count // 4)
+
+    @classmethod
+    def _inventory_selection_cost(cls, costs: list[int], count: int) -> int:
+        """展示 count 条时该小节条目行的 token 成本。"""
+        total = len(costs)
+        if count <= 0:
+            return 0
+        if count >= total:
+            return sum(costs)
+        head = cls._inventory_head_count(count)
+        tail = count - head
+        cost = sum(costs[:head]) + cls._INVENTORY_ELLIPSIS_COST
+        if tail > 0:
+            cost += sum(costs[total - tail:])
+        return cost
+
+    @classmethod
+    def _pick_inventory_display_count(
+        cls,
+        costs: list[int],
+        allowance: int | None,
+    ) -> int:
+        """在 token 额度内决定某小节能展示几条。
+
+        展示策略是「头 + 尾」而不是单纯取前 N 条：头部让模型知道第 1 章确实存在，
+        尾部（最新章节）才是它接下来要续写、最容易重复创建的部分。
+        """
+        total = len(costs)
+        if allowance is None:
+            return total
+        if allowance <= 0 or total == 0:
+            return 0
+
+        for count in range(total, 0, -1):
+            if cls._inventory_selection_cost(costs, count) <= allowance:
+                return count
+
+        return 0
+
+    def _render_file_inventory(
+        self,
+        file_inventory: dict[str, list[dict[str, Any]]],
+        token_budget: int | None = None,
+    ) -> list[str]:
+        """渲染「项目文件清单」段，整体受 token_budget 约束。
+
+        为什么必须受约束：这段以前完全不受 max_tokens 限制，长篇项目下仅章节
+        清单就能到 5000+ token，把条目预算压到 MIN_ITEM_TOKEN_BUDGET，
+        用户手动附加的文件与手动选中的引用文本被静默丢弃。现在按剩余额度逐条
+        填充，装不下就显式写明「已省略 N 个」，让模型知道清单不完整而不是
+        误以为文件不存在。
+
+        Args:
+            file_inventory: _get_file_inventory 的产物
+            token_budget: 本段允许占用的 token 上限，None 表示不限
+
+        Returns:
+            要拼进 parts 的文本行
+        """
+        separator = "=" * 60
+        id_tail = self._inventory_env_int("AGENT_FILE_INVENTORY_ID_TAIL", 20)
+
+        header = [
+            separator,
+            "项目文件清单 [请勿重复创建已存在的文件]",
+            separator,
+            "",
+            "注：清单可能会被截断；当需要确认是否存在某文件时，请先调用 query_files 搜索。",
+            "未标注 id 的条目需要 id 时，同样通过 query_files 获取。",
+            "",
+        ]
+
+        sections = self._build_inventory_sections(file_inventory)
+
+        # 预先算好每小节的行与成本；小节标题行属于固定开销（它承载「共 N 个」
+        # 这个关键信号，再紧张也要保留），条目行才参与额度竞争。
+        rendered: list[dict[str, Any]] = []
+        fixed_cost = estimate_text_tokens("\n".join(header)) if token_budget is not None else 0
+
+        for section in sections:
+            entries = section["entries"]
+            count = len(entries)
+            lines = [
+                self._render_inventory_entry(
+                    entry,
+                    layout=section["layout"],
+                    with_id=(count - index) <= id_tail,
+                    show_type=section["show_type"],
+                )
+                for index, entry in enumerate(entries)
+            ]
+            costs = (
+                [estimate_text_tokens(line) + 1 for line in lines]
+                if token_budget is not None
+                else [0] * count
+            )
+            rendered.append({**section, "lines": lines, "costs": costs})
+
+        remaining = None
+        if token_budget is not None:
+            remaining = max(0, token_budget - fixed_cost)
+
+        # 两轮分配：先给每个非空小节公平份额，再把剩余额度按顺序补给还没展示完的
+        # 小节。避免 80 条大纲把角色/设定挤没，也避免额度闲置。
+        non_empty = [s for s in rendered if s["lines"]]
+        allowances: dict[str, int | None] = {s["key"]: None for s in rendered}
+        if remaining is not None and non_empty:
+            fair = remaining // len(non_empty)
+            spent = 0
+            first_pass: dict[str, int] = {}
+            for section in non_empty:
+                allowances[section["key"]] = fair
+                count = self._pick_inventory_display_count(section["costs"], fair)
+                first_pass[section["key"]] = count
+                spent += self._inventory_selection_cost(section["costs"], count)
+
+            # 剩余额度按重要性顺序补给：正文最关键（决定会不会重复创建已存在的
+            # 章节），其次是大纲，最后才是角色/设定/其他。
+            leftover = max(0, remaining - spent)
+            for section in sorted(non_empty, key=lambda s: s["leftover_rank"]):
+                if leftover <= 0:
+                    break
+                key = section["key"]
+                if first_pass[key] >= len(section["lines"]):
+                    continue
+                base = self._inventory_selection_cost(section["costs"], first_pass[key])
+                # 只增不减：第二轮额度必须不低于第一轮，否则会把已展示的条目又砍掉
+                allowance = max(fair, base + leftover)
+                allowances[key] = allowance
+                count = self._pick_inventory_display_count(section["costs"], allowance)
+                leftover -= max(
+                    0, self._inventory_selection_cost(section["costs"], count) - base
+                )
+
+        parts = list(header)
+        for section in rendered:
+            parts.extend(
+                self._render_inventory_section_lines(
+                    section, allowances.get(section["key"])
+                )
+            )
+
+        parts.extend(self._render_chapter_gap_hints(file_inventory))
+        parts.append("")
+        return parts
+
+    def _render_inventory_section_lines(
+        self,
+        section: dict[str, Any],
+        allowance: int | None,
+    ) -> list[str]:
+        """按额度渲染单个清单小节（含「已省略 N 个」提示）。"""
+        lines: list[str] = section["lines"]
+        total = section["total"]
+
+        if not lines:
+            return [section["empty_text"]] if section["empty_text"] else []
+
+        shown = self._pick_inventory_display_count(section["costs"], allowance)
+        head = self._inventory_head_count(shown)
+        if shown >= len(lines):
+            display = lines
+        elif shown <= 0:
+            display = []
+        else:
+            tail = shown - head
+            display = lines[:head] + (lines[-tail:] if tail > 0 else [])
+
+        omitted = total - len(display)
+        prefix = "\n" if section["empty_text"].startswith("\n") else ""
+
+        if section["layout"] == "list":
+            if omitted > 0:
+                out = [f"{prefix}{section['label']} ({total} 个，展示 {len(display)} 个):"]
+            else:
+                out = [f"{prefix}{section['label']} ({total} 个):"]
+            if not display:
+                out.append(f"  ...（{total} 个全部省略；请调用 query_files 查询）")
+                return out
+            if omitted > 0 and len(display) > 1:
+                out.extend(display[:head])
+                out.append(f"  ...（中间省略 {omitted} 个；需要时请先调用 query_files 搜索）")
+                out.extend(display[head:])
+            else:
+                out.extend(display)
+                if omitted > 0:
+                    out.append(f"  ...（已省略 {omitted} 个；需要时请先调用 query_files 搜索）")
+            return out
+
+        # inline layout：角色 / 设定 / 其他文件
+        suffix = f" ...（省略 {omitted} 个，可用 query_files 查询）" if omitted > 0 else ""
+        if not display:
+            return [f"\n{section['label']} ({total} 个): （全部省略，可用 query_files 查询）"]
+        return [f"\n{section['label']} ({total} 个): {', '.join(display)}{suffix}"]
+
+    def _render_chapter_gap_hints(
+        self,
+        file_inventory: dict[str, list[dict[str, Any]]],
+    ) -> list[str]:
+        """大纲 vs 正文的章节缺口提醒。
+
+        比对的正文集合是 draft ∪ script（CONTENT_FILE_TYPES）——只比 draft 时，
+        短剧项目的提醒恒为空。
+
+        This is important for batch generation flows where users request
+        "生成 1-5 章" but earlier turns might have created/deleted files.
+        The LLM can mistakenly assume chapter 1 exists and start from 2.
+        We compute missing chapters *within the already-started range*
+        (<= max existing content chapter) to avoid noisy warnings for future
+        outlines that naturally have no body yet.
+        """
+        try:
+            from utils.title_sequence import extract_sequence_number
+
+            outlines = file_inventory.get("outline") or []
+            contents: list[dict[str, Any]] = []
+            for file_type in CONTENT_FILE_TYPES:
+                contents.extend(file_inventory.get(file_type) or [])
+
+            outline_nums = {
+                n
+                for f in outlines
+                if (n := extract_sequence_number(f.get("title"))) is not None
+            }
+            content_nums = {
+                n
+                for f in contents
+                if (n := extract_sequence_number(f.get("title"))) is not None
+            }
+
+            if outline_nums and content_nums:
+                max_content_seq = max(content_nums)
+                missing_nums = sorted(
+                    n for n in outline_nums if n <= max_content_seq and n not in content_nums
+                )
+            else:
+                missing_nums = []
+        except Exception as exc:
+            log_with_context(
+                logger,
+                10,  # DEBUG
+                "Failed to compute outline/draft gap hints",
+                error=str(exc),
+            )
+            missing_nums = []
+
+        if not missing_nums:
+            return []
+
+        shown = "、".join(str(n) for n in missing_nums[:10])
+        suffix = "..." if len(missing_nums) > 10 else ""
+        hints = [f"\n⚠️ 章节一致性提醒：以下章节已有大纲但缺少正文：{shown}{suffix}"]
+        if 1 in missing_nums:
+            hints.append("⚠️ 注意：第1章正文缺失。批量生成正文时请优先补齐第1章，避免从第2章开始造成断档。")
+        return hints
+
     def _format_context(
         self,
         items: list[ContextItem],
         file_inventory: dict[str, list[dict[str, Any]]] | None = None,
         project_status: dict[str, Any] | None = None,
+        inventory_token_budget: int | None = None,
     ) -> str:
         """
         Format context items into a structured prompt with clear sections.
@@ -1230,6 +1779,8 @@ class ContextAssembler:
             items: List of context items to format
             file_inventory: Optional file inventory for project awareness
             project_status: Optional project status for AI context
+            inventory_token_budget: 文件清单段允许占用的 token 上限；
+                None 表示不限（仅受各小节条数上限约束）
 
         Returns:
             Formatted context string
@@ -1284,142 +1835,12 @@ class ContextAssembler:
             parts.append("- 特殊要求/注意事项 → notes")
             parts.append("")
 
-        # File inventory section
+        # File inventory section —— 受 inventory_token_budget 约束，见
+        # _render_file_inventory 的说明
         if file_inventory:
-            # Truncate inventory to avoid exploding prompt tokens for large projects.
-            #
-            # Defaults are conservative for latency. Operators can tune via env vars.
-            def _env_int(name: str, default: int) -> int:
-                raw = os.getenv(name)
-                if raw is None:
-                    return default
-                raw = raw.strip()
-                if not raw:
-                    return default
-                try:
-                    return max(0, int(raw))
-                except ValueError:
-                    return default
-
-            max_outline = _env_int("AGENT_FILE_INVENTORY_MAX_OUTLINE", 80)
-            max_draft = _env_int("AGENT_FILE_INVENTORY_MAX_DRAFT", 80)
-            max_character = _env_int("AGENT_FILE_INVENTORY_MAX_CHARACTER", 40)
-            max_lore = _env_int("AGENT_FILE_INVENTORY_MAX_LORE", 40)
-
-            parts.append(separator)
-            parts.append("项目文件清单 [请勿重复创建已存在的文件]")
-            parts.append(separator)
-            parts.append("")
-            parts.append("注：清单可能会被截断；当需要确认是否存在某文件时，请先调用 query_files 搜索。")
-            parts.append("")
-
-            # Outlines inventory (include id to avoid guessing)
-            outlines = file_inventory.get("outline") or []
-            if outlines:
-                outline_items_all = [f"  - {f['title']} (id={f['id']})" for f in outlines]
-                outline_items = outline_items_all[:max_outline] if max_outline > 0 else []
-                omitted = max(0, len(outline_items_all) - len(outline_items))
-                if omitted > 0:
-                    parts.append(f"大纲 ({len(outline_items_all)} 个，展示 {len(outline_items)} 个):")
-                else:
-                    parts.append(f"大纲 ({len(outline_items_all)} 个):")
-                parts.extend(outline_items)
-                if omitted > 0:
-                    parts.append(f"  ...（已省略 {omitted} 个；需要时请先调用 query_files 搜索）")
-            else:
-                parts.append("大纲: (暂无)")
-
-            # Drafts inventory with word count (include id to avoid guessing)
-            drafts = file_inventory.get("draft") or []
-            if drafts:
-                draft_items = []
-                for f in drafts[:max_draft] if max_draft > 0 else []:
-                    if f.get("word_count"):
-                        draft_items.append(f"  - {f['title']} (id={f['id']}, {f['word_count']}字)")
-                    else:
-                        draft_items.append(f"  - {f['title']} (id={f['id']})")
-                omitted = max(0, len(drafts) - len(draft_items))
-                if omitted > 0:
-                    parts.append(f"\n正文 ({len(drafts)} 个，展示 {len(draft_items)} 个):")
-                else:
-                    parts.append(f"\n正文 ({len(draft_items)} 个):")
-                parts.extend(draft_items)
-                if omitted > 0:
-                    parts.append(f"  ...（已省略 {omitted} 个；需要时请先调用 query_files 搜索）")
-            else:
-                parts.append("\n正文: (暂无)")
-
-            # -----------------------------------------------------------------
-            # Lightweight gap hints: outline vs draft mismatch (agent-facing)
-            #
-            # This is important for batch generation flows where users request
-            # "生成 1-5 章" but earlier turns might have created/deleted files.
-            # The LLM can mistakenly assume chapter 1 exists and start from 2.
-            # We compute missing draft chapters *within the already-started range*
-            # (<= max existing draft chapter). This avoids noisy warnings for
-            # future outlines that are naturally missing drafts.
-            # -----------------------------------------------------------------
-            try:
-                from utils.title_sequence import extract_sequence_number
-
-                outline_nums = {
-                    n
-                    for f in outlines
-                    if (n := extract_sequence_number(f.get("title"))) is not None
-                }
-                draft_nums = {
-                    n
-                    for f in drafts
-                    if (n := extract_sequence_number(f.get("title"))) is not None
-                }
-
-                if outline_nums and draft_nums:
-                    max_draft_seq = max(draft_nums)
-                    expected_outline_nums = {
-                        n for n in outline_nums if n <= max_draft_seq
-                    }
-                    missing_draft_nums = sorted(
-                        n for n in expected_outline_nums if n not in draft_nums
-                    )
-                else:
-                    missing_draft_nums = []
-            except Exception as exc:
-                log_with_context(
-                    logger,
-                    10,  # DEBUG
-                    "Failed to compute outline/draft gap hints",
-                    error=str(exc),
-                )
-                missing_draft_nums = []
-
-            if missing_draft_nums:
-                shown = "、".join(str(n) for n in missing_draft_nums[:10])
-                suffix = "..." if len(missing_draft_nums) > 10 else ""
-                parts.append(
-                    f"\n⚠️ 章节一致性提醒：以下章节已有大纲但缺少正文：{shown}{suffix}"
-                )
-                if 1 in missing_draft_nums:
-                    parts.append("⚠️ 注意：第1章正文缺失。批量生成正文时请优先补齐第1章，避免从第2章开始造成断档。")
-
-            # Characters inventory
-            characters = file_inventory.get("character") or []
-            if characters:
-                char_items_all = [f"{f['title']} (id={f['id']})" for f in characters]
-                char_items = char_items_all[:max_character] if max_character > 0 else []
-                omitted = max(0, len(char_items_all) - len(char_items))
-                suffix = f" ...（省略 {omitted} 个）" if omitted > 0 else ""
-                parts.append(f"\n角色 ({len(char_items_all)} 个): {', '.join(char_items)}{suffix}")
-
-            # Lores inventory
-            lores = file_inventory.get("lore") or []
-            if lores:
-                lore_items_all = [f"{f['title']} (id={f['id']})" for f in lores]
-                lore_items = lore_items_all[:max_lore] if max_lore > 0 else []
-                omitted = max(0, len(lore_items_all) - len(lore_items))
-                suffix = f" ...（省略 {omitted} 个）" if omitted > 0 else ""
-                parts.append(f"\n设定 ({len(lore_items_all)} 个): {', '.join(lore_items)}{suffix}")
-
-            parts.append("")
+            parts.extend(
+                self._render_file_inventory(file_inventory, inventory_token_budget)
+            )
 
         # Group items by type
         sections: dict[str, list[ContextItem]] = {
@@ -1433,8 +1854,10 @@ class ContextAssembler:
 
         for item in items:
             item_type = item.type
-            # Check if it's a draft (stored in outline type but has file_type metadata)
-            if item_type == "outline" and item.metadata.get("file_type") == "draft":
+            # 正文类文件（draft / script）都以 ContextItem.type == "outline" 承载，
+            # 靠 metadata["file_type"] 区分。这里必须用 CONTENT_FILE_TYPES 判断，
+            # 只写死 "draft" 会让短剧分集（script）被渲染进【大纲详情】。
+            if item_type == "outline" and item.metadata.get("file_type") in CONTENT_FILE_TYPES:
                 sections["draft"].append(item)
             elif item_type in sections:
                 sections[item_type].append(item)
@@ -1503,7 +1926,10 @@ class ContextAssembler:
                         meta_parts.append("sources=" + "+".join(cleaned_sources))
 
                 prefix = f"[{' | '.join(meta_parts)}] " if meta_parts else ""
-                parts.append(f"{prefix}{item.title}")
+                # 参考素材区块同样可能承载焦点文件（snippet 类型），必须带焦点标记，
+                # 否则模型无法从同区块的多条素材里分辨用户当前指的是哪一条。
+                focus_mark = " ← 当前焦点" if item.is_focus else ""
+                parts.append(f"{prefix}{item.title}{focus_mark}")
                 parts.append(item.content)
                 parts.append("")
 
@@ -1511,7 +1937,8 @@ class ContextAssembler:
         if sections["character"]:
             parts.append("【角色信息】")
             for item in sections["character"]:
-                parts.append(f"{item.title}")
+                focus_mark = " ← 当前焦点" if item.is_focus else ""
+                parts.append(f"{item.title}{focus_mark}")
                 parts.append(item.content)
                 parts.append("")
 
@@ -1521,7 +1948,8 @@ class ContextAssembler:
             for item in sections["lore"]:
                 category = item.metadata.get("category", "")
                 prefix = f"[{category}] " if category else ""
-                parts.append(f"{prefix}{item.title}")
+                focus_mark = " ← 当前焦点" if item.is_focus else ""
+                parts.append(f"{prefix}{item.title}{focus_mark}")
                 parts.append(item.content)
                 parts.append("")
 

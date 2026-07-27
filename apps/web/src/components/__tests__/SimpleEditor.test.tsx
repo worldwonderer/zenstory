@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SimpleEditor } from '../SimpleEditor';
 import { toast } from '../../lib/toast';
+import { writingStatsApi } from '../../lib/writingStatsApi';
 
 vi.mock('../../lib/naturalPolishApi', () => ({
   naturalPolishApi: {
@@ -86,7 +87,7 @@ describe('SimpleEditor', () => {
         content="Hello world"
         onTitleChange={vi.fn()}
         onContentChange={vi.fn()}
-        onSave={vi.fn().mockResolvedValue(undefined)}
+        onSave={vi.fn().mockResolvedValue('saved')}
       />
     );
 
@@ -108,7 +109,7 @@ describe('SimpleEditor', () => {
         content="Hello world"
         onTitleChange={vi.fn()}
         onContentChange={vi.fn()}
-        onSave={vi.fn().mockResolvedValue(undefined)}
+        onSave={vi.fn().mockResolvedValue('saved')}
         onEnterDiffReview={onEnterDiffReview}
       />
     );
@@ -148,7 +149,7 @@ describe('SimpleEditor', () => {
         content="Hello world"
         onTitleChange={vi.fn()}
         onContentChange={vi.fn()}
-        onSave={vi.fn().mockResolvedValue(undefined)}
+        onSave={vi.fn().mockResolvedValue('saved')}
         onEnterDiffReview={onEnterDiffReview}
       />
     );
@@ -167,7 +168,7 @@ describe('SimpleEditor', () => {
         content="Another content"
         onTitleChange={vi.fn()}
         onContentChange={vi.fn()}
-        onSave={vi.fn().mockResolvedValue(undefined)}
+        onSave={vi.fn().mockResolvedValue('saved')}
         onEnterDiffReview={onEnterDiffReview}
       />
     );
@@ -197,7 +198,7 @@ describe('SimpleEditor', () => {
         content="Hello world"
         onTitleChange={vi.fn()}
         onContentChange={vi.fn()}
-        onSave={vi.fn().mockResolvedValue(undefined)}
+        onSave={vi.fn().mockResolvedValue('saved')}
       />
     );
 
@@ -211,7 +212,7 @@ describe('SimpleEditor', () => {
   });
 
   it('resets dirty state when switching files', () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onSave = vi.fn().mockResolvedValue('saved');
     const onTitleChange = vi.fn();
     const onContentChange = vi.fn();
 
@@ -249,8 +250,37 @@ describe('SimpleEditor', () => {
     expect(screen.getByRole('button', { name: 'editor:save' })).toBeDisabled();
   });
 
+  it('keeps dirty baseline and skips stats when save reports a conflict', async () => {
+    const onSave = vi.fn().mockResolvedValue('conflict');
+    render(
+      <SimpleEditor
+        projectId="project-1"
+        fileId="file-1"
+        fileType="draft"
+        title="File 1"
+        content="Original content"
+        onTitleChange={vi.fn()}
+        onContentChange={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.change(
+      screen.getByPlaceholderText('editor:placeholder.contentPlaceholder'),
+      { target: { value: 'Local content that has not been persisted' } },
+    );
+    const saveButton = screen.getByRole('button', { name: 'editor:save' });
+    expect(screen.getByText('editor:unsaved')).toBeInTheDocument();
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    expect(screen.getByText('editor:unsaved')).toBeInTheDocument();
+    expect(writingStatsApi.recordStats).not.toHaveBeenCalled();
+  });
+
   it('does not create content version when only title changes after async file switch', async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onSave = vi.fn().mockResolvedValue('saved');
     const onTitleChange = vi.fn();
     const onContentChange = vi.fn();
 
@@ -308,7 +338,7 @@ describe('SimpleEditor', () => {
         content={'line\n'.repeat(200)}
         onTitleChange={vi.fn()}
         onContentChange={vi.fn()}
-        onSave={vi.fn().mockResolvedValue(undefined)}
+        onSave={vi.fn().mockResolvedValue('saved')}
       />
     );
 
@@ -327,7 +357,7 @@ describe('SimpleEditor', () => {
         content={'line\n'.repeat(40)}
         onTitleChange={vi.fn()}
         onContentChange={vi.fn()}
-        onSave={vi.fn().mockResolvedValue(undefined)}
+        onSave={vi.fn().mockResolvedValue('saved')}
       />
     );
 
@@ -364,7 +394,7 @@ describe('SimpleEditor', () => {
   it('does not force auto-scroll to bottom when user scrolled away during streaming', async () => {
     const rafSpy = mockRaf();
 
-    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onSave = vi.fn().mockResolvedValue('saved');
     const onTitleChange = vi.fn();
     const onContentChange = vi.fn();
 
@@ -418,7 +448,7 @@ describe('SimpleEditor', () => {
   it('auto-scrolls to bottom during streaming when already near bottom', async () => {
     const rafSpy = mockRaf();
 
-    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onSave = vi.fn().mockResolvedValue('saved');
     const onTitleChange = vi.fn();
     const onContentChange = vi.fn();
 

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from agent.constants import coerce_bool
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -63,9 +64,15 @@ such as:
 - Running multiple queries in parallel
 
 All tasks must be independent (not depend on each other's results).
-Maximum 5 parallel tasks per call.
+Maximum 5 parallel tasks per call — extra tasks are NOT executed. Split into
+multiple calls instead of sending more than 5.
 
 Task param conventions:
+- write_chapter: params = {"title": "第三章", "content": "<full chapter text>", "parent_id": "<folder_id>"}
+  - content is REQUIRED and must be inlined here. Parallel tasks cannot use the
+    <file>...</file> streaming protocol; a task without content would create an
+    empty file that never gets its body. Use a single create_file call instead
+    when you want to stream the body.
 - edit_file (recommended): params = {"id": "<file_id>", "edits": [...], "continue_on_error": false}
   - Legacy aliases: {"file_id": "..."} for id, {"operations": [...]} for edits
 - delete_file: params = {"id": "<file_id>", "recursive": false}
@@ -90,7 +97,13 @@ Task param conventions:
                         },
                         "params": {
                             "type": "object",
-                            "description": "Task-specific parameters",
+                            "description": (
+                                "Task-specific parameters. "
+                                "write_chapter: {title, content (required, inline full text), parent_id}; "
+                                "edit_file: {id, edits, continue_on_error}; "
+                                "delete_file: {id, recursive}; "
+                                "query_files / hybrid_search: same params as the standalone tool."
+                            ),
                         },
                     },
                     "required": ["type", "description", "params"],
@@ -159,6 +172,26 @@ def _result_preview(result: Any, max_length: int = 100) -> str | None:
     return text[:max_length] if text else None
 
 
+def _validate_write_chapter_params(params: dict[str, Any]) -> str | None:
+    """校验 write_chapter 任务参数，返回错误信息（None 表示通过）。
+
+    content 必须内联：并行任务的 tool_result 工具名是 "parallel_execute"，
+    内层结果被包在 data.tasks[] 里，StreamAdapter 只在 tool_name == "create_file"
+    的结果上进入 <file>…</file> 捕获，因此并行分支**永远等不到**流式正文。
+    放行一个不带 content 的 write_chapter，等于确定性地产出一个空章节文件，
+    而工具还会把它报成 completed。
+    """
+    content = params.get("content")
+    if not isinstance(content, str) or not content.strip():
+        title = params.get("title") or "未命名章节"
+        return (
+            f"write_chapter 任务「{title}」缺少 content：并行任务必须把整章正文内联在 "
+            "params.content 里（并行分支不支持 <file>…</file> 流式写入）。"
+            "若要流式写入，请改用单独的 create_file 调用。"
+        )
+    return None
+
+
 async def handle_write_chapter(params: dict[str, Any]) -> dict[str, Any]:
     """Handle write_chapter task type - creates a draft file."""
     from agent.tools.mcp_tools import ToolContext, create_file
@@ -167,13 +200,20 @@ async def handle_write_chapter(params: dict[str, Any]) -> dict[str, Any]:
     if project_id is None:
         return _make_error("project_id not set")
 
-    # 检查是否有待写入的空文件
+    # 有空文件待补写时先快速失败，给模型一句可执行的提示。
+    # 注意：这只是"友好前置检查"，不是守卫本身——真正的守卫是
+    # mcp_tools._create_file_sync 里的原子占坑（try_reserve + bind），
+    # 因为检查与建库之间隔着 await/线程边界，任何"先查后建"都是 TOCTOU。
     if ToolContext.has_pending_empty_file():
         pending = ToolContext.get_pending_empty_file()
         pending_title = pending.get("title", "unknown") if pending else "unknown"
         return _make_error(
             f"Please complete writing the previous file '{pending_title}' first."
         )
+
+    validation_error = _validate_write_chapter_params(params)
+    if validation_error:
+        return _make_error(validation_error)
 
     try:
         result = await create_file({
@@ -219,7 +259,9 @@ async def handle_edit_file(params: dict[str, Any]) -> dict[str, Any]:
     result = await edit_file({
         "id": file_id,
         "edits": edits,
-        "continue_on_error": bool(params.get("continue_on_error", False)),
+        # bool("false") is True —— 模型把布尔参数序列化成字符串时，朴素强转会
+        # 让"失败即停"变成"失败继续"，且整体仍被报成 success。
+        "continue_on_error": coerce_bool(params.get("continue_on_error")),
     })
     return result
 
@@ -244,7 +286,9 @@ async def handle_delete_file(params: dict[str, Any]) -> dict[str, Any]:
 
     return await delete_file({
         "id": file_id,
-        "recursive": bool(params.get("recursive", False)),
+        # recursive 判真会软删除整棵子树；bool("false") is True，
+        # 必须用 coerce_bool 而不是朴素强转。
+        "recursive": coerce_bool(params.get("recursive")),
     })
 
 
@@ -330,10 +374,19 @@ async def execute_parallel(
     start_time = datetime.now()
 
     # Limit tasks to MAX_PARALLEL_TASKS
+    requested_count = len(tasks)
     limited_tasks = tasks[:MAX_PARALLEL_TASKS]
-    if len(tasks) > MAX_PARALLEL_TASKS:
+    dropped_tasks = [
+        {
+            "index": index,
+            "type": t.get("type", "unknown") if isinstance(t, dict) else "unknown",
+            "description": t.get("description", "") if isinstance(t, dict) else "",
+        }
+        for index, t in enumerate(tasks[MAX_PARALLEL_TASKS:], start=MAX_PARALLEL_TASKS)
+    ]
+    if dropped_tasks:
         logger.warning(
-            f"parallel_execute: Truncated {len(tasks)} tasks to {MAX_PARALLEL_TASKS}"
+            f"parallel_execute: Truncated {requested_count} tasks to {MAX_PARALLEL_TASKS}"
         )
 
     # Create SubagentTask objects
@@ -355,6 +408,10 @@ async def execute_parallel(
             execution_id=execution_id,
             task_count=len(subagent_tasks),
             task_descriptions=[t.description for t in subagent_tasks],
+            # 截断信息必须随事件下发：否则前端只知道"本轮跑 5 个"，
+            # 无从得知模型其实请求了 7 个、有 2 个根本没执行。
+            requested_task_count=requested_count,
+            dropped_count=len(dropped_tasks),
         )
     )
 
@@ -391,20 +448,41 @@ async def execute_parallel(
                 # fresh session instead of sharing the parent ToolContext's
                 # session across concurrent threads (SQLAlchemy sessions are
                 # not thread-safe).
+                #
+                # 只清 task_ctx["session"] 是不够的：ToolContext.get_session() 的
+                # 查找顺序是 context["session"] → _owned_session_var → create_func，
+                # 而 _owned_session_var 是 ContextVar，子任务通过 contextvars 快照
+                # 原样继承父上下文里已经懒建好的 Session（handoff 后
+                # writing_graph 调 refresh_file_inventory() 就会把它填上）。
+                # 于是两个子任务在两个真实 OS 线程上共用同一个 Session：并发
+                # flush/commit，且先结束的那个在 finally 里 close 掉它，另一个
+                # 还在同一 Session 上跑事务。必须三件事一起做——
+                #   1) 隔离 _owned_session_var；
+                #   2) 打上 SESSION_ISOLATION_KEY，让 get_session() 即使看到继承来的
+                #      自有 session 也不复用（双保险）；
+                #   3) finally 里先关掉本任务自建的 session，再 reset token。
                 from agent.tools.mcp_tools import (
+                    SESSION_ISOLATION_KEY,
                     ToolContext,
+                    _owned_session_var,
                     _tool_context_var,
                 )
 
                 original_ctx = _tool_context_var.get()
                 task_ctx = dict(original_ctx) if isinstance(original_ctx, dict) else {}
                 task_ctx["session"] = None  # force get_session() to create a new one
+                task_ctx[SESSION_ISOLATION_KEY] = True
                 token = _tool_context_var.set(task_ctx)
+                owned_token = _owned_session_var.set(None)
                 try:
                     result = await handler(task.parameters)
                 finally:
-                    _tool_context_var.reset(token)
+                    # 顺序要紧：先在"本任务的 owned 视图"里关闭自建 session，
+                    # 再把 ContextVar 恢复成父上下文的值；反过来会把父上下文
+                    # 的 session 当成自己的关掉。
                     ToolContext._cleanup_owned_session()
+                    _owned_session_var.reset(owned_token)
+                    _tool_context_var.reset(token)
 
                 # Extract result text from MCP format
                 content_list = result.get("content", [])
@@ -451,12 +529,25 @@ async def execute_parallel(
     duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
     # Build result summary
+    #
+    # 被截断丢弃的任务必须是返回体里的**一等字段**：历史实现只写一条
+    # logger.warning，payload 里 total_tasks 是截断后的数字、all_completed 仍为
+    # true，模型据此向用户回复"7 个草稿已全部删除"，而第 6、7 个根本没执行。
+    # 只要有任务被丢弃，all_completed 就恒为 False——工具不许谎报成功。
     result_data = {
         "execution_id": execution_id,
+        "requested_tasks": requested_count,
+        "max_parallel_tasks": MAX_PARALLEL_TASKS,
+        "truncated": bool(dropped_tasks),
+        "dropped": len(dropped_tasks),
+        "dropped_tasks": dropped_tasks,
         "total_tasks": len(completed_tasks),
         "completed": sum(1 for t in completed_tasks if t.status == "completed"),
         "failed": sum(1 for t in completed_tasks if t.status == "failed"),
-        "all_completed": all(t.status == "completed" for t in completed_tasks),
+        "all_completed": (
+            not dropped_tasks
+            and all(t.status == "completed" for t in completed_tasks)
+        ),
         "any_failed": any(t.status == "failed" for t in completed_tasks),
         "total_duration_ms": duration_ms,
         "tasks": [
@@ -478,6 +569,16 @@ async def execute_parallel(
         ],
     }
 
+    if dropped_tasks:
+        # 给模型一句可执行的下一步，否则它只会看到数字对不上却不知道该做什么。
+        result_data["warning"] = (
+            f"本次只执行了前 {len(completed_tasks)} 个任务，"
+            f"第 {MAX_PARALLEL_TASKS + 1}~{requested_count} 个任务未执行"
+            f"（单次最多 {MAX_PARALLEL_TASKS} 个）。"
+            "请针对 dropped_tasks 里的任务再发起一次 parallel_execute，"
+            "在此之前不要向用户声称全部完成。"
+        )
+
     # Announce completion with the aggregate outcome for the UI summary line.
     emit_progress(
         parallel_end_event(
@@ -486,12 +587,14 @@ async def execute_parallel(
             completed=result_data["completed"],
             failed=result_data["failed"],
             duration_ms=duration_ms,
+            requested_task_count=requested_count,
+            dropped_count=len(dropped_tasks),
         )
     )
 
     logger.info(
         f"parallel_execute completed: {result_data['completed']}/{result_data['total_tasks']} "
-        f"tasks in {duration_ms}ms"
+        f"tasks in {duration_ms}ms (requested={requested_count}, dropped={len(dropped_tasks)})"
     )
 
     # Always return a "success" envelope so the per-task breakdown (data.tasks[])

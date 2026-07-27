@@ -1136,6 +1136,25 @@ describe('ProjectContext', () => {
       expect(result.current.selectedItem).toBe(null)
     })
 
+    it('should preserve the selected item when re-selecting the current project', async () => {
+      vi.mocked(projectApi.getAll).mockResolvedValue(mockProjects)
+      const wrapper = createWrapper(mockUser)
+
+      const { result } = renderHook(() => useProject(), { wrapper })
+
+      await waitFor(() => {
+        expect(result.current.currentProjectId).toBe('project-2')
+      })
+
+      const selectedItem: SelectedItem = { id: 'file-1', type: 'draft', title: 'Test' }
+      act(() => {
+        result.current.setSelectedItem(selectedItem)
+        result.current.setCurrentProjectId('project-2')
+      })
+
+      expect(result.current.selectedItem).toEqual(selectedItem)
+    })
+
     it('should save project id to localStorage', async () => {
       vi.mocked(projectApi.getAll).mockResolvedValue(mockProjects)
       const wrapper = createWrapper(mockUser)

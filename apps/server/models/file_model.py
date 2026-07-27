@@ -11,6 +11,7 @@ File types:
 - lore: 世界设定
 - snippet: 文本素材
 - script: 剧本内容（短剧专用）
+- document: 通用文档（File.file_type 与 create_file 工具的默认类型）
 - folder: 文件夹（用于组织）
 """
 
@@ -40,7 +41,7 @@ class File(SQLModel, table=True):
     file_type: str = Field(
         default="document",
         index=True,
-        description="文件类型：outline/draft/character/lore/snippet/script/folder",
+        description="文件类型：outline/draft/character/lore/snippet/script/document/folder",
     )
 
     # Hierarchy and ordering
@@ -117,6 +118,10 @@ FILE_TYPE_CHARACTER = "character"
 FILE_TYPE_LORE = "lore"
 FILE_TYPE_SNIPPET = "snippet"
 FILE_TYPE_SCRIPT = "script"  # Script content (for screenplay)
+# 通用文档：File.file_type 的默认值，也是 create_file 工具未显式指定类型时的落库类型。
+# 之前只有字符串字面量散落在各处（crud.py / tool_schemas.py），没有对应常量，
+# 导致文件清单等按常量枚举类型的地方会整类漏掉 document 文件。
+FILE_TYPE_DOCUMENT = "document"
 FILE_TYPE_FOLDER = "folder"
 
 
@@ -147,6 +152,10 @@ FILE_TYPE_METADATA_SCHEMA = {
     FILE_TYPE_SCRIPT: {
         "description": "剧本内容（短剧专用）",
         "optional_fields": ["episode_number", "scene_count", "duration"],
+    },
+    FILE_TYPE_DOCUMENT: {
+        "description": "通用文档（默认类型）",
+        "optional_fields": ["tags", "word_count"],
     },
     FILE_TYPE_FOLDER: {
         "description": "文件夹（用于组织）",

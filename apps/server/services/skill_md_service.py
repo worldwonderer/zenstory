@@ -12,7 +12,7 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# NOTE: Keep in sync with require_rate_limit() params in agent_api.py and vector_search.py
+# NOTE: Keep in sync with require_agent_rate_limit() params in agent_api.py and vector_search.py
 RATE_LIMITS = {
     "read": "2000/hour",
     "write": "1000/hour",

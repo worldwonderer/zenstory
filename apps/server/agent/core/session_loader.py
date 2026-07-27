@@ -412,20 +412,16 @@ class SessionLoader:
             "content": msg.content,
         }
 
-        # Include reasoning_content for assistant messages
-        # The workflow message format keeps thinking inside the content array, not top-level
-        if msg.role == "assistant" and getattr(msg, "reasoning_content", None):
-            reasoning = msg.reasoning_content
-            # Reconstruct content as array with thinking block first
-            if isinstance(msg_data.get("content"), str):
-                parts: list[dict[str, Any]] = [
-                    {"type": "thinking", "thinking": reasoning},
-                ]
-                if msg_data["content"]:
-                    parts.append({"type": "text", "text": msg_data["content"]})
-                msg_data["content"] = parts
-
         # Include persisted assistant metadata for token estimation
+        #
+        # 顺序至关重要：状态卡的正文合成必须发生在下面的 reasoning 分支**之前**。
+        # reasoning 分支会把 content 从 str 变成内容块 list；一旦先执行它，
+        # 这里"正文是否为空"的判断就会看到一个非空 list 而恒假，于是
+        # request_clarification / iteration_exhausted 这类「只有状态卡、没有正文」
+        # 的轮次拿不到合成文本。而回放侧（openai_agents.runner）会丢弃 thinking 块，
+        # 该 assistant 消息随即因文本为空被整条剔除——AI 忘了自己刚问过什么，
+        # 表现为反复追问或把用户的回答当成无上下文的孤立指令。
+        # 判空也统一走 _extract_content_text，即便将来顺序再被调整也不会退化。
         if msg.role == "assistant" and getattr(msg, "message_metadata", None):
             try:
                 metadata = json.loads(msg.message_metadata)
@@ -442,8 +438,23 @@ class SessionLoader:
                     msg_data["usage"] = usage
                 if isinstance(status_cards, list):
                     synthesized_content = self._build_status_cards_history_content(status_cards)
-                    if synthesized_content and not str(msg_data.get("content") or "").strip():
-                        msg_data["content"] = synthesized_content
+                    if synthesized_content and not self._extract_content_text(
+                        msg_data.get("content")
+                    ).strip():
+                        self._append_text_to_content(msg_data, synthesized_content)
+
+        # Include reasoning_content for assistant messages
+        # The workflow message format keeps thinking inside the content array, not top-level
+        if msg.role == "assistant" and getattr(msg, "reasoning_content", None):
+            reasoning = msg.reasoning_content
+            # Reconstruct content as array with thinking block first
+            if isinstance(msg_data.get("content"), str):
+                parts: list[dict[str, Any]] = [
+                    {"type": "thinking", "thinking": reasoning},
+                ]
+                if msg_data["content"]:
+                    parts.append({"type": "text", "text": msg_data["content"]})
+                msg_data["content"] = parts
 
         # Tool-turn breadcrumbs (cross-request tool memory).
         #
@@ -461,28 +472,64 @@ class SessionLoader:
         if msg.role == "assistant" and getattr(msg, "tool_calls", None):
             breadcrumb = self._build_tool_calls_history_content(msg.tool_calls)
             if breadcrumb:
-                self._append_breadcrumb_to_content(msg_data, breadcrumb)
+                self._append_text_to_content(msg_data, breadcrumb)
 
         return msg_data
 
-    def _append_breadcrumb_to_content(
+    @staticmethod
+    def _extract_content_text(content: Any) -> str:
+        """提取内容里真正会被回放给模型的纯文本。
+
+        content 既可能是 str，也可能是
+        `[{"type": "thinking", ...}, {"type": "text", ...}]` 这样的内容块列表。
+        回放侧（openai_agents.runner.extract_text_from_message_content）只取 text 块、
+        丢弃 thinking/tool_use/tool_result 块，因此判断「这条消息对模型而言是否为空」
+        必须用同一套规则：`str(content)` 会把 thinking 块的 repr 当成正文，
+        使「只有状态卡」的轮次被误判为有正文。
+        """
+        if isinstance(content, str):
+            return content
+
+        if not isinstance(content, list):
+            return "" if content is None else str(content)
+
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                if block.strip():
+                    parts.append(block)
+                continue
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
+
+        return "\n".join(parts)
+
+    def _append_text_to_content(
         self,
         msg_data: dict[str, Any],
-        breadcrumb: str,
+        text: str,
     ) -> None:
-        """Attach a tool-turn breadcrumb as plain assistant text content."""
+        """把一段合成文本（工具面包屑 / 状态卡摘要）追加为 assistant 的纯文本内容。
+
+        content 已是内容块 list 时追加一个 text 块，否则按字符串拼接；
+        原本为空则直接替换。两条路径都保证文本能被回放侧提取到。
+        """
         content = msg_data.get("content")
 
         if isinstance(content, list):
             # Reasoning/structured content already present — append a text block.
-            content.append({"type": "text", "text": breadcrumb})
+            content.append({"type": "text", "text": text})
             return
 
         existing_text = str(content or "").strip()
         if existing_text:
-            msg_data["content"] = f"{content}\n\n{breadcrumb}"
+            msg_data["content"] = f"{content}\n\n{text}"
         else:
-            msg_data["content"] = breadcrumb
+            msg_data["content"] = text
 
     def _build_tool_calls_history_content(self, tool_calls_raw: Any) -> str:
         """

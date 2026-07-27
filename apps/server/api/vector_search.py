@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from api.agent_dependencies import AgentAuthContext, require_project_access
 from core.error_codes import ErrorCode
 from core.error_handler import APIException
-from middleware.rate_limit import require_rate_limit
+from middleware.rate_limit import require_agent_rate_limit
 from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
@@ -64,7 +64,7 @@ class SearchResponse(BaseModel):
 async def search(
     project_id: str,
     body: SearchRequest,
-    _rate_limit: int = Depends(require_rate_limit("agent_search", 500, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_search", 500, 3600)),
     context: AgentAuthContext = Depends(require_project_access("read")),
 ):
     """

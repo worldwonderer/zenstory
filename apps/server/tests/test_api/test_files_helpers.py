@@ -67,7 +67,7 @@ def _create_project(db_session: Session, name: str = "Files helper project") -> 
     return project
 
 
-def test_validate_parent_assignment_rejects_invalid_targets(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+def test_validate_parent_assignment_rejects_invalid_targets(db_session: Session):
     project = _create_project(db_session)
     other_project = _create_project(db_session, "Other project")
     valid_folder = File(project_id=project.id, title="Folder", file_type="folder")
@@ -88,10 +88,30 @@ def test_validate_parent_assignment_rejects_invalid_targets(db_session: Session,
             _validate_parent_assignment(db_session, project.id, parent_id)
         assert exc.value.error_code == error_code
 
-    monkeypatch.setattr(files_module, "_is_descendant", lambda session, file_id, parent_id: True)
+    # 成环检测：用真实的父子链断言，不再 monkeypatch 已被删除的 _is_descendant。
+    # （校验规则现在唯一实现在 services/file_tree_rules，打桩本模块的私有函数
+    # 已经影响不到它，也验证不出任何东西。）
+    child_folder = File(
+        project_id=project.id,
+        title="Child",
+        file_type="folder",
+        parent_id=valid_folder.id,
+    )
+    db_session.add(child_folder)
+    db_session.commit()
+
     with pytest.raises(APIException) as descendant_exc:
-        _validate_parent_assignment(db_session, project.id, valid_folder.id, moving_file_id="moving-file")
+        _validate_parent_assignment(
+            db_session, project.id, child_folder.id, moving_file_id=valid_folder.id
+        )
     assert descendant_exc.value.error_code == ErrorCode.VALIDATION_ERROR
+
+    # 把文件夹挂到它自己下面同样必须被拒
+    with pytest.raises(APIException) as self_exc:
+        _validate_parent_assignment(
+            db_session, project.id, valid_folder.id, moving_file_id=valid_folder.id
+        )
+    assert self_exc.value.error_code == ErrorCode.VALIDATION_ERROR
 
 
 def test_ensure_material_folder_restores_deleted_and_uses_english_title(db_session: Session):

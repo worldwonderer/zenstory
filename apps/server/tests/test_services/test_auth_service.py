@@ -12,7 +12,7 @@ Unit tests for the authentication service, covering:
 - get_current_superuser dependency
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import status
@@ -181,13 +181,15 @@ class TestCreateAccessToken:
     def test_create_access_token_expiration_time(self):
         """Test that token expiration is in the future and approximately correct."""
         data = {"sub": "user123"}
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         token = create_access_token(data)
 
         from services.core.auth_service import SECRET_KEY
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
-        exp_time = datetime.fromtimestamp(payload["exp"])
+        # JWT NumericDate is UTC; decoding it in the host's local timezone makes
+        # this assertion fail on every non-UTC developer machine.
+        exp_time = datetime.fromtimestamp(payload["exp"], tz=UTC)
 
         # Check expiration is in the future
         assert exp_time > now

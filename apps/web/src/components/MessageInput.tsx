@@ -338,6 +338,9 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   // Skill trigger tags (displayed as chips above input)
   const [skillTriggers, setSkillTriggers] = useState<string[]>([]);
 
+  // 追加指令发送中：用于禁用按钮/回车，避免重复提交同一条 steering。
+  const [steerPending, setSteerPending] = useState(false);
+
   // Skill quick trigger state
   const [showSkillMenu, setShowSkillMenu] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -559,17 +562,35 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (steerActive) {
-        handleSteer();
+        void handleSteer();
       } else {
         handleSubmit();
       }
     }
   };
 
-  const handleSteer = () => {
+  /**
+   * 发送追加指令（steering）。
+   *
+   * 必须等 onSteer 真正成功之后才清空输入：setInput 会同步把草稿
+   * （localStorage 里的 drafts[projectId]）覆写成空串，一旦失败，
+   * 用户敲的这段指令在 textarea 和持久化草稿里都不复存在，只能凭记忆重打。
+   */
+  const handleSteer = async () => {
     const trimmed = input.trim();
-    if (!trimmed || !onSteer) return;
-    void onSteer(trimmed);
+    if (!trimmed || !onSteer || steerPending) return;
+
+    setSteerPending(true);
+    try {
+      await onSteer(trimmed);
+    } catch (error) {
+      // 失败时保留输入与技能芯片，用户可直接重试（提示由上层 toast 负责）。
+      logger.error("Failed to send steering message", error);
+      return;
+    } finally {
+      setSteerPending(false);
+    }
+
     setInput("");
     setSkillTriggers([]);
     if (textareaRef.current && layout === "auto") {
@@ -927,8 +948,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
 
         {steerActive && input.trim() ? (
           <button
-            onClick={handleSteer}
-            disabled={!input.trim()}
+            onClick={() => { void handleSteer(); }}
+            disabled={!input.trim() || steerPending}
             className={`shrink-0 flex items-center justify-center bg-[hsl(var(--accent-primary))] hover:bg-[hsl(var(--accent-dark))] disabled:bg-[hsl(var(--bg-tertiary))] disabled:cursor-not-allowed text-white rounded-lg transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_hsl(var(--bg-primary)),_0_0_0_4px_hsl(var(--accent-primary))] ${isMobile ? 'w-11 h-11' : 'w-9 h-9'}`}
             title={t("chat:input.steerButton")}
             aria-label={t("chat:input.steerButton")}

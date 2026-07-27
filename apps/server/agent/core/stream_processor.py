@@ -61,6 +61,7 @@ def _classify_marker(
     prev_char: str,
     fence_open: bool,
     at_eof: bool,
+    is_end_marker: bool = False,
 ) -> str:
     """判定 buffer 中一个 <file>/</file> 命中是真实标记还是代码上下文中的字面量。
 
@@ -71,11 +72,29 @@ def _classify_marker(
 
     prev_char / fence_open 提供 buffer 之前已被消费内容的上下文（紧邻的
     前一个字符、``` 围栏的开合奇偶性），使判定不受 flush 边界影响。
+
+    围栏保护必须是**局部**判定：只有"缓冲后面还能看到 ```"是不够的，那个
+    ``` 完全可能属于 </file> 之后的聊天叙述（模型举例、给格式模板）。正文里
+    ``` 数量为奇数时（写了开围栏忘了闭围栏，或用单个 ``` 作分隔）fence_open
+    会恒为真，真实结束标记因此被判成字面量，捕获永不结束，最终把整段叙述当
+    正文落库。所以对结束标记额外要求：把当前命中判为字面量之后，围栏闭合处
+    之后还必须存在另一个 </file> 候选可以充当真正的结束标记；否则宁可按真实
+    标记处理（is_end_marker=True 分支）。开始标记不受此约束——WAITING_START
+    在流结束时另有 at_eof 兜底复扫（见 _search_start_marker），保守判定不会
+    造成正文丢失。
     """
     start, end = match.start(), match.end()
     if fence_open:
-        if FENCE in buffer[end:]:
+        fence_close = buffer.find(FENCE, end)
+        if fence_close < 0:
+            # 围栏尚未闭合，后续 chunk 仍可能补上
+            return _MARKER_REAL if at_eof else _MARKER_AMBIGUOUS
+        if not is_end_marker:
             return _MARKER_PROTECTED
+        if FILE_END_PATTERN.search(buffer, fence_close + len(FENCE)) is not None:
+            # 围栏闭合之后还有别的结束标记候选：当前命中确实被围栏包住
+            return _MARKER_PROTECTED
+        # 之后再无候选：判为字面量将导致文件捕获永不结束
         return _MARKER_REAL if at_eof else _MARKER_AMBIGUOUS
     before = buffer[start - 1] if start > 0 else prev_char
     if before == "`":
@@ -86,6 +105,12 @@ def _classify_marker(
 
 # Buffer size limit (1MB)
 BUFFER_MAX_SIZE = 1024 * 1024
+
+# 悬置（ambiguous）标记候选的等待上限：一个 </file> 候选因反引号/围栏未闭合被
+# 挂起后，若其后又累积了这么多字符仍无法判定，就按真实结束标记处理。没有这个
+# 上限时，一个永远等不到闭合围栏的候选会把其后的全部叙述扣在缓冲里，直到流
+# 结束才一次性落库。
+AMBIGUOUS_MARKER_MAX_PENDING = 4096
 
 # Turn-control / workflow markers that belong to the model's chat narration and
 # must never be persisted as file content. If an unterminated <file> body carries
@@ -183,6 +208,10 @@ class StreamResult:
     buffer_exceeded: bool = False
     # Final accumulated content (only set when file_complete=True)
     final_content: str = ""
+    # 该次完成是否来自"流结束时没等到 </file> 的自动补全"。正文很可能只写了
+    # 一半（模型漏写结尾标记是本项目公认的高频故障），调用方据此决定要不要
+    # 用它整体覆盖一个原本已有正文的文件（见 StreamAdapter._complete_file_write）。
+    auto_completed: bool = False
 
 
 @dataclass
@@ -377,7 +406,9 @@ class StreamProcessor:
                 if buffer.count(FENCE, counted, match.start()) % 2 == 1:
                     fence_open = not fence_open
                 counted = match.start()
-            verdict = _classify_marker(buffer, match, "", fence_open, at_eof=at_eof)
+            verdict = _classify_marker(
+                buffer, match, "", fence_open, at_eof=at_eof, is_end_marker=False
+            )
             if verdict == _MARKER_REAL:
                 return match
             if verdict == _MARKER_AMBIGUOUS:
@@ -411,8 +442,28 @@ class StreamProcessor:
                 fence_open = not fence_open
             counted = match.start()
             verdict = _classify_marker(
-                buffer, match, self.prev_char, fence_open, at_eof
+                buffer, match, self.prev_char, fence_open, at_eof,
+                is_end_marker=(kind == "end"),
             )
+            if verdict == _MARKER_AMBIGUOUS and (
+                len(buffer) - match.start() > AMBIGUOUS_MARKER_MAX_PENDING
+            ):
+                # 悬置太久：候选之后已累积超过上限仍等不到闭合的反引号/围栏，
+                # 按流结束语义降级为真实标记，避免捕获无限期挂起。
+                log_with_context(
+                    logger,
+                    30,  # WARNING
+                    "Marker candidate suspended too long, treating it as a real marker",
+                    project_id=self.project_id,
+                    user_id=self.user_id,
+                    file_id=self.file_id,
+                    marker_kind=kind,
+                    pending_length=len(buffer) - match.start(),
+                )
+                verdict = _classify_marker(
+                    buffer, match, self.prev_char, fence_open, at_eof=True,
+                    is_end_marker=(kind == "end"),
+                )
             if verdict == _MARKER_PROTECTED:
                 pos = match.end()
                 continue
@@ -599,7 +650,8 @@ class StreamProcessor:
                 fence_open = not fence_open
             counted = end_match.start()
             verdict = _classify_marker(
-                buffer, end_match, self.prev_char, fence_open, at_eof=False
+                buffer, end_match, self.prev_char, fence_open, at_eof=False,
+                is_end_marker=True,
             )
             if verdict == _MARKER_PROTECTED:
                 pos = end_match.end()
@@ -708,6 +760,23 @@ class StreamProcessor:
                 self.reset()
                 return StreamResult(conversation_content=final_content)
 
+            # 同族守卫：正文里还留着 </file> 字面量，说明某个结束标记被判成了
+            # 代码块字面量（围栏奇偶性异常），其后的聊天叙述被一路吞进了正文。
+            # 这种缓冲不是干净的章节正文，不能当成截断正文补全落库。
+            if FILE_END_PATTERN.search(final_content) is not None:
+                log_with_context(
+                    logger,
+                    30,  # WARNING
+                    "Stream ended with an unterminated <file> whose body still "
+                    "contains a </file> literal; refusing to persist it",
+                    project_id=self.project_id,
+                    user_id=self.user_id,
+                    file_id=file_id,
+                    content_length=content_length,
+                )
+                self.reset()
+                return StreamResult(conversation_content=final_content)
+
             log_with_context(
                 logger,
                 30,  # WARNING
@@ -725,6 +794,7 @@ class StreamProcessor:
                 file_complete=True,
                 content_length=content_length,
                 final_content=final_content,
+                auto_completed=True,
             )
 
         return StreamResult()

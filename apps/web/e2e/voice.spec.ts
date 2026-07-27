@@ -47,6 +47,8 @@ const test = base.extend<{
 })
 
 const VOICE_INTERACTION_E2E_ENABLED = process.env.E2E_ENABLE_VOICE_INPUT_E2E === 'true'
+const MICROPHONE_PERMISSION_BROWSER_MESSAGE =
+  'Playwright can grant microphone permission only in Chromium; Firefox coverage remains on non-recording voice UI and service tests.'
 
 // UI Selectors for voice input
 const VOICE_INPUT = {
@@ -168,7 +170,8 @@ test.describe('Voice Input - UI', () => {
     !VOICE_INTERACTION_E2E_ENABLED,
     'Voice interaction E2E depends on real browser recording flow. Set E2E_ENABLE_VOICE_INPUT_E2E=true to run.'
   )
-  test.beforeEach(async ({ page, context }) => {
+  test.beforeEach(async ({ page, context, browserName }) => {
+    test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE)
     // Grant microphone permission
     await context.grantPermissions(['microphone'])
     await loginAndNavigateToProject(page)
@@ -246,7 +249,8 @@ test.describe('Voice Input - Recognition (Mocked)', () => {
     !VOICE_INTERACTION_E2E_ENABLED,
     'Voice interaction E2E depends on real browser recording flow. Set E2E_ENABLE_VOICE_INPUT_E2E=true to run.'
   )
-  test.beforeEach(async ({ page, context }) => {
+  test.beforeEach(async ({ page, context, browserName }) => {
+    test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE)
     await context.grantPermissions(['microphone'])
     await loginAndNavigateToProject(page)
   })
@@ -308,6 +312,9 @@ test.describe('Voice Input - Error Handling', () => {
     !VOICE_INTERACTION_E2E_ENABLED,
     'Voice interaction E2E depends on real browser recording flow. Set E2E_ENABLE_VOICE_INPUT_E2E=true to run.'
   )
+  test.beforeEach(({ browserName }) => {
+    test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE)
+  })
   test('voice shows error when credentials not configured', async ({ page, context, mswServer }) => {
     // Override handler to return not configured status
     mswServer.use(mockVoiceNotConfiguredHandler)
@@ -404,7 +411,8 @@ test.describe('Voice Input - Recording Controls', () => {
     !VOICE_INTERACTION_E2E_ENABLED,
     'Voice interaction E2E depends on real browser recording flow. Set E2E_ENABLE_VOICE_INPUT_E2E=true to run.'
   )
-  test.beforeEach(async ({ page, context }) => {
+  test.beforeEach(async ({ page, context, browserName }) => {
+    test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE)
     await context.grantPermissions(['microphone'])
     await loginAndNavigateToProject(page)
   })
@@ -460,7 +468,8 @@ test.describe('Voice Input - Accessibility', () => {
     !VOICE_INTERACTION_E2E_ENABLED,
     'Voice interaction E2E depends on real browser recording flow. Set E2E_ENABLE_VOICE_INPUT_E2E=true to run.'
   )
-  test.beforeEach(async ({ page, context }) => {
+  test.beforeEach(async ({ page, context, browserName }) => {
+    test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE)
     await context.grantPermissions(['microphone'])
     await loginAndNavigateToProject(page)
   })

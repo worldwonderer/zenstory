@@ -5,6 +5,9 @@ Provides REST endpoints for managing file version history.
 """
 
 
+import contextlib
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict
 from services.auth import get_current_active_user
@@ -15,6 +18,7 @@ from core.error_codes import ErrorCode
 from core.error_handler import APIException
 from database import get_session
 from models import File, FileVersion, Project, User
+from models.file_version import CHANGE_SOURCE_USER
 from utils.logger import get_logger, log_with_context
 
 logger = get_logger(__name__)
@@ -75,11 +79,17 @@ class FileVersionListResponse(BaseModel):
 
 
 class CreateVersionRequest(BaseModel):
-    """Request model for creating a version."""
+    """Request model for creating a version.
+
+    注意 `change_source` **不再**参与配额判定，也不会被原样落库：
+    该端点在语义上就是「用户发起的写入」，来源由服务端强制为 user
+    （见 create_file_version）。这里保留字段只为向后兼容旧客户端，
+    并用 Literal 收窄取值，避免任意字符串进入数据库。
+    """
 
     content: str
-    change_type: str = "edit"
-    change_source: str = "user"
+    change_type: Literal["create", "edit", "ai_edit", "restore", "auto_save"] = "edit"
+    change_source: Literal["user", "ai", "system"] = "user"
     change_summary: str | None = None
 
 
@@ -112,7 +122,9 @@ class RollbackResponse(BaseModel):
     message: str
     file_id: str
     restored_version: int
-    new_version_number: int
+    new_version_number: int | None
+    snapshot_created: bool
+    version_quota_exceeded: bool
 
 
 # ==================== API Endpoints ====================
@@ -226,15 +238,28 @@ def create_file_version(
     service = get_file_version_service()
 
     try:
-        version = service.create_version(
-            session=session,
-            file_id=file_id,
-            new_content=request.content,
-            change_type=request.change_type,
-            change_source=request.change_source,
-            change_summary=request.change_summary,
-            user_id=current_user.id,
+        # 来源必须由服务端判定：这是一次带 Bearer token 的显式用户写入。
+        # 若沿用 request.change_source，客户端只要传 "ai"/"system" 就能同时
+        # 绕过配额闸门（闸门只拦 user）和配额计数（计数只数 user 行），
+        # file_versions_per_file 会彻底失效。change_source 与 quota_source
+        # 一起钉死成 user，闸门与计数口径才是同一个集合。
+        from agent.tools.file_ops.edit import file_write_lock
+        from database import is_postgres
+
+        lock_ctx = (
+            contextlib.nullcontext() if is_postgres else file_write_lock(file_id)
         )
+        with lock_ctx:
+            version = service.create_version(
+                session=session,
+                file_id=file_id,
+                new_content=request.content,
+                change_type=request.change_type,
+                change_source=CHANGE_SOURCE_USER,
+                change_summary=request.change_summary,
+                user_id=current_user.id,
+                quota_source=CHANGE_SOURCE_USER,
+            )
 
         log_with_context(
             logger,
@@ -379,7 +404,8 @@ def rollback_to_version(
     """
     Rollback a file to a previous version.
 
-    Creates a new version with the old content (preserves history).
+    Restores content unconditionally and records a new history snapshot when
+    the user's version quota permits it.
     """
     # Check file exists and user has access
     verify_file_ownership(session, file_id, current_user)
@@ -387,7 +413,7 @@ def rollback_to_version(
     service = get_file_version_service()
 
     try:
-        updated_file, new_version = service.rollback_to_version(
+        updated_file, new_version, version_quota_exceeded = service.rollback_to_version(
             session,
             file_id,
             version_number,
@@ -399,7 +425,11 @@ def rollback_to_version(
             message=f"Successfully rolled back to version {version_number}",
             file_id=file_id,
             restored_version=version_number,
-            new_version_number=new_version.version_number,
+            new_version_number=(
+                new_version.version_number if new_version is not None else None
+            ),
+            snapshot_created=new_version is not None,
+            version_quota_exceeded=version_quota_exceeded,
         )
     except ValueError as e:
         raise APIException(error_code=ErrorCode.VALIDATION_ERROR, status_code=400, detail=str(e)) from e

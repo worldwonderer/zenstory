@@ -228,7 +228,10 @@ test.describe('Smoke Tests - Critical Path', () => {
       const versionsAfterAiReview = await versionsAfterAiReviewResponse.json();
       expect(versionsAfterAiReview.total).toBeGreaterThanOrEqual(2);
       expect(versionsAfterAiReview.versions[0]?.change_type).toBe('ai_edit');
-      expect(versionsAfterAiReview.versions[0]?.change_source).toBe('ai');
+      // A browser-originated save is persisted by the authenticated user even
+      // when the content came from an accepted AI suggestion. `change_type`
+      // retains the content origin; `change_source` is the trusted actor.
+      expect(versionsAfterAiReview.versions[0]?.change_source).toBe('user');
 
       if (createdProject) {
         await request.delete(`/api/v1/projects/${projectId}`, { headers });

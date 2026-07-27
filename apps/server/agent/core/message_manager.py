@@ -253,6 +253,7 @@ class MessageManager:
                 content=user_message,
             )
             session.add(user_chat_message)
+            rows_added = 1
 
             # Persist steering messages injected mid-run as their own user-role
             # turns (between the original user message and the assistant reply),
@@ -270,6 +271,7 @@ class MessageManager:
                     )
                 )
                 steering_saved += 1
+            rows_added += steering_saved
 
             # Save assistant message
             tool_calls_json = self._serialize_tool_calls(tool_calls)
@@ -279,17 +281,31 @@ class MessageManager:
                 status_cards=assistant_status_cards,
             )
 
-            assistant_chat_message = ChatMessage(
-                session_id=chat_session.id,
-                role="assistant",
-                content=assistant_message,
-                tool_calls=tool_calls_json,
-                reasoning_content=reasoning_content,
-                message_metadata=assistant_metadata_json,
-            )
-            session.add(assistant_chat_message)
+            # 本轮没有任何 assistant 产出时不写空行：这条消息前端永远渲染不出来，
+            # 却会占掉"最近消息"窗口的一格，把更早的真实消息挤出上下文。
+            # 判据与 service.py::_has_assistant_payload 一致——正文、工具调用、
+            # 状态卡片、思维链任一非空即视为有产出。
+            assistant_chat_message: ChatMessage | None = None
+            if (
+                (assistant_message or "").strip()
+                or tool_calls
+                or assistant_status_cards
+                or (reasoning_content or "").strip()
+            ):
+                assistant_chat_message = ChatMessage(
+                    session_id=chat_session.id,
+                    role="assistant",
+                    content=assistant_message,
+                    tool_calls=tool_calls_json,
+                    reasoning_content=reasoning_content,
+                    message_metadata=assistant_metadata_json,
+                )
+                session.add(assistant_chat_message)
+                rows_added += 1
 
-            chat_session.message_count += 2 + steering_saved
+            # 按实际写入的行数递增。写死 +2 与真实行数脱钩：steering 被跳过、
+            # assistant 为空时 message_count 会越记越多，分页与"最近 N 条"全错。
+            chat_session.message_count += rows_added
             chat_session.updated_at = utcnow()
             session.commit()
 
@@ -304,8 +320,9 @@ class MessageManager:
                 tool_calls_count=len(tool_calls) if tool_calls else 0,
                 has_usage=assistant_usage is not None,
                 stop_reason=assistant_stop_reason,
+                rows_added=rows_added,
             )
-            return assistant_chat_message.id
+            return assistant_chat_message.id if assistant_chat_message else None
 
         except Exception as e:
             session.rollback()
@@ -952,53 +969,54 @@ class MessageManager:
             }
             expected_child_type = expected_child_type_by_key.get(key, "")
 
-            # 1) Prefer the root folder that already contains the most children
-            #    of the expected file_type. This is the most robust signal for
-            #    legacy projects where folder titles / ids were inconsistent.
-            if expected_child_type and child_type_counts:
-                best_typed: File | None = None
-                best_score: tuple[int, int, int, str] | None = None
-                for folder in root_folders:
-                    folder_id = str(folder.id)
-                    typed_count = child_type_counts.get(folder_id, {}).get(expected_child_type, 0)
-                    if typed_count <= 0:
-                        continue
-                    total_children = child_counts.get(folder_id, 0)
-                    deterministic_bonus = 1 if folder_id == deterministic_id else 0
-                    score = (typed_count, total_children, deterministic_bonus, folder_id)
-                    if best_score is None or score > best_score:
-                        best_score = score
-                        best_typed = folder
-
-                if best_typed is not None:
-                    return str(best_typed.id)
-
-            # 2) Otherwise fall back to title heuristics + deterministic id.
-            candidates: list[File] = []
-            for folder in root_folders:
-                folder_id = str(folder.id)
-                if folder_id == deterministic_id:
-                    candidates.append(folder)
-                    continue
-
+            def _title_matches(folder: File) -> bool:
                 title_norm = _norm(getattr(folder, "title", ""))
                 if not title_norm:
-                    continue
-                if any(alias and alias in title_norm for alias in alias_norms):
-                    candidates.append(folder)
+                    return False
+                return any(alias and alias in title_norm for alias in alias_norms)
 
-            if not candidates:
-                return deterministic_id
-
-            def _score(folder: File) -> tuple[int, int, str]:
+            # 统一打分：**先看这个根目录是不是本类型的规范目录**（id 命中模板
+            # 确定性 id，或标题命中别名），子文件类型计数只用来做平局裁决。
+            #
+            # 历史缺陷：类型计数原本是一票否决式的第一优先级，且
+            # `typed_count <= 0` 的目录直接被 continue 掉——只要任意别的根目录里
+            # 躺着 1 个该类型的散落文件，空的规范目录（计数 0）就必败，
+            # 系统提示里的 {character_folder_id} 等占位符被永久劫持，
+            # AI 一直把新文件建到那个错误目录里；错误目录的计数只增不减，
+            # 形成自我强化闭环（用户手动把文件拖回去也没用，只要错误目录里
+            # 还剩一个同类型文件，下一轮又会建回去）。
+            # 现在规范目录即便是空的，也稳压只含杂散文件的非规范目录。
+            best: File | None = None
+            best_score: tuple[int, int, int, int, str] | None = None
+            for folder in root_folders:
                 folder_id = str(folder.id)
-                return (
-                    child_counts.get(folder_id, 0),
-                    1 if folder_id == deterministic_id else 0,
+                is_deterministic = folder_id == deterministic_id
+                # 确定性 id 与标题别名同级：两者都命中时由下面的子文件计数裁决，
+                # 从而保留「模板目录空着、旧项目的同名目录才是真正在用的那个」的行为。
+                canonical_match = 1 if (is_deterministic or _title_matches(folder)) else 0
+                typed_count = (
+                    child_type_counts.get(folder_id, {}).get(expected_child_type, 0)
+                    if expected_child_type
+                    else 0
+                )
+                total_children = child_counts.get(folder_id, 0)
+                score = (
+                    canonical_match,
+                    typed_count,
+                    total_children,
+                    1 if is_deterministic else 0,
                     folder_id,
                 )
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best = folder
 
-            best = max(candidates, key=_score)
+            # 既不是规范目录、也不含任何该类型的子文件 => 没有可信信号，
+            # 回退到模板的确定性 id（该目录可能尚未创建）。
+            # 注意这里保留了「标题完全不可识别、但确实堆着该类型文件」的旧项目
+            # 兜底路径：canonical_match=0 但 typed_count>0 时仍然认它。
+            if best is None or (best_score[0] == 0 and best_score[1] == 0):
+                return deterministic_id
 
             resolved_id = str(best.id)
             if resolved_id != deterministic_id:
@@ -1014,6 +1032,8 @@ class MessageManager:
                     deterministic_folder_id=deterministic_id,
                     resolved_title=getattr(best, "title", ""),
                     resolved_child_count=child_counts.get(resolved_id, 0),
+                    resolved_typed_child_count=best_score[1],
+                    resolved_by_title_only=best_score[0] == 1 and best_score[3] == 0,
                 )
 
             return resolved_id

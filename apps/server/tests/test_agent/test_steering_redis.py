@@ -42,6 +42,12 @@ class FakePipeline:
     def sadd(self, *args, **kwargs):
         return self._queue("sadd", args, kwargs)
 
+    def zadd(self, *args, **kwargs):
+        return self._queue("zadd", args, kwargs)
+
+    def zremrangebyscore(self, *args, **kwargs):
+        return self._queue("zremrangebyscore", args, kwargs)
+
     def execute(self):
         ops, self.ops = self.ops, []
         return self.client._atomic(
@@ -169,18 +175,80 @@ class FakeRedis:
         s = self.store.get(key)
         return len(s) if isinstance(s, set) else 0
 
+    def zadd(self, key, mapping, xx=False):
+        return self._atomic("zadd", lambda: self._zadd(key, mapping, xx=xx))
+
+    def _zadd(self, key, mapping, xx=False):
+        z = self.store.get(key)
+        if not isinstance(z, dict):
+            if xx:
+                # XX：键不存在时什么也不做（不能复活已释放的持有者）。
+                return 0
+            z = {}
+            self.store[key] = z
+        added = 0
+        for member, score in mapping.items():
+            if xx and member not in z:
+                continue
+            if member not in z:
+                added += 1
+            z[member] = float(score)
+        return added
+
+    def _zrem(self, key, *members):
+        z = self.store.get(key)
+        if not isinstance(z, dict):
+            return 0
+        removed = 0
+        for m in members:
+            if m in z:
+                del z[m]
+                removed += 1
+        return removed
+
+    def _zcard(self, key):
+        z = self.store.get(key)
+        return len(z) if isinstance(z, dict) else 0
+
+    def zremrangebyscore(self, key, min_score, max_score):
+        return self._atomic(
+            "zremrangebyscore", lambda: self._zremrangebyscore(key, min_score, max_score)
+        )
+
+    def _zremrangebyscore(self, key, min_score, max_score):
+        z = self.store.get(key)
+        if not isinstance(z, dict):
+            return 0
+        lo = float("-inf") if str(min_score) == "-inf" else float(min_score)
+        hi = float("inf") if str(max_score) == "+inf" else float(max_score)
+        # ZREMRANGEBYSCORE 的区间两端默认闭区间。
+        doomed = [m for m, s in z.items() if lo <= s <= hi]
+        for m in doomed:
+            del z[m]
+        return len(doomed)
+
     def eval(self, script, numkeys, *keys_and_args):
         return self._atomic("eval", lambda: self._eval(script, numkeys, *keys_and_args))
 
     def _eval(self, script, numkeys, *keys_and_args):
-        # 模拟 steering 的 run 释放脚本（SREM -> SCARD==0 -> DEL），与真实
-        # Redis 一样在单次调用内原子完成。
-        assert "SREM" in script and "SCARD" in script and "DEL" in script
+        # 模拟 steering 的两个 Lua 脚本，与真实 Redis 一样在单次调用内原子完成：
+        #   释放脚本 _RELEASE_RUN_SCRIPT：ZREM 自己 -> 按 score 回收僵尸 ->
+        #                                ZCARD==0 则 DEL 三键
+        #   回收脚本 _REAP_STALE_RUNS_SCRIPT：曾有持有者且全部超时 -> DEL 三键
+        assert "ZCARD" in script and "ZREMRANGEBYSCORE" in script and "DEL" in script
         keys = keys_and_args[:numkeys]
         args = keys_and_args[numkeys:]
         runs_key = keys[0]
-        self._srem(runs_key, args[0])
-        if self._scard(runs_key) == 0:
+        is_release = "'ZREM'" in script
+        if is_release:
+            run_id, cutoff = args[0], args[1]
+            self._zrem(runs_key, run_id)
+        else:
+            cutoff = args[0]
+            if self._zcard(runs_key) == 0:
+                return 0
+        self._zremrangebyscore(runs_key, "-inf", cutoff)
+        if self._zcard(runs_key) == 0:
             self._delete(*keys)
             return 1
         return 0
@@ -355,7 +423,8 @@ async def test_register_run_is_atomic_against_concurrent_release(redis_steering)
     # run-b 仍在流式生成：owner 必须还在（否则 /steer 持续 404），
     # runs 只剩 run-b，已排队的消息不能丢。
     assert fake.store.get(st._owner_key(session_id)) == "user-1"
-    assert fake.store.get(st._runs_key(session_id)) == {"run-b"}
+    # runs 现在是 ZSET（member=run_id -> 心跳时间戳），只断言成员集合。
+    assert set(fake.store.get(st._runs_key(session_id), {})) == {"run-b"}
     surviving = await st.get_steering_queue_for_user_async(session_id, "user-1")
     assert [m.content for m in await surviving.peek()] == ["保持第一人称"]
 
@@ -394,7 +463,8 @@ async def test_register_after_full_release_rebuilds_consistent_state(redis_steer
 
     await st.create_steering_queue_async(session_id, "user-1", run_id="run-b")
     assert fake.store.get(st._owner_key(session_id)) == "user-1"
-    assert fake.store.get(st._runs_key(session_id)) == {"run-b"}
+    # runs 现在是 ZSET（member=run_id -> 心跳时间戳），只断言成员集合。
+    assert set(fake.store.get(st._runs_key(session_id), {})) == {"run-b"}
     queue = await st.get_steering_queue_for_user_async(session_id, "user-1")
     assert isinstance(queue, st.RedisSteeringQueue)
 

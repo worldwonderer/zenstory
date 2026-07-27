@@ -22,6 +22,7 @@ import { handleApiError } from "../lib/errorHandler";
 import { toast } from "../lib/toast";
 import { logger } from "../lib/logger";
 import { SimpleEditor } from "./SimpleEditor";
+import type { SaveOutcome } from "./SimpleEditor";
 import { MaterialPreview } from "./MaterialPreview";
 import { ImportMaterialDialog } from "./ImportMaterialDialog";
 import type { File, FileTreeNode } from "../types";
@@ -69,6 +70,7 @@ const EditorComponent: React.FC<EditorProps> = () => {
     setSelectedItem,
     editorRefreshVersion,
     lastEditedFileId,
+    aiEditingFileId,
     // Diff review state
     diffReviewState,
     enterDiffReview,
@@ -291,15 +293,22 @@ const EditorComponent: React.FC<EditorProps> = () => {
    * Updates the file via API, syncs local state, and triggers file tree
    * refresh if the title has changed to keep the navigation in sync.
    */
-  const handleSaveFile = async (versionIntent?: FileUpdateVersionIntent) => {
-    if (!file?.id) return;
+  const handleSaveFile = async (
+    versionIntent?: FileUpdateVersionIntent,
+  ): Promise<SaveOutcome> => {
+    if (!file?.id) return "failed";
 
     const titleChanged = editTitle !== file.title;
 
+    let updated;
     try {
-      await fileApi.update(file.id, {
+      updated = await fileApi.update(file.id, {
         title: editTitle,
         content: editContent,
+        // 乐观并发令牌：带上加载这份正文时的 updated_at。
+        // 编辑器提交的是整篇快照，光加锁挡不住丢更新——3 秒防抖期间 AI 的
+        // edit_file 先落库时，陈旧快照拿到锁后照样会原样覆盖它。
+        base_updated_at: file.updated_at,
         ...versionIntent,
       });
     } catch (error) {
@@ -311,13 +320,67 @@ const EditorComponent: React.FC<EditorProps> = () => {
         if (fileVersionUpgradePrompt.surface === "modal") {
           setShowFileVersionUpgradeModal(true);
         }
-        return;
+        return "failed";
+      }
+      if (
+        error instanceof ApiError &&
+        error.status === 409 &&
+        error.details?.reason === "stale_write"
+      ) {
+        // 文件在本次编辑期间被别人（AI 或另一个标签页）改过。
+        //
+        // 绝不能直接 setEditContent(服务端正文)：那会把用户尚未保存的本地编辑
+        // 整段替换掉，且没有任何备份/撤销入口——只是把「AI 被用户覆盖」换成了
+        // 「用户被服务端覆盖」，同样是不可逆的数据丢失。
+        //
+        // 正确做法：本地编辑原样留在编辑器里（一个字都不动），把服务端正文作为
+        // diff review 的基线送进现成的审阅通道，由用户逐处决定保留哪一份；
+        // 同时把 updated_at 同步成服务端的最新值，让审阅完成后的写回不会再撞 409。
+        const currentContent = error.details.current_content;
+        const currentUpdatedAt = error.details.current_updated_at;
+        const localContent = editContent;
+        if (typeof currentContent === "string") {
+          setFile((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  content: currentContent,
+                  updated_at:
+                    typeof currentUpdatedAt === "string" ? currentUpdatedAt : prev.updated_at,
+                }
+              : null,
+          );
+          if (currentContent !== localContent) {
+            enterDiffReview(file.id, currentContent, localContent);
+            toast.error(t('editor:saveStaleWriteConflict'));
+            return "conflict";
+          }
+        }
+        toast.error(t('editor:saveStaleWrite'));
+        return "conflict";
       }
       throw error;
     }
 
-    // Update local state
-    setFile((prev) => prev ? { ...prev, title: editTitle, content: editContent } : null);
+    if (updated?.version_quota_exceeded) {
+      // 正文已保存，只是版本快照没生成——提示升级，不能报成保存失败。
+      toast.error(t('editor:saveVersionQuotaExceeded'));
+      if (fileVersionUpgradePrompt.surface === "modal") {
+        setShowFileVersionUpgradeModal(true);
+      }
+    }
+
+    // Update local state（同步 updated_at，作为下一次保存的并发令牌）
+    setFile((prev) =>
+      prev
+        ? {
+            ...prev,
+            title: editTitle,
+            content: editContent,
+            updated_at: updated?.updated_at ?? prev.updated_at,
+          }
+        : null,
+    );
 
     // If title changed, refresh file tree and update selected item
     if (titleChanged) {
@@ -327,6 +390,7 @@ const EditorComponent: React.FC<EditorProps> = () => {
         setSelectedItem({ ...selectedItem, title: editTitle });
       }
     }
+    return "saved";
   };
 
   /**
@@ -343,17 +407,30 @@ const EditorComponent: React.FC<EditorProps> = () => {
     
     // Update the file with the final content
     try {
-      await fileApi.update(file.id, {
+      const updated = await fileApi.update(file.id, {
         content: finalContent,
         change_type: "ai_edit",
-        change_source: "ai",
         change_summary: "AI edit (reviewed)",
+        // 与 handleSaveFile 对齐的乐观并发令牌。这同样是一次整篇覆盖写，
+        // 不带令牌就会无声盖掉审阅期间落库的其它改动。
+        base_updated_at: file.updated_at,
       });
-      
-      // Update local state
+
+      // Update local state。必须把返回的 updated_at 一并回填：
+      // 这次 PUT 已经把服务端的 updated_at 推进了，本地若还停在审阅前的值，
+      // 用户接着敲一个字触发的 3 秒防抖自动保存就会带着陈旧令牌命中 409，
+      // 这一轮输入随即被 409 分支处理掉——「防丢 AI 的更新」换成「稳定丢用户的更新」。
       setEditContent(finalContent);
-      setFile((prev) => prev ? { ...prev, content: finalContent } : null);
-      
+      setFile((prev) =>
+        prev
+          ? {
+              ...prev,
+              content: finalContent,
+              updated_at: updated?.updated_at ?? prev.updated_at,
+            }
+          : null,
+      );
+
       // Exit diff review mode
       exitDiffReview();
 
@@ -371,6 +448,30 @@ const EditorComponent: React.FC<EditorProps> = () => {
       // Refresh file tree
       triggerFileTreeRefresh();
     } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.details?.reason === "stale_write"
+      ) {
+        // 审阅结果绝不能因为并发写而丢：把服务端最新正文当作新基线，
+        // 连同本次审阅得到的定稿重新进入审阅通道，由用户决定最终版本。
+        const serverContent =
+          typeof err.details.current_content === "string" ? err.details.current_content : "";
+        const serverUpdatedAt = err.details.current_updated_at;
+        setFile((prev) =>
+          prev
+            ? {
+                ...prev,
+                content: serverContent,
+                updated_at:
+                  typeof serverUpdatedAt === "string" ? serverUpdatedAt : prev.updated_at,
+              }
+            : null,
+        );
+        enterDiffReview(file.id, serverContent, finalContent);
+        toast.error(t('editor:saveStaleWriteConflict'));
+        return;
+      }
       logger.error("Failed to save reviewed changes:", err);
       captureException(err, {
         feature_area: "editor",
@@ -378,7 +479,17 @@ const EditorComponent: React.FC<EditorProps> = () => {
         file_id: file.id,
       });
     }
-  }, [diffReviewState, file?.id, file?.project_id, applyDiffReviewChanges, exitDiffReview, triggerFileTreeRefresh]);
+  }, [
+    diffReviewState,
+    file?.id,
+    file?.project_id,
+    file?.updated_at,
+    applyDiffReviewChanges,
+    enterDiffReview,
+    exitDiffReview,
+    triggerFileTreeRefresh,
+    t,
+  ]);
 
   /**
    * Creates a new file from the empty state action cards.
@@ -651,6 +762,8 @@ const EditorComponent: React.FC<EditorProps> = () => {
       onContentChange: setEditContent,
       onSave: handleSaveFile,
       isStreaming,
+      // AI 正在编辑这份文件时挂起自动保存，避免过期整篇快照覆盖 AI 的改动
+      isAiEditing: aiEditingFileId === file.id,
       onEnterDiffReview: enterDiffReview,
       // Diff review props
       diffReviewState: isInReviewMode ? diffReviewState : null,

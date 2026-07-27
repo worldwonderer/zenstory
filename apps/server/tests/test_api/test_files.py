@@ -1850,7 +1850,7 @@ async def test_update_file_creates_version_with_default_intent(client: AsyncClie
 
 @pytest.mark.integration
 async def test_update_file_respects_version_intent_fields(client: AsyncClient, db_session):
-    """Test content updates pass custom intent to backend-managed version creation."""
+    """Custom change intent is preserved without trusting the client as version author."""
     from services.core.auth_service import hash_password
 
     user = User(
@@ -1892,13 +1892,13 @@ async def test_update_file_respects_version_intent_fields(client: AsyncClient, d
     ).first()
     assert version is not None
     assert version.change_type == "auto_save"
-    assert version.change_source == "ai"
+    assert version.change_source == "user"
     assert version.change_summary == "Large document auto-save"
 
 
 @pytest.mark.integration
 async def test_update_file_respects_ai_review_version_intent(client: AsyncClient, db_session):
-    """Test AI review saves preserve ai_edit/ai version semantics."""
+    """AI review saves preserve ai_edit intent but remain authenticated user writes."""
     from services.core.auth_service import hash_password
 
     user = User(
@@ -1940,7 +1940,7 @@ async def test_update_file_respects_ai_review_version_intent(client: AsyncClient
     ).first()
     assert version is not None
     assert version.change_type == "ai_edit"
-    assert version.change_source == "ai"
+    assert version.change_source == "user"
     assert version.change_summary == "AI edit (reviewed)"
 
 
@@ -1983,8 +1983,13 @@ async def test_update_file_skip_version_does_not_create_version(client: AsyncCli
 
 
 @pytest.mark.integration
-async def test_update_file_returns_402_when_file_version_quota_exceeded(client: AsyncClient, db_session):
-    """Content update should surface file-version quota errors as 402."""
+async def test_update_file_saves_content_when_file_version_quota_exceeded(client: AsyncClient, db_session):
+    """版本额度满时，正文保存仍然成功，只是不再生成版本快照。
+
+    历史行为是「先 commit 正文、再 create_version -> 402 原样上抛」，
+    前端显示「保存失败」而正文其实已经落库，属于误导性失败；
+    额度限制的是版本历史深度，不应该把用户的正文保存整体判负。
+    """
     from datetime import datetime, timedelta
 
     from models.subscription import SubscriptionPlan, UserSubscription
@@ -2055,9 +2060,13 @@ async def test_update_file_returns_402_when_file_version_quota_exceeded(client: 
         headers=headers,
     )
 
-    assert response.status_code == 402
+    assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["error_code"] == ErrorCode.QUOTA_FILE_VERSIONS_EXCEEDED
+    assert payload["content"] == "New content"
+    assert payload["version_quota_exceeded"] is True
+
+    db_session.expire_all()
+    assert db_session.get(File, file.id).content == "New content"
 
     versions = db_session.exec(
         select(FileVersion).where(FileVersion.file_id == file.id)

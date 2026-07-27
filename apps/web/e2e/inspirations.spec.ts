@@ -316,8 +316,7 @@ test.describe('Inspirations Page - List View', () => {
 
     // Check at least one inspiration card is shown
     const cards = page.locator(INSPIRATIONS_PAGE.inspirationCard);
-    const count = await cards.count();
-    expect(count).toBeGreaterThan(0);
+    await expect(cards.first()).toBeVisible({ timeout: 5000 });
   });
 
   test('should show inspiration names in cards', async ({ page }) => {
@@ -507,8 +506,7 @@ test.describe('Inspirations Page - Responsive Design', () => {
 
     // Check that inspiration cards are displayed (possibly in single column)
     const cards = page.locator(INSPIRATIONS_PAGE.inspirationCard);
-    const count = await cards.count();
-    expect(count).toBeGreaterThan(0);
+    await expect(cards.first()).toBeVisible({ timeout: 5000 });
   });
 
   test('search input works on mobile', async ({ page }) => {
@@ -543,7 +541,6 @@ test.describe('Inspirations Page - Tablet View', () => {
 
     // Check that inspiration cards are displayed
     const cards = page.locator(INSPIRATIONS_PAGE.inspirationCard);
-    const count = await cards.count();
-    expect(count).toBeGreaterThan(0);
+    await expect(cards.first()).toBeVisible({ timeout: 5000 });
   });
 });

@@ -33,6 +33,71 @@ PROJECT_SKILLS_DIR = ".zenstory/skills"
 # User skills directory (in user home)
 USER_SKILLS_DIR = Path.home() / ".zenstory" / "skills"
 
+# zenstory 原生格式里「结构性二级标题」白名单（小写匹配）。
+# 只有白名单里的 `## xxx` 才切换解析区段；其余 `## xxx` 一律视为正文内容。
+# 刻意只收录原有的两个英文节名：正文里出现同名中文小标题（如「## 指令」）的概率远高于
+# 它被用作结构性节标题，扩大白名单反而会把正文吃掉。
+KNOWN_SECTION_NAMES: dict[str, str] = {
+    "triggers": "triggers",
+    "instructions": "instructions",
+}
+
+# 支持的 markdown 代码围栏标记
+_FENCE_MARKERS = ("```", "~~~")
+
+
+def _fence_marker(line_stripped: str) -> str | None:
+    """返回该行开启/关闭的代码围栏标记，非围栏行返回 None。"""
+    for marker in _FENCE_MARKERS:
+        if line_stripped.startswith(marker):
+            return marker
+    return None
+
+
+def _fenced_line_indices(lines: list[str]) -> set[int]:
+    """
+    计算所有位于「成对闭合」的代码围栏之内（含围栏行本身）的行号。
+
+    只认成对的围栏：若文件末尾还有一个没闭合的围栏，就不把它之后的内容算作围栏内，
+    以免一个笔误的 ``` 把后续的 `## Instructions` 节标题一起吞掉。
+    """
+    fenced: set[int] = set()
+    open_index: int | None = None
+    open_marker: str | None = None
+
+    for index, line in enumerate(lines):
+        marker = _fence_marker(line.strip())
+        if marker is None:
+            continue
+        if open_index is None:
+            open_index = index
+            open_marker = marker
+        elif marker == open_marker:
+            fenced.update(range(open_index, index + 1))
+            open_index = None
+            open_marker = None
+
+    return fenced
+
+
+def _append_content_line(
+    line: str,
+    line_stripped: str,
+    current_section: str,
+    description_lines: list[str],
+    triggers: list[str],
+    instructions_lines: list[str],
+) -> None:
+    """把一行正文追加到当前区段（描述/触发词/指令）。"""
+    if current_section == "description":
+        if line_stripped:
+            description_lines.append(line_stripped)
+    elif current_section == "triggers":
+        if line_stripped.startswith("- "):
+            triggers.append(line_stripped[2:].strip())
+    elif current_section == "instructions":
+        instructions_lines.append(line)
+
 
 def parse_skill_md(content: str, file_path: str) -> Skill | None:
     """
@@ -150,8 +215,20 @@ def parse_zenstory_format(content: str, file_path: str) -> Skill | None:
 
         current_section = "description"
 
-        for line in lines:
+        # 技能正文经常在代码围栏里给「输出格式模板」，模板里的 `# `/`## ` 是正文而不是节标题，
+        # 必须原样保留，否则技能教给模型的结构会被静默吃掉。
+        fenced_indices = _fenced_line_indices(lines)
+
+        for index, line in enumerate(lines):
             line_stripped = line.strip()
+
+            # 围栏内（含围栏行本身）的一切都是正文，不参与节标题判定
+            if index in fenced_indices:
+                _append_content_line(
+                    line, line_stripped, current_section,
+                    description_lines, triggers, instructions_lines,
+                )
+                continue
 
             # Check for main title
             if line_stripped.startswith("# ") and not name:
@@ -161,20 +238,20 @@ def parse_zenstory_format(content: str, file_path: str) -> Skill | None:
             # Check for section headers
             if line_stripped.startswith("## "):
                 section_name = line_stripped[3:].strip().lower()
-                if section_name == "triggers":
-                    current_section = "triggers"
-                elif section_name == "instructions":
-                    current_section = "instructions"
+                if section_name in KNOWN_SECTION_NAMES:
+                    current_section = KNOWN_SECTION_NAMES[section_name]
+                    continue
+                # 非白名单的二级标题：在 instructions 里属于正文小节标题，原样保留；
+                # 在 instructions 之前（描述区）仍按结构性标题忽略，保持既有行为。
+                if current_section == "instructions":
+                    instructions_lines.append(line)
                 continue
 
             # Add content to appropriate section
-            if current_section == "description" and line_stripped:
-                description_lines.append(line_stripped)
-            elif current_section == "triggers":
-                if line_stripped.startswith("- "):
-                    triggers.append(line_stripped[2:].strip())
-            elif current_section == "instructions":
-                instructions_lines.append(line)
+            _append_content_line(
+                line, line_stripped, current_section,
+                description_lines, triggers, instructions_lines,
+            )
 
         if not name:
             log_with_context(

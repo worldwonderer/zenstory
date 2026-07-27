@@ -516,11 +516,13 @@ class TestFileVersionServiceRollback:
         )
 
         # Rollback to v1
-        file, new_version = file_version_service.rollback_to_version(
-            session=db_session,
-            file_id=test_file_with_project.id,
-            version_number=v1.version_number,
-            user_id="test-user",
+        file, new_version, version_quota_exceeded = (
+            file_version_service.rollback_to_version(
+                session=db_session,
+                file_id=test_file_with_project.id,
+                version_number=v1.version_number,
+                user_id="test-user",
+            )
         )
 
         # File content should be restored
@@ -530,6 +532,7 @@ class TestFileVersionServiceRollback:
         assert new_version.change_type == CHANGE_TYPE_RESTORE
         assert new_version.is_base_version is True
         assert "Restored to version" in new_version.change_summary
+        assert version_quota_exceeded is False
 
     def test_rollback_creates_new_version(self, db_session: Session, file_version_service, test_file_with_project):
         """Test that rollback creates a new version (doesn't delete history)."""
@@ -546,15 +549,18 @@ class TestFileVersionServiceRollback:
         )
 
         # Rollback
-        _, new_version = file_version_service.rollback_to_version(
-            session=db_session,
-            file_id=test_file_with_project.id,
-            version_number=v1.version_number,
-            user_id="test-user",
+        _, new_version, version_quota_exceeded = (
+            file_version_service.rollback_to_version(
+                session=db_session,
+                file_id=test_file_with_project.id,
+                version_number=v1.version_number,
+                user_id="test-user",
+            )
         )
 
         # New version number should be v2 + 1
         assert new_version.version_number == v2.version_number + 1
+        assert version_quota_exceeded is False
 
         # Check all versions still exist
         all_versions = file_version_service.get_versions(
@@ -563,6 +569,43 @@ class TestFileVersionServiceRollback:
             include_auto_save=True,
         )
         assert len(all_versions) == 3
+
+    def test_rollback_snapshot_failure_is_not_reported_as_quota_exhaustion(
+        self,
+        db_session: Session,
+        file_version_service,
+        test_file_with_project,
+        monkeypatch,
+    ):
+        """Restore succeeds even if snapshot persistence fails for a non-quota reason."""
+        v1 = file_version_service.create_version(
+            session=db_session,
+            file_id=test_file_with_project.id,
+            new_content="Version 1",
+        )
+        file_version_service.create_version(
+            session=db_session,
+            file_id=test_file_with_project.id,
+            new_content="Version 2",
+        )
+
+        def fail_snapshot(*_args, **_kwargs):
+            raise RuntimeError("snapshot storage unavailable")
+
+        monkeypatch.setattr(file_version_service, "create_version", fail_snapshot)
+
+        file, new_version, version_quota_exceeded = (
+            file_version_service.rollback_to_version(
+                session=db_session,
+                file_id=test_file_with_project.id,
+                version_number=v1.version_number,
+                user_id="test-user",
+            )
+        )
+
+        assert file.content == "Version 1"
+        assert new_version is None
+        assert version_quota_exceeded is False
 
     def test_rollback_file_not_found(self, db_session: Session, file_version_service):
         """Test rollback for non-existent file raises ValueError."""
@@ -681,7 +724,7 @@ class TestFileVersionServiceDiffReplay:
         )
         assert v2.is_base_version is False
 
-        file, _ = file_version_service.rollback_to_version(
+        file, _, _ = file_version_service.rollback_to_version(
             session=db_session,
             file_id=test_file_with_project.id,
             version_number=v2.version_number,

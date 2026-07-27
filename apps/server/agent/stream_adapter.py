@@ -16,6 +16,7 @@ from typing import Any
 from models.file_model import FILE_TYPE_FOLDER
 from utils.logger import get_logger, log_with_context
 
+from .constants import coerce_bool
 from .core.events import (
     StreamEvent as SSEEvent,
 )
@@ -69,6 +70,12 @@ STREAM_SKILL_USAGE_RECORD_TIMEOUT_S = _get_positive_float_env(
 # Regex pattern for skill usage marker: [使用技能: xxx]
 SKILL_USAGE_PATTERN = re.compile(r"\[使用技能:\s*(.+?)\]")
 
+# [使用技能: X] 是纯控制信号（用来发 skill_matched 事件），不属于用户可见正文。
+# 模型被要求写在回复最开头，但 delta 可能把它拆成 "[使用技" + "能: 悬念大师]"
+# 两段，所以要在流头部缓冲一小段再判定。下面是标记的固定前缀与缓冲上限。
+SKILL_MARKER_HEAD = "[使用技能:"
+SKILL_MARKER_MAX_BUFFER = 64
+
 
 def is_folder_file_type(raw: Any) -> bool:
     """判断一个 file_type 值是否是文件夹（strip + lower 归一化，容忍 None/非字符串）。
@@ -96,6 +103,10 @@ class PendingFileWrite:
     file_id: str
     file_type: str
     title: str
+    # 目标文件在本次流式写入之前已有的正文长度。create_file 的幂等复用分支
+    # （剧本分集重复创建）会返回一个**已经写满正文**的文件，此时任何"没等到
+    # </file> 的自动补全"都不能整体覆盖它——那会用几百字残稿抹掉整集。
+    original_content_length: int = 0
 
 
 class StreamAdapter:
@@ -138,10 +149,14 @@ class StreamAdapter:
 
         # Track latest model message metadata (for persistence accuracy)
         self._last_message_stop_reason: str | None = None
-        self._last_message_usage: dict[str, int] | None = None
+        self._last_message_usage: dict[str, Any] | None = None
 
         # Accumulate text content for skill usage detection
         self._accumulated_text: str = ""
+        # 技能标记剥离：缓冲每个 agent 回复开头的少量文本，直到能判定它是不是
+        # [使用技能: X]（该标记不能进入用户可见正文与落库的会话历史）
+        self._skill_marker_buf: str = ""
+        self._skill_marker_scan_done: bool = False
         # Fatal stream error flag (e.g. file content persistence failure)
         self._fatal_stream_error = False
 
@@ -162,7 +177,73 @@ class StreamAdapter:
         self._last_message_stop_reason = None
         self._last_message_usage = None
         self._accumulated_text = ""
+        self._skill_marker_buf = ""
+        self._skill_marker_scan_done = False
         self._fatal_stream_error = False
+
+    # usage 键别名 → 规范键。Chat Completions 用 prompt/completion，
+    # Responses/SDK 用 input/output；两族键名若同时进同一个累加字典，
+    # 就只有 total_tokens 会被相加，而下游 writing_stats_service 取
+    # input_tokens 时读到的是另一族的值，别名那族被静默丢弃——
+    # 结果 total_tokens ≠ input + output + cache，计价口径自相矛盾。
+    _USAGE_KEY_ALIASES: dict[str, str] = {
+        "prompt_tokens": "input_tokens",
+        "completion_tokens": "output_tokens",
+    }
+
+    @classmethod
+    def _normalize_usage_keys(cls, usage: dict[str, Any]) -> dict[str, Any]:
+        """把别名键折叠到规范键上（同名冲突时数值相加）。"""
+        normalized: dict[str, Any] = {}
+        for key, value in usage.items():
+            canonical = cls._USAGE_KEY_ALIASES.get(key, key)
+            previous = normalized.get(canonical)
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and isinstance(previous, (int, float))
+                and not isinstance(previous, bool)
+            ):
+                normalized[canonical] = previous + value
+            else:
+                normalized[canonical] = value
+        return normalized
+
+    @classmethod
+    def _merge_usage(
+        cls,
+        accumulated: dict[str, Any] | None,
+        incoming: Any,
+    ) -> dict[str, Any] | None:
+        """累加一次 MESSAGE_END / ROUTER_DECIDED 带来的 usage 统计。
+
+        一轮请求里 router 与 planner/writer/quality_reviewer 各上报一次用量，
+        每次只携带自己那部分 token 消耗。整轮的真实消耗是它们之和，
+        直接赋值会让统计只剩最后一个 agent 的部分。
+
+        规则：先把别名键归一（prompt_tokens→input_tokens、
+        completion_tokens→output_tokens），再逐键相加；
+        非数值字段以最新一次为准；incoming 不是字典时保留已累计的值。
+        """
+        if not isinstance(incoming, dict):
+            return accumulated
+        normalized_incoming = cls._normalize_usage_keys(incoming)
+        if not isinstance(accumulated, dict):
+            return normalized_incoming
+
+        merged: dict[str, Any] = cls._normalize_usage_keys(accumulated)
+        for key, value in normalized_incoming.items():
+            previous = merged.get(key)
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and isinstance(previous, (int, float))
+                and not isinstance(previous, bool)
+            ):
+                merged[key] = previous + value
+            else:
+                merged[key] = value
+        return merged
 
     def get_last_message_metadata(self) -> dict[str, Any]:
         """Get latest model message metadata captured from MESSAGE_END events."""
@@ -176,6 +257,7 @@ class StreamAdapter:
         file_id: str,
         file_type: str,
         title: str,
+        original_content_length: int = 0,
     ) -> None:
         """
         Set a pending file write operation.
@@ -187,6 +269,8 @@ class StreamAdapter:
             file_id: ID of the created file
             file_type: Type of the file
             title: Title of the file
+            original_content_length: 目标文件此前已有的正文长度（幂等复用分支
+                会命中一个已写满的文件），>0 时禁止用截断补全的正文整体覆盖它
 
         Note:
             start_file_write() 会清空 StreamProcessor 的缓冲。调用方若可能在
@@ -208,6 +292,7 @@ class StreamAdapter:
             file_id=file_id,
             file_type=file_type,
             title=title,
+            original_content_length=max(int(original_content_length or 0), 0),
         )
         self._stream_processor.start_file_write(file_id)
 
@@ -218,6 +303,7 @@ class StreamAdapter:
             file_id=file_id,
             file_type=file_type,
             title=title,
+            original_content_length=self._pending_file_write.original_content_length,
         )
 
     async def process_workflow_events(
@@ -251,6 +337,12 @@ class StreamAdapter:
             if aclose is not None:
                 with contextlib.suppress(Exception):
                     await aclose()
+
+        # 先放行技能标记缓冲里扣着的文本（它在时间上早于下面的收尾），
+        # 再收尾 <file> 状态，顺序不能颠倒。
+        if not self._fatal_stream_error:
+            async for sse_event in self._release_skill_marker_buffer():
+                yield sse_event
 
         # Flush pending <file> state when upstream stream ends unexpectedly.
         if (
@@ -384,8 +476,19 @@ class StreamAdapter:
         elif event_type == StreamEventType.MESSAGE_END:
             # Message completed - capture metadata for downstream persistence
             self._last_message_stop_reason = data.get("stop_reason")
-            usage = data.get("usage")
-            self._last_message_usage = usage if isinstance(usage, dict) else None
+            # 多 agent 协作时每个 agent 各发一次 MESSAGE_END：usage 必须**累加**，
+            # 用后来的覆盖先前的会让整轮统计只剩最后一个 agent 的消耗（计费/
+            # 配额都基于它）。非字典的 usage 不清空已累计的值。
+            self._last_message_usage = self._merge_usage(
+                self._last_message_usage, data.get("usage")
+            )
+
+            # 技能标记剥离缓冲按 agent 边界收口：本轮扣住的文本必须在这里放行，
+            # 同时重置扫描状态，让下一个 agent 的开头也能被检查。
+            async for sse_event in self._release_skill_marker_buffer():
+                yield sse_event
+            self._skill_marker_buf = ""
+            self._skill_marker_scan_done = False
 
             # Agent boundary. MESSAGE_END marks the end of ONE agent's turn; the
             # same StreamAdapter/StreamProcessor is reused across the whole
@@ -451,6 +554,13 @@ class StreamAdapter:
             "parallel_task_end",
             "parallel_end",
         ):
+            if event_type_value == StreamEventType.ROUTER_DECIDED.value:
+                # 路由那次独立的（非流式）LLM 调用同样烧 token，但它不发
+                # MESSAGE_END，用量只能随 ROUTER_DECIDED 捎带回来。这里汇入同一个
+                # 累加器，整轮统计才是完整的。
+                self._last_message_usage = self._merge_usage(
+                    self._last_message_usage, data.get("routing_usage")
+                )
             # Pass through these events directly
             yield SSEEvent(type=event_type_value, data=data)
 
@@ -499,11 +609,32 @@ class StreamAdapter:
 
             result_data = parsed_result.get("data", parsed_result) if isinstance(parsed_result, dict) else parsed_result
 
+            # edit_file 全部编辑都没生效时必须降级为 error，并补上人话错因。
+            #
+            # 注意**不能**加 `status == "success"` 前置条件：mcp_tools 的
+            # _derive_edit_status 现在已经在 all_failed 时把工具层 status 直接
+            # 置成 "error"，上面解析出的 status 就是 error，加了前置条件这段
+            # 就成了死代码——于是 data 被置 None（status != success）、error 也
+            # 还是 None（工具层没填 error 字段），前端拿到一张既没内容也没原因
+            # 的空白失败卡。判据只看 all_failed。
+            edit_all_failed = (
+                tool_name == "edit_file"
+                and isinstance(result_data, dict)
+                and bool(result_data.get("all_failed"))
+            )
+            if edit_all_failed:
+                status = "error"
+                error = error or self._summarize_edit_failures(result_data)
+
+            # 全失败的 edit_file 仍要把 data 发出去：failed_edits 是用户判断
+            # 「哪几处没改成、为什么」的唯一依据，丢掉它卡片就是空白的。
+            emit_data = result_data if (status == "success" or edit_all_failed) else None
+
             # Emit tool_result event
             yield tool_result_event(
                 tool_name=tool_name,
                 status=status,
-                data=result_data if status == "success" else None,
+                data=emit_data,
                 error=error,
                 tool_use_id=tool_use_id or None,
             )
@@ -520,8 +651,9 @@ class StreamAdapter:
                     if file_id:
                         yield file_created_event(file_id, file_type, title)
 
-            # Handle file edit
-            if tool_name == "edit_file" and status == "success":
+            # Handle file edit。即便状态被降级为 error（全部编辑失败），
+            # 也要把逐条失败事件发出去，让用户看到「哪几处没改成」。
+            if tool_name == "edit_file":
                 async for event in self._handle_edit_file_result(result_data):
                     yield event
         except Exception as exc:
@@ -604,9 +736,22 @@ class StreamAdapter:
             return
 
         file_id = file_data.get("id", "")
-        content = file_data.get("content", "")
-        if content or not file_id:
+        if not file_id:
             return
+
+        raw_content = file_data.get("content")
+        content = raw_content if isinstance(raw_content, str) else ""
+        # 是否进入 <file> 捕获等待，以 create_file 的显式字段 reused_existing 为准，
+        # 不再依赖"content 是否为空"这种隐式信号：剧本分集的幂等复用分支命中的是
+        # 一个已经写满正文的文件，它同样需要进入捕获（模型接下来会流式写新正文），
+        # 但必须把"原本非空"记下来，供截断补全时的覆盖保护使用。
+        reused_existing = coerce_bool(file_data.get("reused_existing"))
+        if content and not reused_existing:
+            return
+
+        original_content_length = self._resolve_original_content_length(
+            file_data, content
+        )
 
         file_type = file_data.get("file_type", "")
         # folder 是纯容器节点，永远不会收到 <file>…</file> 正文。给它开启流式
@@ -632,7 +777,26 @@ class StreamAdapter:
         if self._fatal_stream_error:
             return
 
-        self.set_pending_file_write(file_id, file_type, file_data.get("title", ""))
+        self.set_pending_file_write(
+            file_id,
+            file_type,
+            file_data.get("title", ""),
+            original_content_length=original_content_length,
+        )
+
+    @staticmethod
+    def _resolve_original_content_length(file_data: dict[str, Any], content: str) -> int:
+        """取目标文件本次写入前的正文长度。
+
+        优先用 create_file 返回的显式字段 original_content_length（复用分支给出），
+        缺失或不合法时退回实际 content 的长度——两者都拿不到就是 0（新建空文件）。
+        """
+        raw = file_data.get("original_content_length")
+        try:
+            explicit = int(raw)
+        except (TypeError, ValueError):
+            explicit = 0
+        return max(explicit, len(content), 0)
 
     async def _flush_active_capture(self) -> AsyncIterator[SSEEvent]:
         """收尾仍在进行中的流式捕获，并发出对应的 SSE 事件。
@@ -658,10 +822,21 @@ class StreamAdapter:
         Yields:
             SSE events (content or file_content)
         """
-        # Accumulate text for skill usage detection
+        # Accumulate text for skill usage detection.
+        # 注意：这里保留**原始**文本（含 [使用技能: X] 标记），技能匹配事件仍基于
+        # 它检测；被剥离的只是下发给前端 / 落库的对话正文。
         if text:
             self._accumulated_text += text
 
+        released = self._strip_skill_marker_prefix(text)
+        if not released:
+            return
+
+        async for sse_event in self._emit_conversation_text(released):
+            yield sse_event
+
+    async def _emit_conversation_text(self, text: str) -> AsyncIterator[SSEEvent]:
+        """把一段（已剥离控制标记的）文本按 <file> 协议路由成 SSE 事件。"""
         if not self.config.process_file_markers:
             # No file marker processing, just emit content
             if text:
@@ -672,6 +847,70 @@ class StreamAdapter:
         result: StreamResult = self._stream_processor.process_content(text)
 
         async for sse_event in self._emit_stream_result(result):
+            yield sse_event
+
+    def _strip_skill_marker_prefix(self, text: str) -> str:
+        """剥离回复开头的 [使用技能: X] 控制标记，返回可以下发的文本。
+
+        标记可能被 delta 拆开（"[使用技" + "能: 悬念大师]"），所以在判定出结果
+        之前先把开头的文本扣在 _skill_marker_buf 里；一旦确定开头不可能是该标记
+        （或缓冲超过上限、标记不完整），立刻把缓冲原样放行，绝不丢字。
+        """
+        if self._skill_marker_scan_done:
+            return text
+
+        self._skill_marker_buf += text
+        buffered = self._skill_marker_buf
+        candidate = buffered.lstrip()
+        if not candidate:
+            # 仅有空白：继续等（超过上限时按下面的兜底放行）
+            if len(buffered) <= SKILL_MARKER_MAX_BUFFER:
+                return ""
+            return self._release_skill_marker_scan()
+
+        if not (
+            candidate.startswith(SKILL_MARKER_HEAD)
+            or SKILL_MARKER_HEAD.startswith(candidate)
+        ):
+            # 开头不是标记，也不可能是标记的前缀 -> 立即放行
+            return self._release_skill_marker_scan()
+
+        match = SKILL_USAGE_PATTERN.match(candidate)
+        if match:
+            self._skill_marker_scan_done = True
+            self._skill_marker_buf = ""
+            skill_name = match.group(1).strip()
+            log_with_context(
+                logger,
+                20,  # INFO
+                "Stripped skill usage marker from conversation text",
+                skill_name=skill_name,
+                project_id=self.config.project_id,
+            )
+            # 标记独占一行，剥离后紧跟的换行/空白也一并去掉，避免气泡以空行开头
+            return candidate[match.end():].lstrip()
+
+        if len(buffered) > SKILL_MARKER_MAX_BUFFER:
+            # 像标记开头但迟迟不闭合：不再扣着，原样放行
+            return self._release_skill_marker_scan()
+
+        return ""
+
+    def _release_skill_marker_scan(self) -> str:
+        """结束标记扫描并交还已缓冲的文本。"""
+        buffered = self._skill_marker_buf
+        self._skill_marker_buf = ""
+        self._skill_marker_scan_done = True
+        return buffered
+
+    async def _release_skill_marker_buffer(self) -> AsyncIterator[SSEEvent]:
+        """流/agent 结束时把仍扣在技能标记缓冲里的文本放行，防止内容丢失。"""
+        if self._skill_marker_scan_done or not self._skill_marker_buf:
+            return
+        pending = self._release_skill_marker_scan()
+        if not pending:
+            return
+        async for sse_event in self._emit_conversation_text(pending):
             yield sse_event
 
     async def _emit_stream_result(self, result: StreamResult) -> AsyncIterator[SSEEvent]:
@@ -695,6 +934,39 @@ class StreamAdapter:
 
     async def _complete_file_write(self, result: StreamResult) -> AsyncIterator[SSEEvent]:
         """Persist finalized file content and emit file completion event."""
+        # 覆盖保护：这次完成来自"没等到 </file> 的自动补全"，而目标文件本来
+        # 就有正文（create_file 幂等复用命中的已完成分集）。补全出来的正文很
+        # 可能只写了个开头，_save_file_content 又是整体替换，写下去等于用残稿
+        # 抹掉整集。此处拒绝落库、保留原文，并把情况说给用户和模型听，交由
+        # writing_graph 的补写纠偏走 edit_file 继续。
+        if self._should_refuse_truncated_overwrite(result):
+            pending = self._pending_file_write
+            original_length = pending.original_content_length if pending else 0
+            title = pending.title if pending else ""
+            log_with_context(
+                logger,
+                30,  # WARNING
+                "Refusing to overwrite an existing file body with auto-completed content",
+                file_id=result.file_id,
+                title=title,
+                original_content_length=original_length,
+                streamed_length=len(result.final_content),
+            )
+            warning_text = (
+                f"\n\n[系统提醒] 《{title or result.file_id}》的流式写入没有收到结尾的 "
+                f"</file>，本次只收到 {len(result.final_content)} 字，而该文件已有 "
+                f"{original_length} 字正文。为避免覆盖已完成的内容，本次内容未保存，"
+                "原文保持不变。请用 edit_file 继续补写，或重新完整输出并以 </file> 结尾。"
+            )
+            if not self._content_started:
+                yield content_start_event()
+                self._content_started = True
+            yield content_event(warning_text)
+            yield file_content_end_event(result.file_id)
+            self._pending_file_write = None
+            self._clear_pending_empty_file_guard(result.file_id)
+            return
+
         # Save accumulated file content to database before emitting end event
         if result.final_content:
             saved = await self._save_file_content(result.file_id, result.final_content)
@@ -718,6 +990,21 @@ class StreamAdapter:
         # Also clear ToolContext pending state, allowing next create_file.
         self._clear_pending_empty_file_guard(result.file_id)
 
+    def _should_refuse_truncated_overwrite(self, result: StreamResult) -> bool:
+        """判断这次"截断自动补全"是否会覆盖掉目标文件原有的正文。
+
+        三个条件同时成立才拒绝：
+        1) 本次完成由流结束时的自动补全产生（没有真实的 </file>）；
+        2) 该文件确实是本适配器正在等待写入的那一份；
+        3) 该文件在本次写入前已有正文（幂等复用命中的已完成分集）。
+        """
+        if not result.auto_completed or not result.file_id:
+            return False
+        pending = self._pending_file_write
+        if pending is None or pending.file_id != result.file_id:
+            return False
+        return pending.original_content_length > 0
+
     def _clear_pending_empty_file_guard(self, file_id: str = "") -> None:
         """清除 ToolContext 的 pending-empty-file 标记。
 
@@ -726,16 +1013,14 @@ class StreamAdapter:
         收尾误清，「空文件必须被补写」的信号就丢了（writing_graph 再也不会
         安排补写）。file_id 为空表示流结束时的无条件清理，避免标记泄漏到
         下一个请求。
+
+        实现上直接把 file_id 交给 ToolContext 做精确摘除：标记现在是集合，
+        「读最近一个再无参清空」在同时存在多个待写空文件时会一次清光其余条目。
         """
         with contextlib.suppress(Exception):
             from agent.tools.mcp_tools import ToolContext
 
-            if file_id:
-                pending = ToolContext.get_pending_empty_file()
-                pending_id = pending.get("file_id") if pending else ""
-                if pending_id and pending_id != file_id:
-                    return
-            ToolContext.clear_pending_empty_file()
+            ToolContext.clear_pending_empty_file(file_id or None)
 
     async def _save_file_content(self, file_id: str, content: str) -> bool:
         """
@@ -838,43 +1123,100 @@ class StreamAdapter:
         file_type = result.get("file_type")
         # Edit details are in "details" field, not "edits_applied"
         edits = result.get("details", [])
-        total_edits = len(edits) if isinstance(edits, list) else 0
+        applied_edits = [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else []
+        # 失败项与告警此前被整体丢弃：部分失败/全部失败的编辑在 UI 上呈现为
+        # 「全部成功」，用户以为改完了就继续往下写。失败必须与成功同样上屏。
+        failed_edits = self._normalize_edit_failures(result.get("failed_edits"))
+        warnings = [str(w) for w in result.get("warnings") or [] if w]
 
         if not file_id:
             return
 
-        # Emit edit start
-        yield file_edit_start_event(file_id, title, total_edits, file_type=file_type)
+        # Emit edit start —— 总数必须包含失败项，否则进度条会少算
+        yield file_edit_start_event(
+            file_id,
+            title,
+            len(applied_edits) + len(failed_edits),
+            file_type=file_type,
+        )
 
         # Emit individual edit events
-        if isinstance(edits, list):
-            for i, edit in enumerate(edits):
-                op = edit.get("op", "replace")
-                old_preview = edit.get("old_preview", "")
-                new_preview = edit.get("new_preview", "")
-                success = edit.get("success", True)
-                error = edit.get("error")
+        for i, edit in enumerate(applied_edits):
+            op = edit.get("op", "replace")
+            old_preview = edit.get("old_preview", "")
+            new_preview = edit.get("new_preview", "")
+            # append/prepend 的 detail 没有 new_preview，只有 text_preview
+            if not new_preview:
+                new_preview = edit.get("text_preview", "")
+            success = edit.get("success", True)
+            error = edit.get("error")
 
-                yield file_edit_applied_event(
-                    file_id=file_id,
-                    edit_index=i,
-                    op=op,
-                    old_preview=old_preview[:50] if old_preview else None,
-                    new_preview=new_preview[:50] if new_preview else None,
-                    success=success,
-                    error=error,
-                )
+            yield file_edit_applied_event(
+                file_id=file_id,
+                edit_index=i,
+                op=op,
+                old_preview=old_preview[:50] if old_preview else None,
+                new_preview=new_preview[:50] if new_preview else None,
+                success=success,
+                error=error,
+            )
+
+        # 失败项紧随其后，edit_index 继续顺延（保证事件 key 唯一）
+        for offset, failed in enumerate(failed_edits):
+            yield file_edit_applied_event(
+                file_id=file_id,
+                edit_index=len(applied_edits) + offset,
+                op=failed.get("op") or "replace",
+                old_preview=None,
+                new_preview=None,
+                success=False,
+                error=failed.get("error") or "编辑失败",
+            )
 
         # Emit edit end - use new_length from result directly
-        yield file_edit_end_event(
+        end_event = file_edit_end_event(
             file_id=file_id,
-            edits_applied=total_edits,
+            edits_applied=len(applied_edits),
             new_length=result.get("new_length", 0),
             new_content=None,  # Content not included in executor result
             original_content=None,
             file_type=file_type,
             title=title,
+            # 失败/部分成功/静默跳过的告警一并带上，前端与历史都能看到真实结果。
+            # 这些已是 FileEditEndEventData 的一等字段，不再在工厂外补键。
+            failed_count=len(failed_edits),
+            partial_success=bool(
+                result.get("partial_success") or (applied_edits and failed_edits)
+            ),
+            all_failed=bool(
+                result.get("all_failed") or (failed_edits and not applied_edits)
+            ),
+            warnings=warnings,
         )
+        yield end_event
+
+    @staticmethod
+    def _normalize_edit_failures(raw: Any) -> list[dict[str, Any]]:
+        """把 edit_file 返回的 failed_edits 归一化成事件可用的字典列表。"""
+        if not isinstance(raw, list):
+            return []
+        failures: list[dict[str, Any]] = []
+        for item in raw:
+            if isinstance(item, dict):
+                failures.append(item)
+            elif item:
+                failures.append({"error": str(item)})
+        return failures
+
+    @classmethod
+    def _summarize_edit_failures(cls, result: dict[str, Any]) -> str:
+        """把全部失败的编辑汇总成一句给模型看的错误说明。"""
+        failures = cls._normalize_edit_failures(result.get("failed_edits"))
+        reasons = [str(item.get("error")) for item in failures if item.get("error")]
+        if not reasons:
+            reasons = [str(w) for w in result.get("warnings") or [] if w]
+        detail = "；".join(reasons) if reasons else "未提供原因"
+        return f"全部 {len(failures)} 处编辑均未生效：{detail}"
 
     def get_file_content(self) -> str:
         """Get accumulated file content from StreamProcessor."""

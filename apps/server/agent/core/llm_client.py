@@ -10,7 +10,7 @@ Features:
 
 import json
 from collections.abc import AsyncGenerator, Generator
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import httpx
 from openai import AsyncOpenAI, OpenAI
@@ -195,12 +195,44 @@ class LLMClient:
             )
             raise
 
+    @staticmethod
+    def _chunk_text(chunk: Any) -> str:
+        """取出一个流式 chunk 的正文增量。
+
+        开启 stream_options.include_usage 后，DeepSeek 会在最后补一个
+        ``choices == []`` 的纯 usage chunk；直接 ``chunk.choices[0]`` 会 IndexError。
+        """
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            return ""
+        delta = getattr(choices[0], "delta", None)
+        return getattr(delta, "content", None) or ""
+
+    @staticmethod
+    def _collect_usage(chunk: Any, usage_sink: dict[str, Any] | None) -> None:
+        """把 chunk 上的 usage 写进调用方提供的容器。
+
+        流式封装原先只 yield 正文增量，usage 被整个丢弃——走这条路的调用方
+        （如 suggest_service）其 token 消耗完全不进任何统计。用 sink 而不是改
+        yield 的类型，是为了不破坏既有 ``Generator[str, ...]`` 契约。
+        """
+        if usage_sink is None:
+            return
+        usage = getattr(chunk, "usage", None)
+        if usage is None:
+            return
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = getattr(usage, key, None)
+            if isinstance(value, int) and not isinstance(value, bool):
+                usage_sink[key] = value
+
     def complete_stream(
         self,
         messages: list[dict[str, str]],
         model: str | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        usage_sink: dict[str, Any] | None = None,
     ) -> Generator[str, None, None]:
         """
         Streaming synchronous completion.
@@ -209,6 +241,7 @@ class LLMClient:
             messages: Chat messages
             model: Model to use
             temperature: Sampling temperature
+            usage_sink: 可选容器；流结束时会被填入 prompt/completion/total tokens
 
         Yields:
             Text chunks as they are generated
@@ -219,10 +252,14 @@ class LLMClient:
             temperature=temperature if temperature is not None else self.DEFAULT_TEMPERATURE,
             top_p=top_p if top_p is not None else self.DEFAULT_TOP_P,
             stream=True,
+            # 不带 stream_options 时 DeepSeek 全程不回发 usage，统计必然为空
+            stream_options={"include_usage": True},
         )
         for chunk in stream:
-            if chunk.choices[0].delta.content:  # type: ignore[union-attr]
-                yield chunk.choices[0].delta.content  # type: ignore[union-attr]
+            self._collect_usage(chunk, usage_sink)
+            text = self._chunk_text(chunk)
+            if text:
+                yield text
 
     def complete_structured(
         self,
@@ -355,6 +392,7 @@ class LLMClient:
         model: str | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        usage_sink: dict[str, Any] | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Async streaming completion for SSE.
@@ -363,6 +401,7 @@ class LLMClient:
             messages: Chat messages
             model: Model to use
             temperature: Sampling temperature
+            usage_sink: 可选容器；流结束时会被填入 prompt/completion/total tokens
 
         Yields:
             Text chunks as they are generated
@@ -373,10 +412,14 @@ class LLMClient:
             temperature=temperature if temperature is not None else self.DEFAULT_TEMPERATURE,
             top_p=top_p if top_p is not None else self.DEFAULT_TOP_P,
             stream=True,
+            # 不带 stream_options 时 DeepSeek 全程不回发 usage，统计必然为空
+            stream_options={"include_usage": True},
         )
         async for chunk in stream:  # type: ignore[union-attr]
-            if chunk.choices[0].delta.content:  # type: ignore[union-attr]
-                yield chunk.choices[0].delta.content  # type: ignore[union-attr]
+            self._collect_usage(chunk, usage_sink)
+            text = self._chunk_text(chunk)
+            if text:
+                yield text
 
     async def acomplete_structured(
         self,

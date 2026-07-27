@@ -856,6 +856,18 @@ export interface FileUpdateVersionIntent {
    * re-scan large draft/script content on dashboard reads.
    */
   word_count?: number;
+  /**
+   * Optimistic-concurrency token: the `updated_at` this client saw when it
+   * loaded the content it is now saving.
+   *
+   * The editor submits a whole-document snapshot, so a lock alone cannot stop
+   * lost updates — a stale snapshot will happily overwrite whatever the agent
+   * wrote while the 3s debounce was pending. When this field is present and the
+   * server-side `updated_at` has moved on, the backend answers 409
+   * (`ERR_RESOURCE_CONFLICT`) with the current content instead of overwriting.
+   * Omitting the field keeps the old (unchecked) behaviour for compatibility.
+   */
+  base_updated_at?: string;
 }
 
 /**

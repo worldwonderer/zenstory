@@ -268,6 +268,16 @@ class FileEditEndEventData(BaseModel):
     original_content: str | None = Field(default=None, description="Content before edits (for diff review)")
     file_type: str | None = Field(default=None, description="Type of the edited file")
     title: str | None = Field(default=None, description="Title of the edited file")
+    # 批量编辑可以部分失败（continue_on_error）。只报 edits_applied 会让前端把
+    # "3 条里成功 1 条" 渲染成纯成功，用户看不到另外 2 条根本没改。
+    failed_count: int = Field(default=0, description="Number of edits that failed")
+    partial_success: bool = Field(
+        default=False, description="True when some edits applied and some failed"
+    )
+    all_failed: bool = Field(default=False, description="True when every edit failed")
+    warnings: list[str] = Field(
+        default_factory=list, description="Non-fatal warnings raised while editing"
+    )
 
 
 # ========== Event Factory Functions ==========
@@ -514,6 +524,10 @@ def file_edit_end_event(
     original_content: str | None = None,
     file_type: str | None = None,
     title: str | None = None,
+    failed_count: int = 0,
+    partial_success: bool = False,
+    all_failed: bool = False,
+    warnings: list[str] | None = None,
 ) -> StreamEvent:
     """Create a file_edit_end event when all edits are complete."""
     return StreamEvent(
@@ -526,6 +540,10 @@ def file_edit_end_event(
             original_content=original_content,
             file_type=file_type,
             title=title,
+            failed_count=max(0, failed_count),
+            partial_success=partial_success,
+            all_failed=all_failed,
+            warnings=[str(w) for w in (warnings or []) if w],
         ).model_dump()
     )
 
@@ -621,8 +639,19 @@ class SessionStartedEventData(BaseModel):
 class ParallelStartEventData(BaseModel):
     """Data for parallel_start events."""
     execution_id: str = Field(..., description="Unique ID for this parallel execution")
-    task_count: int = Field(..., description="Total number of parallel tasks")
-    task_descriptions: list[str] = Field(..., description="Descriptions of each task")
+    task_count: int = Field(..., description="Number of tasks actually executed this round")
+    task_descriptions: list[str] = Field(..., description="Descriptions of each executed task")
+    # 单次并行有上限（MAX_PARALLEL_TASKS），超出的任务会被截断丢弃。
+    # 只报 task_count 会让前端进度条显示 "5/5 完成" 而隐藏掉被丢弃的 2 个任务；
+    # 只把 task_count 改成请求数又会让进度条永远停在 "5/7"。
+    # 因此两者都发：task_count 驱动进度条，requested_task_count/dropped_count 用于
+    # 在完成后追加 "2 个未执行" 的提示。
+    requested_task_count: int = Field(
+        default=0, description="Number of tasks the model originally requested"
+    )
+    dropped_count: int = Field(
+        default=0, description="Number of requested tasks dropped due to the concurrency cap"
+    )
 
 
 class ParallelTaskStartEventData(BaseModel):
@@ -649,6 +678,14 @@ class ParallelEndEventData(BaseModel):
     completed: int = Field(..., description="Number of completed tasks")
     failed: int = Field(..., description="Number of failed tasks")
     duration_ms: int = Field(..., description="Total execution duration in milliseconds")
+    # 与 ParallelStartEventData 同义：让 UI 在收尾时也能说明"还有 N 个未执行"，
+    # 不必缓存 start 事件的字段。
+    requested_task_count: int = Field(
+        default=0, description="Number of tasks the model originally requested"
+    )
+    dropped_count: int = Field(
+        default=0, description="Number of requested tasks dropped due to the concurrency cap"
+    )
 
 
 class SteeringReceivedEventData(BaseModel):
@@ -689,6 +726,8 @@ def parallel_start_event(
     execution_id: str,
     task_count: int,
     task_descriptions: list[str],
+    requested_task_count: int | None = None,
+    dropped_count: int = 0,
 ) -> StreamEvent:
     """Create a parallel_start event when parallel execution begins."""
     return StreamEvent(
@@ -697,6 +736,10 @@ def parallel_start_event(
             execution_id=execution_id,
             task_count=task_count,
             task_descriptions=task_descriptions,
+            requested_task_count=(
+                task_count if requested_task_count is None else requested_task_count
+            ),
+            dropped_count=max(0, dropped_count),
         ).model_dump()
     )
 
@@ -745,6 +788,8 @@ def parallel_end_event(
     completed: int,
     failed: int,
     duration_ms: int,
+    requested_task_count: int | None = None,
+    dropped_count: int = 0,
 ) -> StreamEvent:
     """Create a parallel_end event when parallel execution completes."""
     return StreamEvent(
@@ -755,6 +800,10 @@ def parallel_end_event(
             completed=completed,
             failed=failed,
             duration_ms=duration_ms,
+            requested_task_count=(
+                total_tasks if requested_task_count is None else requested_task_count
+            ),
+            dropped_count=max(0, dropped_count),
         ).model_dump()
     )
 

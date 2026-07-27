@@ -23,6 +23,7 @@ import type {
   Conflict,
   ConflictType,
   ApplyAction,
+  FileEditOutcome,
   SSEHandoffData,
   SSERoutingMetadata,
   SSEWorkflowCompleteData,
@@ -61,6 +62,13 @@ export interface MessageSegment {
 export interface StreamCompletionMeta {
   assistantMessageId?: string;
   sessionId?: string;
+  /**
+   * 本轮是「非正常终止」后的部分提交（用户点停止 / SSE error / 反向代理掐断空闲连接）。
+   *
+   * 正常路径（SSE done）不会带这个标记。调用方据此可以把已流式渲染的正文
+   * 照常落进 messages，而不是让它随下一轮 onStart 的清理一起消失。
+   */
+  partial?: boolean;
 }
 
 export interface UseAgentStreamOptions {
@@ -146,6 +154,7 @@ export interface UseAgentStreamOptions {
     originalContent?: string,
     fileType?: string,
     title?: string,
+    outcome?: FileEditOutcome,
   ) => void;
   /** Called when a skill is matched */
   onSkillMatched?: (skillId: string, skillName: string, matchedTrigger: string) => void;
@@ -185,7 +194,12 @@ export interface UseAgentStreamOptions {
   /** Called when session starts */
   onSessionStarted?: (sessionId: string) => void;
   /** Called when parallel execution starts */
-  onParallelStart?: (executionId: string, taskCount: number, descriptions: string[]) => void;
+  onParallelStart?: (
+    executionId: string,
+    taskCount: number,
+    descriptions: string[],
+    droppedCount?: number,
+  ) => void;
   /** Called when a parallel task starts */
   onParallelTaskStart?: (executionId: string, taskId: string, taskType: string, description: string) => void;
   /** Called when a parallel task completes */
@@ -287,6 +301,14 @@ export function useAgentStream(
 
   // Session and parallel execution refs
   const sessionIdRef = useRef<string | null>(null);
+  // 「本轮流真正拿到过 session_started」的会话 id。
+  //
+  // sessionIdRef 会跨轮保留（用于把 session_id 带进下一次请求实现会话延续），
+  // 但 steering 只能投递给**当前正在跑**的那一轮：startStream 是同步把
+  // isStreaming 置 true 的，而后端要到注册 steering 队列之后才会发 session_started。
+  // 这段窗口里若拿上一轮的陈旧 session id 去 /agent/steer，必然 404。
+  // 所以 canSteer 与 sendSteeringMessage 一律以本 ref 为准。
+  const activeStreamSessionIdRef = useRef<string | null>(null);
   const parallelStateRef = useRef<ParallelExecutionState | null>(null);
   const streamEpochRef = useRef(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -451,6 +473,7 @@ export function useAgentStream(
     pendingContentChunkRef.current = "";
     contentRef.current = "";
     sessionIdRef.current = null;
+    activeStreamSessionIdRef.current = null;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on project switch
     setSessionId(null);
     parallelStateRef.current = null;
@@ -603,7 +626,9 @@ export function useAgentStream(
    * Send a steering message to the active session.
    */
   const sendSteeringMessage = useCallback(async (message: string) => {
-    const currentSessionId = sessionIdRef.current;
+    // 只认本轮流已确认的 session id：用陈旧 id 投递必然 404，
+    // 而调用方（MessageInput）会因为「已发送」而清空输入框，造成用户输入丢失。
+    const currentSessionId = activeStreamSessionIdRef.current;
     if (!currentSessionId) {
       throw new Error("No active session for steering");
     }
@@ -632,11 +657,33 @@ export function useAgentStream(
     currentSegmentContentRef.current = "";
     pendingToolCallsRef.current = [];
     sessionIdRef.current = null;
+    activeStreamSessionIdRef.current = null;
     setSessionId(null);
     parallelStateRef.current = null;
     onCompleteCalledRef.current = false;
   // updateSegmentsSync is stable from useImmer, included to satisfy lint
   }, [clearError, clearFlushTimer, updateSegmentsSync]);
+
+  /**
+   * 非正常终止的统一收尾通道（取消 / SSE error / 反向代理掐断空闲连接）。
+   *
+   * 历史缺陷：落地与清理逻辑全部只挂在 done 事件驱动的 onComplete 上，导致
+   * 三条非正常终止路径没有任何等价钩子——
+   *   1. 已流式渲染的 AI 正文永远进不了 messages，用户一发下一条消息，
+   *      onStart 的 clearStreamItems 就把它整段抹掉（但后端其实已落库）；
+   *   2. ProjectContext.streamingFileId 永不释放，AI 新建的那个文件在编辑器里
+   *      被锁成只读、常驻「AI 正在写作」浮层。
+   *
+   * 这里复用 onCompleteCalledRef，保证一轮流至多提交一次（done 已提交过就不再补发）。
+   */
+  const finalizeStream = useCallback(() => {
+    if (onCompleteCalledRef.current) return;
+    onCompleteCalledRef.current = true;
+    onComplete?.(segmentsRef.current, null, {
+      partial: true,
+      sessionId: activeStreamSessionIdRef.current ?? undefined,
+    });
+  }, [onComplete]);
 
   /**
    * Cancel ongoing stream.
@@ -650,19 +697,30 @@ export function useAgentStream(
     // Flush what we already received so the UI doesn't "lose" the last chunk.
     flushPendingContent();
     clearFlushTimer();
-    
+
     // End current segment
     if (currentSegmentIdRef.current) {
-      onSegmentEnd?.(currentSegmentIdRef.current);
+      const segmentId = currentSegmentIdRef.current;
+      updateSegmentsSync(draft => {
+        const seg = draft.find(s => s.id === segmentId);
+        if (seg) {
+          seg.isStreaming = false;
+        }
+      });
+      onSegmentEnd?.(segmentId);
       currentSegmentIdRef.current = null;
     }
-    
+
     setState((prev) => ({
       ...prev,
       isStreaming: false,
       isThinking: false,
     }));
-  }, [clearFlushTimer, flushPendingContent, onSegmentEnd]);
+
+    // abort 之后 fetch 侧只会抛 AbortError 并被静默吞掉，不会再有任何回调，
+    // 所以必须在这里主动补发终止回调（不经过 isStaleEvent，epoch 已自增也不受影响）。
+    finalizeStream();
+  }, [clearFlushTimer, finalizeStream, flushPendingContent, onSegmentEnd, updateSegmentsSync]);
 
   /**
    * Start a streaming request.
@@ -697,6 +755,11 @@ export function useAgentStream(
       pendingToolCallsRef.current = [];
       currentToolCallsSegmentIdRef.current = null;
       onCompleteCalledRef.current = false;
+      // 本轮的 session 尚未确认：在收到 session_started 之前不允许 steering，
+      // 否则会拿上一轮的陈旧 session id 去请求并稳定 404。
+      // 注意 sessionIdRef 不能清（它负责把 session_id 带进请求实现会话延续）。
+      activeStreamSessionIdRef.current = null;
+      setSessionId(null);
 
       onStart?.();
 
@@ -903,7 +966,16 @@ export function useAgentStream(
             onFileEditApplied?.(fileId, editIndex, op, oldPreview, newPreview, success, error);
           },
 
-          onFileEditEnd: (fileId, editsApplied, newLength, newContent, originalContent, fileType, title) => {
+          onFileEditEnd: (
+            fileId,
+            editsApplied,
+            newLength,
+            newContent,
+            originalContent,
+            fileType,
+            title,
+            outcome,
+          ) => {
             if (isStaleEvent()) return;
             onFileEditEnd?.(
               fileId,
@@ -913,6 +985,7 @@ export function useAgentStream(
               originalContent,
               fileType,
               title,
+              outcome,
             );
           },
 
@@ -997,18 +1070,20 @@ export function useAgentStream(
           onSessionStarted: (session_id) => {
             if (isStaleEvent()) return;
             sessionIdRef.current = session_id;
+            // 后端已注册 steering 队列，此刻起本轮才真正可被追加指令。
+            activeStreamSessionIdRef.current = session_id;
             setSessionId(session_id);
             onSessionStarted?.(session_id);
           },
 
-          onParallelStart: (execution_id, task_count, task_descriptions) => {
+          onParallelStart: (execution_id, task_count, task_descriptions, dropped_count) => {
             if (isStaleEvent()) return;
             parallelStateRef.current = {
               executionId: execution_id,
               tasks: new Map(),
               startTime: Date.now(),
             };
-            onParallelStart?.(execution_id, task_count, task_descriptions);
+            onParallelStart?.(execution_id, task_count, task_descriptions, dropped_count);
           },
 
           onParallelTaskStart: (execution_id, task_id, task_type, description) => {
@@ -1123,12 +1198,20 @@ export function useAgentStream(
             flushPendingContent();
             // End current segment
             if (currentSegmentIdRef.current) {
-              onSegmentEnd?.(currentSegmentIdRef.current);
+              const segmentId = currentSegmentIdRef.current;
+              updateSegmentsSync(draft => {
+                const seg = draft.find(s => s.id === segmentId);
+                if (seg) {
+                  seg.isStreaming = false;
+                }
+              });
+              onSegmentEnd?.(segmentId);
               currentSegmentIdRef.current = null;
             }
 
-            // 重置 onComplete 调用标志
-            onCompleteCalledRef.current = false;
+            // 注意：这里**不再**把 onCompleteCalledRef 重置为 false。
+            // 该标志由 startStream 在每轮开始时重置即可；在出错时清零会让
+            // 下面的 finalizeStream 与已发生过的 done 提交重复叠加。
 
             // 使用独立的error状态管理，3秒后自动清除
             showError(message);
@@ -1147,6 +1230,10 @@ export function useAgentStream(
             } else {
               onError?.(message);
             }
+
+            // SSE error / 代理掐断（STREAM_CLOSED）同样拿不到 done：
+            // 补发终止回调，把已渲染的正文落进 messages 并释放文件流式只读态。
+            finalizeStream();
           },
         },
       );
@@ -1190,6 +1277,7 @@ export function useAgentStream(
       clearError,
       clearFlushTimer,
       showError,
+      finalizeStream,
       flushPendingContent,
       scheduleContentFlush,
       // updateSegmentsSync is stable from useImmer, included to satisfy lint

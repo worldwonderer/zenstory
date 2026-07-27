@@ -10,12 +10,16 @@ the LLM provides slightly different text.
 Extracted from the monolithic file_executor.py for better maintainability.
 """
 
+import asyncio
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from services.file_version import FileVersionService
 from sqlmodel import Session, select
 
+from agent.constants import coerce_bool
 from agent.tools.permissions import check_file_access_in_tool_context
 from config.datetime_utils import utcnow
 from models import File
@@ -49,10 +53,54 @@ REPLACE_ALL_MAX_FUZZY_MATCHES = 1000
 _FILE_WRITE_LOCK_STRIPES = 64
 _file_write_locks = [threading.Lock() for _ in range(_FILE_WRITE_LOCK_STRIPES)]
 
+# 事件循环线程上等待写锁的硬上限。持锁方可能是工作线程里的 commit + 版本快照
+# （_create_version 会重放 diff 链并对整章正文跑 difflib），SQLite 写冲突时
+# 还会撞上 PRAGMA busy_timeout=30000。在事件循环线程上同步等这么久等于整个
+# 进程停摆：该 worker 的所有 SSE 流与 HTTP 请求一起卡住。因此事件循环线程上
+# 只做有界等待，超时抛可重试错误，绝不把不确定时长的等待压在事件循环上。
+EVENT_LOOP_LOCK_WAIT_SECONDS = 0.5
+
+
+class FileWriteBusyError(RuntimeError):
+    """写锁在有界等待内没拿到（文件正被另一个写入任务占用），可安全重试。"""
+
 
 def file_write_lock(file_id: str) -> threading.Lock:
     """Return the in-process write lock striped by ``file_id``."""
     return _file_write_locks[hash(file_id) % _FILE_WRITE_LOCK_STRIPES]
+
+
+def _running_on_event_loop_thread() -> bool:
+    """当前线程是否正在跑 asyncio 事件循环。"""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+@contextmanager
+def acquire_file_write_lock(file_id: str) -> Iterator[None]:
+    """获取按 ``file_id`` 分条带的进程内写锁，且不阻塞事件循环。
+
+    - 工作线程（asyncio.to_thread / 线程池）：照常阻塞式获取，语义不变。
+    - 事件循环线程：只等 ``EVENT_LOOP_LOCK_WAIT_SECONDS``，超时抛
+      :class:`FileWriteBusyError`。写工具本应被 offload 到线程池执行，
+      走到这里说明调用方仍在事件循环上同步调用；此时宁可让这一次编辑失败
+      并提示重试，也不能让整个进程陪着等（最坏可达 SQLite busy_timeout 的 30 秒）。
+    """
+    lock = file_write_lock(file_id)
+    if _running_on_event_loop_thread():
+        if not lock.acquire(timeout=EVENT_LOOP_LOCK_WAIT_SECONDS):
+            raise FileWriteBusyError(
+                "该文件正被另一个写入任务占用，本次编辑未做任何修改，请稍后重试。"
+            )
+    else:
+        lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def _exact_spans(content: str, sub: str, limit: int = 3) -> list[tuple[int, int]]:
@@ -66,6 +114,14 @@ def _exact_spans(content: str, sub: str, limit: int = 3) -> list[tuple[int, int]
         spans.append((k, k + len(sub)))
         start = k + len(sub)
     return spans
+
+
+def _numbered_previews(content: str, spans: list[tuple[int, int]]) -> list[str]:
+    """给候选片段标出 1-based 序号，模型可以直接把序号填进 occurrence。"""
+    return [
+        f"[occurrence={i}] {preview}"
+        for i, preview in enumerate(build_span_previews(content, spans), start=1)
+    ]
 
 
 class FileEditor:
@@ -116,6 +172,10 @@ class FileEditor:
                 - anchor: Anchor text (for insert_after/insert_before)
                 - text: Text to insert (for insert_*/append/prepend)
                 - replace_all: Whether to replace all occurrences (for replace)
+                - occurrence: 1-based index of the occurrence to edit when the
+                  old/anchor text matches several places (replace/delete/insert_*)
+                - match_mode: "auto"(默认) 或 "exact"（禁用模糊/近似兜底）
+                - ignore_punct_whitespace: 模糊匹配时是否忽略标点与空白（默认 true）
             continue_on_error: Whether to continue applying remaining edits when one edit fails
 
         Returns:
@@ -133,13 +193,18 @@ class FileEditor:
         """
         from database import is_postgres
 
+        # continue_on_error 可能一路从 LLM 参数透传下来（strict_json_schema=False
+        # 时布尔会被序列化成 "false"/"0"），朴素真值判断会把它们判真。
+        continue_on_error = coerce_bool(continue_on_error, default=False)
+
         if is_postgres:
             return self._edit_file_impl(id, edits, continue_on_error)
         # SQLite has no row locks: serialize same-file read-modify-write with
         # the in-process per-file lock so a concurrent edit (parallel_execute
         # runs each task on its own session/thread) cannot interleave between
-        # our read and commit.
-        with file_write_lock(id):
+        # our read and commit. 获取方式见 acquire_file_write_lock：事件循环线程
+        # 上只做有界等待，避免整个进程陪着一个工作线程的长事务停摆。
+        with acquire_file_write_lock(id):
             return self._edit_file_impl(id, edits, continue_on_error)
 
     def _edit_file_impl(
@@ -314,25 +379,28 @@ class FileEditor:
                 })
                 warnings.append(f"Edit {i}: failed and skipped ({e})")
 
-        # Update file only when content changed. The version snapshot must
-        # stay ordered with the content commit for the same file:
-        # - PostgreSQL: write the snapshot BEFORE committing, because commit
-        #   releases the row lock and a competing edit could then commit and
-        #   snapshot first, leaving the newest version number pointing at
-        #   older content. Snapshot failure never blocks the edit itself.
-        # - SQLite: the in-process per-file lock (see edit_file) covers both
-        #   the commit and the snapshot, but the snapshot's independent
-        #   session must commit while this session holds no write
-        #   transaction, so it runs AFTER the content commit.
+        # Stage content and snapshot in the same transaction while the per-file
+        # lock is held. A savepoint keeps snapshot failures non-blocking without
+        # allowing content and history to describe different writes.
         if content != old_content:
             file.content = content
             file.updated_at = utcnow()
-            if is_postgres:
-                self._create_edit_version(id, content, applied_edits)
+            try:
+                with self.session.begin_nested():
+                    self._create_edit_version(id, content, applied_edits)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to create version for edit_file; content will persist",
+                    exc_info=True,
+                    extra={"file_id": id, "error": str(exc)},
+                )
             self.session.commit()
             self.session.refresh(file)
-            if not is_postgres:
-                self._create_edit_version(id, content, applied_edits)
+
+        # 统一补齐 new_preview：replace 类操作的 detail 里叫 new_preview，
+        # append/prepend/insert_* 只有 text_preview，前端与 SSE 适配器要两处兼容
+        # 才能显示"这次写进去的新内容"。在源头补一份别名，消费方只认 new_preview 即可。
+        self._backfill_new_preview(applied_edits)
 
         return {
             "id": file.id,
@@ -348,6 +416,62 @@ class FileEditor:
         }
 
     @staticmethod
+    def _backfill_new_preview(applied_edits: list[dict[str, Any]]) -> None:
+        """给只有 text_preview 的 detail 补上同值的 new_preview。
+
+        append/prepend/insert_after/insert_before 记录的是"插入的文本"（text_preview），
+        replace 记录的是"替换后的新文本"（new_preview）。对下游（file_edit_applied 事件、
+        前端 ToolResultCard）来说两者语义一致，都是"本次写入的新内容"。
+        在这里统一补齐，避免每个消费方各写一遍 fallback 分支而漏掉某个 op。
+        """
+        for detail in applied_edits:
+            if not isinstance(detail, dict):
+                continue
+            if detail.get("new_preview"):
+                continue
+            text_preview = detail.get("text_preview")
+            if isinstance(text_preview, str) and text_preview:
+                detail["new_preview"] = text_preview
+
+    @staticmethod
+    def _parse_ignore_punct_whitespace(edit: dict[str, Any]) -> bool:
+        """解析 ignore_punct_whitespace，默认 True。
+
+        这是三值语义：未指定 = 用默认值 True，显式给了才转换。coerce_bool 对
+        None 恒返回 False，所以必须先判 None，否则「没传」会被当成「传了 false」。
+        原来的 ``bool(edit.get(..., True))`` 则相反——会把模型传来的字符串
+        "false" 判成 True，等于这个开关根本关不掉。
+        """
+        raw = edit.get("ignore_punct_whitespace")
+        if raw is None:
+            return True
+        return coerce_bool(raw, default=True)
+
+    @staticmethod
+    def _parse_occurrence(edit: dict[str, Any], edit_index: int) -> int | None:
+        """解析 1-based 的 occurrence；未指定返回 None（继续走唯一性守卫）。
+
+        replace/delete/insert_* 共用同一套解析，调用方不必再各自 int() 转换，
+        「同一份 edits 契约里各 op 行为不一致」正是本次要消灭的问题。
+        """
+        raw = edit.get("occurrence")
+        if raw is None:
+            return None
+        if isinstance(raw, str) and not raw.strip():
+            return None
+        try:
+            occ = int(raw)
+        except Exception as e:
+            raise ValueError(
+                f"Edit {edit_index}: occurrence must be an integer when provided"
+            ) from e
+        if occ <= 0:
+            raise ValueError(
+                f"Edit {edit_index}: occurrence must be >= 1 (1-based), got {occ}"
+            )
+        return occ
+
+    @staticmethod
     def _select_exact_occurrence_start(
         content: str,
         sub: str,
@@ -356,6 +480,7 @@ class FileEditor:
         edit_index: int,
         *,
         label: str,
+        extra_hint: str = "",
     ) -> int:
         """Resolve the start index for an exact-substring op.
 
@@ -370,11 +495,12 @@ class FileEditor:
         """
         if occurrence is None:
             if match_count > 1:
-                previews = build_span_previews(content, _exact_spans(content, sub))
+                previews = _numbered_previews(content, _exact_spans(content, sub))
                 raise ValueError(
                     f"Edit {edit_index}: {label}匹配到多个位置（{match_count}处），"
-                    f"为避免定位到错误位置已中止。请提供更长且更唯一的{label}，"
-                    f"或指定 occurrence。候选片段: {previews}"
+                    f"为避免定位到错误位置已中止。推荐做法：保持原参数不变，"
+                    f"加上 occurrence=N 指定要改第几处（1-based，见下方候选片段序号）；"
+                    f"或提供更长且更唯一的{label}。{extra_hint}候选片段: {previews}"
                 )
             return content.find(sub)
 
@@ -409,10 +535,20 @@ class FileEditor:
         """Apply a replace edit operation."""
         old_text = edit.get("old", "")
         new_text = edit.get("new", "")
-        replace_all = edit.get("replace_all", False)
+        # replace_all 是本工具唯一的破坏性开关（无次数上限地替换全部匹配）。
+        # strict_json_schema=False 时模型会把它序列化成 "false"/"0"，朴素真值
+        # 判断会把这些字符串判真，把「改一处」变成「全改」，因此必须强转。
+        replace_all = coerce_bool(edit.get("replace_all"), default=False)
+        occurrence = self._parse_occurrence(edit, edit_index)
 
         match_mode = str(edit.get("match_mode") or "auto").strip().lower()
-        ignore_punct_whitespace = bool(edit.get("ignore_punct_whitespace", True))
+        ignore_punct_whitespace = self._parse_ignore_punct_whitespace(edit)
+
+        if replace_all and occurrence is not None:
+            raise ValueError(
+                f"Edit {edit_index}: replace_all 与 occurrence 不能同时使用。"
+                f"只改一处请去掉 replace_all，确实要全部替换请去掉 occurrence。"
+            )
 
         if not old_text:
             warnings.append(f"Edit {edit_index}: missing old for replace; skipped")
@@ -436,23 +572,30 @@ class FileEditor:
                 })
             else:
                 match_count = content.count(old_text)
-                if match_count > 1:
-                    # Mirror the fuzzy path: refuse an ambiguous single replace
-                    # instead of silently replacing the first occurrence.
-                    previews = build_span_previews(content, _exact_spans(content, old_text))
-                    raise ValueError(
-                        f"Edit {edit_index}: 原文片段匹配到多个位置（{match_count}处），"
-                        f"为避免误改已中止。请提供更长且更唯一的原文，或设置 replace_all=true。"
-                        f"候选片段: {previews}"
-                    )
-                content = content.replace(old_text, new_text, 1)
-                applied_edits.append({
+                # 与 insert_* 共用同一套守卫：occurrence 未指定且有多处匹配时
+                # 中止（并推荐 occurrence=N 这条非破坏性出路），指定了就精确
+                # 定位到第 N 处，而不是像以前那样把 occurrence 整个忽略、只留
+                # replace_all 这一条破坏性逃生通道。
+                start = self._select_exact_occurrence_start(
+                    content,
+                    old_text,
+                    occurrence,
+                    match_count,
+                    edit_index,
+                    label="原文片段",
+                    extra_hint="（确实要把这几处全部替换时，才使用 replace_all=true）",
+                )
+                content = content[:start] + new_text + content[start + len(old_text):]
+                detail = {
                     "op": "replace",
                     "match_mode": "exact",
                     "match_count": match_count,
                     "old_preview": old_text[:200] + ("..." if len(old_text) > 200 else ""),
                     "new_preview": new_text[:200] + ("..." if len(new_text) > 200 else ""),
-                })
+                }
+                if occurrence is not None:
+                    detail["occurrence"] = occurrence
+                applied_edits.append(detail)
         else:
             if match_mode == "exact":
                 raise ValueError(
@@ -486,6 +629,13 @@ class FileEditor:
                 )
                 if approx_match:
                     start, end, similarity, matched_text = approx_match
+                    # 近似匹配只会给出唯一的一处；调用方若点名了第 2 处及以后，
+                    # 说明它以为文中有多处，此时套用这唯一一处就是改错位置。
+                    if occurrence is not None and occurrence != 1:
+                        raise ValueError(
+                            f"Edit {edit_index}: 近似匹配只找到 1 处，"
+                            f"occurrence out of range (1..1)"
+                        )
                     # Single approximate match - use it
                     content = content[:start] + new_text + content[end:]
                     applied_edits.append({
@@ -538,22 +688,36 @@ class FileEditor:
                     detail["truncated"] = True
                 applied_edits.append(detail)
             else:
-                if len(spans) != 1:
-                    previews = build_span_previews(content, spans)
+                if len(spans) != 1 and occurrence is None:
+                    previews = _numbered_previews(content, spans)
                     raise ValueError(
-                        f"Edit {edit_index}: 原文片段匹配到多个位置（{len(spans)}处），为避免误改已中止。请提供更长且更唯一的原文/锚点。候选片段: {previews}"
+                        f"Edit {edit_index}: 原文片段匹配到多个位置（{len(spans)}处），"
+                        f"为避免误改已中止。推荐做法：保持原参数不变，加上 occurrence=N "
+                        f"指定要改第几处（1-based，见下方候选片段序号）；或提供更长且更唯一的原文/锚点。"
+                        f"（确实要把这几处全部替换时，才使用 replace_all=true）候选片段: {previews}"
                     )
 
-                start, end = spans[0]
+                idx = 0
+                if occurrence is not None:
+                    if occurrence > len(spans):
+                        raise ValueError(
+                            f"Edit {edit_index}: occurrence out of range (1..{len(spans)})"
+                        )
+                    idx = occurrence - 1
+
+                start, end = spans[idx]
                 content = content[:start] + new_text + content[end:]
-                applied_edits.append({
+                detail = {
                     "op": "replace",
                     "match_mode": "fuzzy",
                     "ignore_punct_whitespace": ignore_punct_whitespace,
                     "old_preview": old_text[:200] + ("..." if len(old_text) > 200 else ""),
                     "new_preview": new_text[:200] + ("..." if len(new_text) > 200 else ""),
                     "match_count": len(spans),
-                })
+                }
+                if occurrence is not None:
+                    detail["occurrence"] = occurrence
+                applied_edits.append(detail)
 
         return content
 
@@ -570,8 +734,8 @@ class FileEditor:
         text = edit.get("text", "")
 
         match_mode = str(edit.get("match_mode") or "auto").strip().lower()
-        ignore_punct_whitespace = bool(edit.get("ignore_punct_whitespace", True))
-        occurrence = edit.get("occurrence")
+        ignore_punct_whitespace = self._parse_ignore_punct_whitespace(edit)
+        occurrence = self._parse_occurrence(edit, edit_index)
 
         if not anchor:
             raise ValueError(f"Edit {edit_index}: 'anchor' field is required for insert_after operation")
@@ -618,6 +782,11 @@ class FileEditor:
                 )
                 if approx_match:
                     start, end, similarity, matched_text = approx_match
+                    if occurrence is not None and occurrence != 1:
+                        raise ValueError(
+                            f"Edit {edit_index}: 近似匹配只找到 1 处锚点，"
+                            f"occurrence out of range (1..1)"
+                        )
                     pos = end  # Insert after the matched text
                     content = content[:pos] + text + content[pos:]
                     applied_edits.append({
@@ -638,14 +807,19 @@ class FileEditor:
                     ignore_punct_whitespace=ignore_punct_whitespace,
                 )
                 if block_span:
-                    start, end = block_span
+                    start, end, block_score = block_span
                     pos = end
                     content = content[:pos] + text + content[pos:]
+                    # fuzzy_paragraph 是「最像的整段」而不是逐字命中，必须把
+                    # 置信度与兜底性质写进详情，否则模型只看到 match_count=1，
+                    # 会误以为这是确定无疑的唯一匹配而不再复核。
                     applied_edits.append({
                         "op": "insert_after",
                         "match_mode": "fuzzy_paragraph",
                         "ignore_punct_whitespace": ignore_punct_whitespace,
                         "match_count": 1,
+                        "confidence": round(block_score, 3),
+                        "fallback": True,
                         "anchor_preview": anchor[:200] + ("..." if len(anchor) > 200 else ""),
                         "text_len": len(text),
                         "text_preview": text[:200] + ("..." if len(text) > 200 else ""),
@@ -662,24 +836,21 @@ class FileEditor:
                 )
 
             if len(spans) != 1 and occurrence is None:
-                previews = build_span_previews(content, spans)
+                previews = _numbered_previews(content, spans)
                 raise ValueError(
-                    f"Edit {edit_index}: 锚点匹配到多个位置（{len(spans)}处），为避免插入到错误位置已中止。请提供更长且更唯一的锚点，或指定 occurrence。候选片段: {previews}"
+                    f"Edit {edit_index}: 锚点匹配到多个位置（{len(spans)}处），"
+                    f"为避免插入到错误位置已中止。推荐做法：保持原参数不变，加上 occurrence=N "
+                    f"指定第几处（1-based，见下方候选片段序号）；或提供更长且更唯一的锚点。"
+                    f"候选片段: {previews}"
                 )
 
             idx = 0
             if occurrence is not None:
-                try:
-                    occ = int(occurrence)
-                except Exception as e:
-                    raise ValueError(
-                        f"Edit {edit_index}: occurrence must be an integer when provided"
-                    ) from e
-                if occ <= 0 or occ > len(spans):
+                if occurrence > len(spans):
                     raise ValueError(
                         f"Edit {edit_index}: occurrence out of range (1..{len(spans)})"
                     )
-                idx = occ - 1
+                idx = occurrence - 1
 
             start, end = spans[idx]
             pos = end
@@ -709,8 +880,8 @@ class FileEditor:
         text = edit.get("text", "")
 
         match_mode = str(edit.get("match_mode") or "auto").strip().lower()
-        ignore_punct_whitespace = bool(edit.get("ignore_punct_whitespace", True))
-        occurrence = edit.get("occurrence")
+        ignore_punct_whitespace = self._parse_ignore_punct_whitespace(edit)
+        occurrence = self._parse_occurrence(edit, edit_index)
 
         if not anchor:
             raise ValueError(f"Edit {edit_index}: 'anchor' field is required for insert_before operation")
@@ -756,6 +927,11 @@ class FileEditor:
                 )
                 if approx_match:
                     start, end, similarity, matched_text = approx_match
+                    if occurrence is not None and occurrence != 1:
+                        raise ValueError(
+                            f"Edit {edit_index}: 近似匹配只找到 1 处锚点，"
+                            f"occurrence out of range (1..1)"
+                        )
                     pos = start  # Insert before the matched text
                     content = content[:pos] + text + content[pos:]
                     applied_edits.append({
@@ -776,14 +952,17 @@ class FileEditor:
                     ignore_punct_whitespace=ignore_punct_whitespace,
                 )
                 if block_span:
-                    start, end = block_span
+                    start, end, block_score = block_span
                     pos = start
                     content = content[:pos] + text + content[pos:]
+                    # 同 insert_after：兜底段落匹配必须自报置信度，不能伪装成确定匹配。
                     applied_edits.append({
                         "op": "insert_before",
                         "match_mode": "fuzzy_paragraph",
                         "ignore_punct_whitespace": ignore_punct_whitespace,
                         "match_count": 1,
+                        "confidence": round(block_score, 3),
+                        "fallback": True,
                         "anchor_preview": anchor[:200] + ("..." if len(anchor) > 200 else ""),
                         "text_len": len(text),
                         "text_preview": text[:200] + ("..." if len(text) > 200 else ""),
@@ -800,24 +979,21 @@ class FileEditor:
                 )
 
             if len(spans) != 1 and occurrence is None:
-                previews = build_span_previews(content, spans)
+                previews = _numbered_previews(content, spans)
                 raise ValueError(
-                    f"Edit {edit_index}: 锚点匹配到多个位置（{len(spans)}处），为避免插入到错误位置已中止。请提供更长且更唯一的锚点，或指定 occurrence。候选片段: {previews}"
+                    f"Edit {edit_index}: 锚点匹配到多个位置（{len(spans)}处），"
+                    f"为避免插入到错误位置已中止。推荐做法：保持原参数不变，加上 occurrence=N "
+                    f"指定第几处（1-based，见下方候选片段序号）；或提供更长且更唯一的锚点。"
+                    f"候选片段: {previews}"
                 )
 
             idx = 0
             if occurrence is not None:
-                try:
-                    occ = int(occurrence)
-                except Exception as e:
-                    raise ValueError(
-                        f"Edit {edit_index}: occurrence must be an integer when provided"
-                    ) from e
-                if occ <= 0 or occ > len(spans):
+                if occurrence > len(spans):
                     raise ValueError(
                         f"Edit {edit_index}: occurrence out of range (1..{len(spans)})"
                     )
-                idx = occ - 1
+                idx = occurrence - 1
 
             start, end = spans[idx]
             pos = start
@@ -846,7 +1022,8 @@ class FileEditor:
         old_text = edit.get("old", "")
 
         match_mode = str(edit.get("match_mode") or "auto").strip().lower()
-        ignore_punct_whitespace = bool(edit.get("ignore_punct_whitespace", True))
+        ignore_punct_whitespace = self._parse_ignore_punct_whitespace(edit)
+        occurrence = self._parse_occurrence(edit, edit_index)
 
         if not old_text:
             warnings.append(f"Edit {edit_index}: missing old for delete; skipped")
@@ -854,21 +1031,27 @@ class FileEditor:
 
         if old_text in content:
             match_count = content.count(old_text)
-            if match_count > 1:
-                # Mirror the fuzzy path: refuse an ambiguous delete instead of
-                # silently deleting the first occurrence.
-                previews = build_span_previews(content, _exact_spans(content, old_text))
-                raise ValueError(
-                    f"Edit {edit_index}: 删除片段匹配到多个位置（{match_count}处），"
-                    f"为避免误删已中止。请提供更长且更唯一的原文。候选片段: {previews}"
-                )
-            content = content.replace(old_text, "", 1)
-            applied_edits.append({
+            # 与 replace/insert_* 一致：未指定 occurrence 且多处匹配时中止，
+            # 指定了就精确删掉第 N 处（delete 没有 replace_all，以前这条路
+            # 完全是死胡同——模型除了重写锚点别无出路）。
+            start = self._select_exact_occurrence_start(
+                content,
+                old_text,
+                occurrence,
+                match_count,
+                edit_index,
+                label="删除片段",
+            )
+            content = content[:start] + content[start + len(old_text):]
+            detail = {
                 "op": "delete",
                 "match_mode": "exact",
                 "match_count": match_count,
                 "deleted_preview": old_text[:200] + ("..." if len(old_text) > 200 else ""),
-            })
+            }
+            if occurrence is not None:
+                detail["occurrence"] = occurrence
+            applied_edits.append(detail)
         else:
             if match_mode == "exact":
                 raise ValueError(
@@ -896,21 +1079,35 @@ class FileEditor:
                     f"Edit {edit_index}: 找不到要删除的原文片段。请从当前文件原文中复制更长且唯一的原文。候选片段: {suggestions}"
                 )
 
-            if len(spans) != 1:
-                previews = build_span_previews(content, spans)
+            if len(spans) != 1 and occurrence is None:
+                previews = _numbered_previews(content, spans)
                 raise ValueError(
-                    f"Edit {edit_index}: 删除片段匹配到多个位置（{len(spans)}处），为避免误删已中止。请提供更长且更唯一的原文/锚点。候选片段: {previews}"
+                    f"Edit {edit_index}: 删除片段匹配到多个位置（{len(spans)}处），"
+                    f"为避免误删已中止。推荐做法：保持原参数不变，加上 occurrence=N "
+                    f"指定要删第几处（1-based，见下方候选片段序号）；或提供更长且更唯一的原文/锚点。"
+                    f"候选片段: {previews}"
                 )
 
-            start, end = spans[0]
+            idx = 0
+            if occurrence is not None:
+                if occurrence > len(spans):
+                    raise ValueError(
+                        f"Edit {edit_index}: occurrence out of range (1..{len(spans)})"
+                    )
+                idx = occurrence - 1
+
+            start, end = spans[idx]
             content = content[:start] + content[end:]
-            applied_edits.append({
+            detail = {
                 "op": "delete",
                 "match_mode": "fuzzy",
                 "ignore_punct_whitespace": ignore_punct_whitespace,
                 "deleted_preview": old_text[:200] + ("..." if len(old_text) > 200 else ""),
                 "match_count": len(spans),
-            })
+            }
+            if occurrence is not None:
+                detail["occurrence"] = occurrence
+            applied_edits.append(detail)
 
         return content
 
@@ -920,54 +1117,43 @@ class FileEditor:
         content: str,
         applied_edits: list[dict[str, Any]],
     ) -> None:
-        """Create version history for AI edit using an independent session.
+        """Stage AI edit history in the caller's content transaction."""
+        op_summaries = []
+        for detail in applied_edits:
+            op = detail.get("op", "unknown")
+            if op == "replace":
+                op_summaries.append("替换")
+            elif op == "append":
+                op_summaries.append("追加")
+            elif op == "prepend":
+                op_summaries.append("前置")
+            elif op in ("insert_after", "insert_before"):
+                op_summaries.append("插入")
+            elif op == "delete":
+                op_summaries.append("删除")
 
-        Uses a separate database session to avoid SQLAlchemy state-machine
-        conflicts when ``parallel_execute`` runs multiple edit_file tasks
-        concurrently on the same shared session.
-        """
-        try:
-            # Build change summary from edit operations
-            op_summaries = []
-            for detail in applied_edits:
-                op = detail.get("op", "unknown")
-                if op == "replace":
-                    op_summaries.append("替换")
-                elif op == "append":
-                    op_summaries.append("追加")
-                elif op == "prepend":
-                    op_summaries.append("前置")
-                elif op in ("insert_after", "insert_before"):
-                    op_summaries.append("插入")
-                elif op == "delete":
-                    op_summaries.append("删除")
+        change_summary = (
+            f"AI 编辑: {', '.join(op_summaries[:3])}"
+            if op_summaries
+            else "AI 编辑"
+        )
+        if len(op_summaries) > 3:
+            change_summary += f" 等 {len(op_summaries)} 处修改"
 
-            change_summary = f"AI 编辑: {', '.join(op_summaries[:3])}" if op_summaries else "AI 编辑"
-            if len(op_summaries) > 3:
-                change_summary += f" 等 {len(op_summaries)} 处修改"
-
-            # Use an independent session to avoid concurrent-commit conflicts
-            # when multiple parallel edit_file tasks share the same ToolContext session.
-            from database import create_session
-
-            version_session = create_session()
-            try:
-                version_service = FileVersionService()
-                version_service.create_version(
-                    session=version_session,
-                    file_id=file_id,
-                    new_content=content,
-                    change_type=CHANGE_TYPE_AI_EDIT,
-                    change_source=CHANGE_SOURCE_AI,
-                    change_summary=change_summary,
-                )
-            finally:
-                version_session.close()
-        except Exception as e:
-            # Don't fail the edit if version creation fails
-            logger.warning(f"Failed to create version for edit_file: {e}")
+        FileVersionService().create_version(
+            session=self.session,
+            file_id=file_id,
+            new_content=content,
+            change_type=CHANGE_TYPE_AI_EDIT,
+            change_source=CHANGE_SOURCE_AI,
+            change_summary=change_summary,
+            commit=False,
+        )
 
 
 __all__ = [
     "FileEditor",
+    "FileWriteBusyError",
+    "acquire_file_write_lock",
+    "file_write_lock",
 ]

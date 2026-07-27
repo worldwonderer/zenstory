@@ -53,6 +53,7 @@ jobs:
     if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         browser: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.suite == 'full')) && fromJson('["chromium", "firefox"]') || fromJson('["chromium"]') }}
         shard: ${{ (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.suite == 'full' || github.event.inputs.suite == 'default'))) && fromJson('["1/2", "2/2"]') || fromJson('["1/1"]') }}
@@ -93,7 +94,14 @@ jobs:
     - name: Install Playwright browsers
       run: |
         cd apps/web
-        pnpm exec playwright install --with-deps ${{ matrix.browser }}
+        # The shared authentication setup project uses Chromium even when the
+        # requested test project is Firefox, so both executables are required
+        # for Firefox matrix jobs.
+        if [ "${{ matrix.browser }}" = "chromium" ]; then
+          pnpm exec playwright install --with-deps chromium
+        else
+          pnpm exec playwright install --with-deps chromium ${{ matrix.browser }}
+        fi
 
     - name: Run E2E tests
       run: |
@@ -111,10 +119,19 @@ jobs:
         elif [ "${{ github.event.inputs.suite }}" == "full" ]; then
           E2E_ENABLE_VERSION_HISTORY_E2E=true \
           E2E_ENABLE_SKILL_CREATE_E2E=true \
+          E2E_ENABLE_CHAT_E2E=true \
+          E2E_ENABLE_CONCURRENT_E2E=true \
+          E2E_ENABLE_DEEP_LINK_E2E=true \
+          E2E_ENABLE_ERROR_RECOVERY_E2E=true \
+          E2E_ENABLE_EXPORT_E2E=true \
+          E2E_ENABLE_FILES_E2E=true \
+          E2E_ENABLE_FILE_SEARCH_E2E=true \
+          E2E_ENABLE_MOCKED_CHAT=true \
           E2E_ENABLE_VOICE_INPUT_E2E=true \
           E2E_ENABLE_VISUAL_REGRESSION_E2E=true \
           E2E_ENABLE_PERFORMANCE_E2E=true \
           E2E_ENABLE_LARGE_DOCUMENT_E2E=true \
+          E2E_MAX_FAILURES=0 \
           pnpm exec playwright test --project=${{ matrix.browser }} --shard=${{ matrix.shard }}
         elif [ "${{ github.event.inputs.suite }}" == "release" ]; then
           if [ "${{ matrix.shard }}" != "1/1" ]; then
@@ -152,7 +169,9 @@ jobs:
       uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: playwright-report-${{ matrix.browser }}-${{ matrix.shard }}
+        # matrix.shard contains "/" (for example "1/2"), which is not valid in
+        # artifact names. job-index is stable and filesystem-safe.
+        name: playwright-report-${{ matrix.browser }}-${{ strategy.job-index }}
         path: apps/web/playwright-report/
         retention-days: 7
 

@@ -19,6 +19,7 @@
 import type {
   AgentRequest,
   AgentContextItem,
+  FileEditOutcome,
   SSEEvent,
   SSEEventType,
   SSEHandoffData,
@@ -164,6 +165,7 @@ export function streamAgentRequest(
       originalContent?: string,
       fileType?: string,
       title?: string,
+      outcome?: FileEditOutcome,
     ) => void;
     onSkillMatched?: (skillId: string, skillName: string, matchedTrigger: string) => void;
     onSkillsMatched?: (skills: Array<{ id: string; name: string; trigger: string; confidence: number }>) => void;
@@ -192,7 +194,12 @@ export function streamAgentRequest(
     onWorkflowStopped?: (data: SSEWorkflowStoppedData) => void;
     onWorkflowComplete?: (data: SSEWorkflowCompleteData) => void;
     onSessionStarted?: (sessionId: string) => void;
-    onParallelStart?: (executionId: string, taskCount: number, descriptions: string[]) => void;
+    onParallelStart?: (
+      executionId: string,
+      taskCount: number,
+      descriptions: string[],
+      droppedCount?: number,
+    ) => void;
     onParallelTaskStart?: (executionId: string, taskId: string, taskType: string, description: string) => void;
     onParallelTaskEnd?: (executionId: string, taskId: string, status: string, resultPreview?: string, error?: string) => void;
     onParallelEnd?: (executionId: string, total: number, completed: number, failed: number, durationMs: number) => void;
@@ -471,6 +478,10 @@ export function streamAgentRequest(
                 original_content?: string;
                 file_type?: string;
                 title?: string;
+                failed_count?: number;
+                partial_success?: boolean;
+                all_failed?: boolean;
+                warnings?: string[];
               };
               callbacks.onFileEditEnd?.(
                 data.file_id,
@@ -480,6 +491,12 @@ export function streamAgentRequest(
                 data.original_content,
                 data.file_type,
                 data.title,
+                {
+                  failedCount: data.failed_count ?? 0,
+                  partialSuccess: Boolean(data.partial_success),
+                  allFailed: Boolean(data.all_failed),
+                  warnings: Array.isArray(data.warnings) ? data.warnings : [],
+                },
               );
               break;
             }
@@ -587,8 +604,14 @@ export function streamAgentRequest(
                 execution_id: string;
                 task_count: number;
                 task_descriptions: string[];
+                dropped_count?: number;
               };
-              callbacks.onParallelStart?.(data.execution_id, data.task_count, data.task_descriptions);
+              callbacks.onParallelStart?.(
+                data.execution_id,
+                data.task_count,
+                data.task_descriptions,
+                data.dropped_count ?? 0,
+              );
               break;
             }
             case "parallel_task_start": {

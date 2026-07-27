@@ -7,7 +7,6 @@
 import pytest
 from httpx import AsyncClient
 
-from core.error_codes import ErrorCode
 from models import User
 
 
@@ -472,8 +471,12 @@ async def test_rollback_to_version(client: AsyncClient, db_session):
 
 
 @pytest.mark.integration
-async def test_rollback_returns_402_when_file_version_quota_exceeded(client: AsyncClient, db_session):
-    """Rollback should enforce file-version quota and return 402."""
+async def test_rollback_is_not_blocked_by_file_version_quota(client: AsyncClient, db_session):
+    """回滚不受版本配额约束。
+
+    历史行为是「额度满 -> 回滚 402」，那正是缺陷本身：回滚是用户从 AI 改坏的
+    正文里自救的唯一手段，被额度挡住就等于 AI 的破坏不可撤销。
+    """
     from datetime import datetime, timedelta
 
     from models.subscription import SubscriptionPlan, UserSubscription
@@ -544,9 +547,17 @@ async def test_rollback_returns_402_when_file_version_quota_exceeded(client: Asy
         headers=headers,
     )
 
-    assert rollback_response.status_code == 402
+    assert rollback_response.status_code == 200, rollback_response.text
     payload = rollback_response.json()
-    assert payload["error_code"] == ErrorCode.QUOTA_FILE_VERSIONS_EXCEEDED
+    assert payload["success"] is True
+    assert payload["restored_version"] == 1
+    assert payload["snapshot_created"] is False
+    assert payload["version_quota_exceeded"] is True
+    assert payload["new_version_number"] is None
+
+    # 正文必须真的被恢复（旧实现里 402 会让 file.content 的赋值一起丢掉）
+    file_resp = await client.get(f"/api/v1/files/{file_id}", headers=headers)
+    assert file_resp.json()["content"] == "Version 1 content"
 
 
 @pytest.mark.integration

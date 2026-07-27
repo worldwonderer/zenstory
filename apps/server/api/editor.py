@@ -12,14 +12,24 @@ from sqlmodel import Session
 from core.error_codes import ErrorCode
 from core.error_handler import APIException
 from database import get_session
+from middleware.rate_limit import require_user_rate_limit
 from models import User
 from services.features.natural_polish_service import natural_polish_service
 from services.quota_service import quota_service
+from utils.logger import get_logger, log_with_context
 from utils.permission import verify_project_access
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/editor", tags=["editor"])
 
 MAX_SELECTED_TEXT_LENGTH = 6000
+
+# /natural-polish 会触发真实的远端 LLM 调用，成本按账号结算，
+# 因此和 /agent/* 一样必须按登录用户限流（按 IP 限流换个代理就绕过了）。
+# 单次润色比一轮完整对话便宜，配额取 /agent/suggest 的两倍。
+NATURAL_POLISH_RATE_LIMIT_MAX_REQUESTS = 60
+NATURAL_POLISH_RATE_LIMIT_WINDOW_SECONDS = 3600
 
 
 class NaturalPolishRequest(BaseModel):
@@ -37,12 +47,44 @@ class NaturalPolishResponse(BaseModel):
     model: str | None = None
 
 
+def _refund_ai_conversation(session: Session, user_id: str, *, reason: str) -> bool:
+    """润色失败时退还已预扣的 AI 对话额度，失败只记日志不影响主流程。
+
+    失败的事务可能让共享 session 处于 PendingRollback 状态，先复位再补偿，
+    否则退款会静默失效、用户白扣一次额度。
+    """
+    import contextlib
+
+    try:
+        with contextlib.suppress(Exception):
+            session.rollback()
+        return quota_service.release_ai_conversation(session, user_id)
+    except Exception as refund_error:
+        log_with_context(
+            logger,
+            30,  # WARNING
+            "Failed to refund AI conversation quota after natural polish failure",
+            user_id=user_id,
+            reason=reason,
+            error=str(refund_error),
+            error_type=type(refund_error).__name__,
+        )
+        return False
+
+
 @router.post("/natural-polish", response_model=NaturalPolishResponse)
 async def natural_polish(
     body: NaturalPolishRequest,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user),
     accept_language: str | None = Header(None, alias="Accept-Language"),
+    _rate_limit: int = Depends(
+        require_user_rate_limit(
+            "editor_natural_polish",
+            NATURAL_POLISH_RATE_LIMIT_MAX_REQUESTS,
+            NATURAL_POLISH_RATE_LIMIT_WINDOW_SECONDS,
+        )
+    ),
 ) -> NaturalPolishResponse:
     """Single-round natural polish (non-streaming)."""
     await verify_project_access(body.project_id, session, current_user)
@@ -69,7 +111,9 @@ async def natural_polish(
             detail=f"AI conversation quota exceeded ({used}/{limit}). Please upgrade your plan.",
         )
 
-    # Consume quota before generation (failure does not refund; aligns with stream endpoint).
+    # 先扣额度再生成，避免并发绕过；生成失败时在下面补偿退还
+    # （与 /agent/stream 的失败退款一致——原注释说"不退款，与 stream 对齐"，
+    #  但 stream 早已改成失败退款，注释与实现已经脱节）。
     consumed = quota_service.consume_ai_conversation(session, current_user.id)
     if not consumed:
         raise APIException(
@@ -86,8 +130,10 @@ async def natural_polish(
             language=lang,
         )
     except APIException:
+        _refund_ai_conversation(session, current_user.id, reason="api_exception")
         raise
     except Exception as exc:
+        _refund_ai_conversation(session, current_user.id, reason=type(exc).__name__)
         raise APIException(
             error_code=ErrorCode.INTERNAL_SERVER_ERROR,
             status_code=500,

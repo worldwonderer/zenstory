@@ -483,11 +483,13 @@ describe('Editor', () => {
     fireEvent.click(screen.getByTestId('finish-review-button'))
 
     await waitFor(() => {
+      // base_updated_at：审阅写回同样是整篇覆盖写，必须带乐观并发令牌
+      // （mockFile 没有 updated_at，因此这里是 undefined，字段本身必须存在）
       expect(api.fileApi.update).toHaveBeenCalledWith('file-1', {
         content: 'Reviewed AI content',
         change_type: 'ai_edit',
-        change_source: 'ai',
         change_summary: 'AI edit (reviewed)',
+        base_updated_at: undefined,
       })
       expect(exitDiffReview).toHaveBeenCalled()
       expect(triggerFileTreeRefresh).toHaveBeenCalled()

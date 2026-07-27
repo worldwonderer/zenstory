@@ -23,6 +23,8 @@ const isNearBottom = (el: HTMLElement, thresholdPx = 32) => {
 
 const SIMPLE_EDITOR_MIN_HEIGHT_PX = 200;
 
+export type SaveOutcome = "saved" | "conflict" | "failed";
+
 const restoreContainerScrollTop = (container: HTMLElement | null, prevScrollTop: number | null) => {
   if (!container || prevScrollTop === null) return;
 
@@ -44,9 +46,16 @@ interface SimpleEditorProps {
   content: string;
   onTitleChange: (title: string) => void;
   onContentChange: (content: string) => void;
-  onSave: (versionIntent?: FileUpdateVersionIntent) => Promise<void>;
+  onSave: (versionIntent?: FileUpdateVersionIntent) => Promise<SaveOutcome>;
   readOnly?: boolean;
   isStreaming?: boolean;
+  /**
+   * AI 正在编辑这份文件（file_edit_start ~ file_edit_end 之间）。
+   * 期间必须挂起防抖自动保存：编辑前拍下的整篇快照若在 AI 写完之后才发出，
+   * 会把 AI 的改动整篇覆盖掉（服务端的乐观并发校验会挡下来并返回 409，
+   * 但让用户吃一次冲突提示不如根本不发这次请求）。
+   */
+  isAiEditing?: boolean;
   // Diff review props
   diffReviewState?: DiffReviewState | null;
   onEnterDiffReview?: (fileId: string, originalContent: string, newContent: string) => void;
@@ -70,6 +79,7 @@ export const SimpleEditor = ({
   onSave,
   readOnly = false,
   isStreaming = false,
+  isAiEditing = false,
   // Diff review props
   diffReviewState,
   onEnterDiffReview,
@@ -504,6 +514,9 @@ export const SimpleEditor = ({
     }
     if (!isDirty) return;
     if (isNaturalPolishRunning) return;
+    // AI 正在改这份文件：先不排自动保存。标记清除后本 effect 会重新跑，
+    // 届时再按新的基线保存，用户的本地改动不会丢。
+    if (isAiEditing) return;
 
     saveTimeoutRef.current = setTimeout(async () => {
       await handleSaveRef.current();
@@ -515,11 +528,11 @@ export const SimpleEditor = ({
         saveTimeoutRef.current = null;
       }
     };
-  }, [isDirty, title, content, isNaturalPolishRunning]);
+  }, [isDirty, title, content, isNaturalPolishRunning, isAiEditing]);
 
   // Handle save
   const handleSave = async () => {
-    if (isSaving || !isDirty || isNaturalPolishRunning) return;
+    if (isSaving || !isDirty || isNaturalPolishRunning || isAiEditing) return;
 
     setIsSaving(true);
     const previousContent = lastSavedContentRef.current;
@@ -533,7 +546,13 @@ export const SimpleEditor = ({
           ? { change_type: "edit", change_source: "user", word_count: currentWords }
           : { skip_version: true, word_count: currentWords };
       }
-      await onSave(versionIntent);
+      const outcome = await onSave(versionIntent);
+      if (outcome !== "saved") {
+        // Conflict/failure paths deliberately keep the old baseline, dirty
+        // indicator and pending writing stats. The parent may have opened a
+        // diff review, but no save has completed yet.
+        return;
+      }
 
       if (contentChanged) {
         lastSavedContentRef.current = content;

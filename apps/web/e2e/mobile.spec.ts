@@ -3,6 +3,9 @@ import { LoginPage } from './fixtures/page-objects';
 import { TEST_USERS, config } from './config';
 import { TIMEOUTS } from './constants';
 
+const MICROPHONE_PERMISSION_BROWSER_MESSAGE =
+  'Playwright can grant microphone permission only in Chromium.'
+
 /**
  * Mobile Responsive Tests
  * Tests mobile-specific functionality and responsive layouts across different viewport sizes.
@@ -29,12 +32,20 @@ test.describe('Mobile Responsive Tests', () => {
     if (!loginResponse.ok()) throw new Error(`Login failed: ${loginResponse.status()}`);
     const tokens = await loginResponse.json();
 
-    const createResponse = await page.request.post(`${config.apiBaseUrl}/api/v1/projects`, {
-      headers: { Authorization: `Bearer ${tokens.access_token}` },
-      data: { name: `Mobile Test ${Date.now()}` },
-    });
-    if (!createResponse.ok()) throw new Error(`Failed to create project: ${createResponse.status()}`);
-    const project = await createResponse.json();
+    const headers = { Authorization: `Bearer ${tokens.access_token}` };
+    const projectsResponse = await page.request.get(`${config.apiBaseUrl}/api/v1/projects`, { headers });
+    if (!projectsResponse.ok()) throw new Error(`Failed to list projects: ${projectsResponse.status()}`);
+    const projects = await projectsResponse.json() as Array<{ id?: string }>;
+
+    let project = projects.find((candidate) => candidate?.id);
+    if (!project) {
+      const createResponse = await page.request.post(`${config.apiBaseUrl}/api/v1/projects`, {
+        headers,
+        data: { name: `Mobile Test ${Date.now()}` },
+      });
+      if (!createResponse.ok()) throw new Error(`Failed to create project: ${createResponse.status()}`);
+      project = await createResponse.json();
+    }
     if (!project?.id) throw new Error('Project creation returned no ID');
 
     // Inject API tokens into browser so React auth context matches
@@ -74,7 +85,7 @@ test.describe('Mobile Responsive Tests', () => {
   };
 
   test.describe('320px viewport (small mobile)', () => {
-    test.use({ viewport: { width: 320, height: 568 } });
+    test.use({ viewport: { width: 320, height: 568 }, hasTouch: true });
 
     test('responsive layout at 320px width', async ({ page }) => {
       await loginPage.navigateToLogin();
@@ -388,7 +399,7 @@ test.describe('Mobile Responsive Tests', () => {
   });
 
   test.describe('375px viewport (standard mobile)', () => {
-    test.use({ viewport: { width: 375, height: 667 } });
+    test.use({ viewport: { width: 375, height: 667 }, hasTouch: true });
 
     test('responsive layout at 375px width', async ({ page }) => {
       await loginPage.navigateToLogin();
@@ -618,7 +629,7 @@ test.describe('Mobile Responsive Tests', () => {
   });
 
   test.describe('Touch interactions', () => {
-    test.use({ viewport: { width: 375, height: 667 } });
+    test.use({ viewport: { width: 375, height: 667 }, hasTouch: true });
 
     test('tap targets are appropriately sized for touch', async ({ page }) => {
       await loginPage.navigateToLogin();
@@ -1422,7 +1433,8 @@ test.describe('Mobile Responsive Tests', () => {
       }
     });
 
-    test('mobile long press on voice button triggers recording', async ({ page, context }) => {
+    test('mobile long press on voice button triggers recording', async ({ page, context, browserName }) => {
+      test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE);
       // Grant microphone permission
       await context.grantPermissions(['microphone']);
 
@@ -1533,7 +1545,8 @@ test.describe('Mobile Responsive Tests', () => {
       }
     });
 
-    test('mobile voice input shows duration during recording', async ({ page, context }) => {
+    test('mobile voice input shows duration during recording', async ({ page, context, browserName }) => {
+      test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE);
       // Grant microphone permission
       await context.grantPermissions(['microphone']);
 
@@ -1613,7 +1626,8 @@ test.describe('Mobile Responsive Tests', () => {
       }
     });
 
-    test('mobile voice button touch cancel handles correctly', async ({ page, context }) => {
+    test('mobile voice button touch cancel handles correctly', async ({ page, context, browserName }) => {
+      test.skip(browserName !== 'chromium', MICROPHONE_PERMISSION_BROWSER_MESSAGE);
       // Grant microphone permission
       await context.grantPermissions(['microphone']);
 

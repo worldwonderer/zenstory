@@ -28,6 +28,64 @@ DEFAULT_PROMPT_TOKEN_LEDGER_CEILING = 24000
 # block can never starve history to zero (which would erase cross-turn memory).
 MIN_HISTORY_TOKEN_FLOOR = 512
 
+# 裁剪长文本时追加的提示后缀，让模型知道这里被截断过而不是原文如此。
+TRUNCATION_SUFFIX = "…（内容过长已截断）"
+
+# CRITICAL 档预算不足时，向下位档借用后必须给它们留下的地板比例
+# （相对各自 min(名义份额, 真实需求)）。
+LOWER_TIER_FLOOR_RATIO = 0.5
+
+# CRITICAL 档内每个条目的保底 token 数：预算紧张时宁可每条都截断，
+# 也不让用户显式附加/引用的条目整条消失。
+MIN_CRITICAL_ITEM_TOKENS = 200
+
+
+def truncate_text_to_tokens(
+    text: str,
+    max_tokens: int,
+    suffix: str = TRUNCATION_SUFFIX,
+) -> str:
+    """把一段纯文本裁剪到 ``max_tokens`` 以内（含后缀开销）。
+
+    与 :meth:`TokenBudget.truncate_item` 的区别：那个方法处理的是带标题的
+    ContextItem，这里处理的是拼进 header 的裸文本（项目简介 / 备注等）。
+    两者共用同一套「语言感知 chars/token 比例 + 收缩校验」策略，
+    避免中文按 4 chars/token 估算时留下约 2 倍超额的字符。
+
+    Args:
+        text: 待裁剪文本。
+        max_tokens: 允许占用的最大 token 数。
+        suffix: 截断提示后缀。
+
+    Returns:
+        裁剪后的文本；本来就在预算内时原样返回。
+    """
+    if not text:
+        return text
+
+    max_tokens = max(0, int(max_tokens or 0))
+    if max_tokens <= 0:
+        return ""
+
+    if estimate_text_tokens(text) <= max_tokens:
+        return text
+
+    cpt = _chars_per_token_for(text)
+    body_budget = max_tokens - estimate_text_tokens(suffix)
+    if body_budget <= 0:
+        # 连后缀都放不下：按字符比例硬裁，不再追加后缀
+        return text[: max(1, int(max_tokens * cpt))]
+
+    body = text[: max(1, int(body_budget * cpt))]
+
+    # 估算器与启发式比例可能不一致，收缩到真正落在预算内为止
+    guard = 0
+    while body and estimate_text_tokens(body) > body_budget and guard < 40:
+        body = body[: max(1, int(len(body) * 0.85))]
+        guard += 1
+
+    return body.rstrip() + suffix
+
 
 def compute_history_token_budget(
     *,
@@ -244,45 +302,39 @@ class TokenBudget:
             for p in order
         }
 
+        budgets = self._allocate_tier_budgets(demand)
+
         # Process each priority level in order (highest first).
-        #
-        # CRITICAL is the "must include" tier: it holds the focus file, user
-        # text quotes, and user-attached files/materials. Previously it was
-        # hard-capped at its nominal share (30%), so explicitly-attached content
-        # was truncated or dropped even when the rest of the budget sat empty.
-        # Let CRITICAL draw on whatever lower tiers won't use — reserving each
-        # lower tier only up to the smaller of its share and its real demand, so
-        # they stay protected and the total can never exceed max_tokens.
-        #
-        # Lower tiers keep their fixed per-share caps here (unchanged behaviour);
-        # generalising the pooling to them requires also budgeting formatting
-        # overhead and is intentionally left as a follow-up.
         for priority in order:
             group_items = priority_groups.get(priority, [])
-
-            if priority == ContextPriority.CRITICAL:
-                reserved_for_lower = sum(
-                    min(self.get_budget(p), demand[p])
-                    for p in order
-                    if p != ContextPriority.CRITICAL
-                )
-                budget = max(
-                    self.get_budget(priority),
-                    self.max_tokens - reserved_for_lower,
-                )
-            else:
-                budget = self.get_budget(priority)
+            budget = budgets[priority]
             used = 0
 
-            for item in group_items:
+            for index, item in enumerate(group_items):
                 tokens = self.estimate_item_tokens(item)
 
-                if used + tokens <= budget:
+                # CRITICAL 档内的逐项保底：这一档装的全是用户显式意图
+                # （焦点文件 / 手动附加的文件 / 手动选中的引用文本）。
+                # 没有保底时靠前的条目会把整档预算吃光，后面的条目**整条消失**，
+                # 用户看到的现象是「我明明把第 79 章附上去了，AI 完全没参考」。
+                # 因此给组内尚未处理的条目各留 MIN_CRITICAL_ITEM_TOKENS，
+                # 宁可让每条都被截断，也不让任何一条被静默丢弃。
+                # 预算本身就很小时（不足两条保底）不启用，保持原有行为。
+                effective_budget = budget
+                if priority == ContextPriority.CRITICAL:
+                    pending = len(group_items) - index - 1
+                    reserve = min(
+                        pending * MIN_CRITICAL_ITEM_TOKENS,
+                        max(0, budget - used - MIN_CRITICAL_ITEM_TOKENS),
+                    )
+                    effective_budget = budget - reserve
+
+                if used + tokens <= effective_budget:
                     selected.append(item)
                     used += tokens
                 else:
                     # Try to fit a truncated version
-                    remaining = budget - used
+                    remaining = effective_budget - used
                     if remaining > 50:  # Only if meaningful space
                         truncated = self.truncate_item(item, remaining)
                         if truncated:
@@ -295,6 +347,60 @@ class TokenBudget:
             self.used[priority] = used
 
         return selected, dict(self.used)
+
+    def _allocate_tier_budgets(
+        self,
+        demand: dict[ContextPriority, int],
+    ) -> dict[ContextPriority, int]:
+        """按各档真实需求分配预算，保证总和不超过 max_tokens。
+
+        CRITICAL is the "must include" tier: it holds the focus file, user
+        text quotes, and user-attached files/materials. Previously it was
+        hard-capped at its nominal share (30%), so explicitly-attached content
+        was truncated or dropped even when the rest of the budget sat empty.
+
+        分配规则：
+        1. CRITICAL 先拿「名义份额」与「下位档按 min(份额, 真实需求) 预留后剩下的
+           额度」二者的较大值（原有行为）。
+        2. 若 CRITICAL 的真实需求仍然装不下，允许它进一步向下位档借用，
+           但必须给下位档留下 LOWER_TIER_FLOOR_RATIO 比例的地板——
+           用户显式附加的内容应当压过自动收集的 40 条设定，
+           但不能把角色/世界观约束整个挤没。
+        3. 下位档按名义份额比例分摊 CRITICAL 实际占用后剩余的额度，
+           且各自不超过自己的名义份额。因此总和恒 <= max_tokens。
+        """
+        critical = ContextPriority.CRITICAL
+        lower = [p for p in ContextPriority.priority_order() if p != critical]
+
+        reserved_for_lower = sum(min(self.get_budget(p), demand.get(p, 0)) for p in lower)
+        critical_budget = max(
+            self.get_budget(critical),
+            self.max_tokens - reserved_for_lower,
+        )
+
+        critical_demand = demand.get(critical, 0)
+        if critical_demand > critical_budget:
+            soft_floor = sum(
+                int(min(self.get_budget(p), demand.get(p, 0)) * LOWER_TIER_FLOOR_RATIO)
+                for p in lower
+            )
+            critical_budget = max(
+                critical_budget,
+                min(critical_demand, self.max_tokens - soft_floor),
+            )
+
+        # 用「实际会被占用的额度」而不是「授权额度」来算剩余，
+        # 否则 CRITICAL 需求很小时下位档会被凭空砍掉。
+        critical_alloc = min(critical_budget, critical_demand)
+        leftover = max(0, self.max_tokens - critical_alloc)
+        lower_share_sum = sum(self.allocation.get(p, 0.1) for p in lower) or 1.0
+
+        budgets: dict[ContextPriority, int] = {critical: critical_budget}
+        for p in lower:
+            share = self.allocation.get(p, 0.1) / lower_share_sum
+            budgets[p] = min(self.get_budget(p), int(leftover * share))
+
+        return budgets
 
     def truncate_item(
         self,
