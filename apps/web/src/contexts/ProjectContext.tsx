@@ -325,7 +325,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     currentProjectIdRef.current = projectId;
 
     setCurrentProjectIdState(projectId);
-    setSelectedItem(null);
 
     // 真正切换项目时必须释放上一个项目遗留的流式写入态。
     // 旧流已被 useAgentStream 的项目切换 effect 直接 abort，不会再有
@@ -335,6 +334,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // 注意必须先比对 previousProjectId：loadProjects 在初始化时会用当前 id
     // 再调一次本函数，无差别重置会把正在进行的流式写入误伤掉。
     if (previousProjectId !== projectId) {
+      setSelectedItem(null);
       streamingFileIdRef.current = null;
       setStreamingFileId(null);
       resetStreamingContent();
