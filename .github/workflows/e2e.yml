@@ -93,7 +93,14 @@ jobs:
     - name: Install Playwright browsers
       run: |
         cd apps/web
-        pnpm exec playwright install --with-deps ${{ matrix.browser }}
+        # The shared authentication setup project uses Chromium even when the
+        # requested test project is Firefox, so both executables are required
+        # for Firefox matrix jobs.
+        if [ "${{ matrix.browser }}" = "chromium" ]; then
+          pnpm exec playwright install --with-deps chromium
+        else
+          pnpm exec playwright install --with-deps chromium ${{ matrix.browser }}
+        fi
 
     - name: Run E2E tests
       run: |
@@ -152,7 +159,9 @@ jobs:
       uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: playwright-report-${{ matrix.browser }}-${{ matrix.shard }}
+        # matrix.shard contains "/" (for example "1/2"), which is not valid in
+        # artifact names. job-index is stable and filesystem-safe.
+        name: playwright-report-${{ matrix.browser }}-${{ strategy.job-index }}
         path: apps/web/playwright-report/
         retention-days: 7
 
