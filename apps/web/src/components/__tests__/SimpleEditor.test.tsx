@@ -269,11 +269,13 @@ describe('SimpleEditor', () => {
       screen.getByPlaceholderText('editor:placeholder.contentPlaceholder'),
       { target: { value: 'Local content that has not been persisted' } },
     );
-    fireEvent.click(screen.getByRole('button', { name: 'editor:save' }));
+    const saveButton = screen.getByRole('button', { name: 'editor:save' });
+    expect(screen.getByText('editor:unsaved')).toBeInTheDocument();
+    fireEvent.click(saveButton);
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(saveButton).toBeEnabled());
     expect(screen.getByText('editor:unsaved')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'editor:save' })).toBeEnabled();
     expect(writingStatsApi.recordStats).not.toHaveBeenCalled();
   });
 
