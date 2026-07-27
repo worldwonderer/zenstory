@@ -338,6 +338,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       streamingFileIdRef.current = null;
       setStreamingFileId(null);
       resetStreamingContent();
+      // The old stream is aborted on project change, so its file_edit_end
+      // callback will never arrive. Do not let that stale ID suspend saves in
+      // another project (or when the user later returns).
+      setAiEditingFileId(null);
     }
 
     const storageKey = getProjectStorageKey(user?.id);
@@ -466,6 +470,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       setProjects([]);
       setCurrentProjectIdState(null);
       setSelectedItem(null);
+      setAiEditingFileId(null);
       setLoading(false);
     }
   }, [user, loadProjects]);

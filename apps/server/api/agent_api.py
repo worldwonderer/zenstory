@@ -23,7 +23,7 @@ from config.datetime_utils import utcnow
 from core.error_codes import ErrorCode
 from core.error_handler import APIException
 from database import create_session
-from middleware.rate_limit import require_rate_limit
+from middleware.rate_limit import require_agent_rate_limit
 from models import File, Project
 from services.agent_auth_service import verify_project_access
 from utils.logger import get_logger, log_with_context
@@ -130,7 +130,7 @@ class ProjectUpdate(BaseModel):
 
 @router.get("/projects", response_model=list[ProjectResponse])
 async def list_projects(
-    _rate_limit: int = Depends(require_rate_limit("agent_read", 2000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_read", 2000, 3600)),
     context: AgentAuthContext = Depends(require_scope("read")),
 ):
     """
@@ -170,7 +170,7 @@ async def list_projects(
 @router.get("/projects/{project_id}", response_model=ProjectResponse)
 async def get_project(
     project_id: str,
-    _rate_limit: int = Depends(require_rate_limit("agent_read", 2000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_read", 2000, 3600)),
     context: AgentAuthContext = Depends(require_project_access("read")),
 ):
     """
@@ -194,7 +194,7 @@ async def get_project(
 @router.post("/projects", response_model=ProjectResponse)
 async def create_project(
     project_data: ProjectCreate,
-    _rate_limit: int = Depends(require_rate_limit("agent_write", 1000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_write", 1000, 3600)),
     context: AgentAuthContext = Depends(require_scope("write")),
 ):
     """
@@ -230,7 +230,7 @@ async def create_project(
 async def update_project(
     project_id: str,
     project_data: ProjectUpdate,
-    _rate_limit: int = Depends(require_rate_limit("agent_write", 1000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_write", 1000, 3600)),
     context: AgentAuthContext = Depends(require_project_access("write")),
 ):
     """
@@ -272,7 +272,7 @@ async def update_project(
 @router.delete("/projects/{project_id}")
 async def delete_project(
     project_id: str,
-    _rate_limit: int = Depends(require_rate_limit("agent_write", 1000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_write", 1000, 3600)),
     context: AgentAuthContext = Depends(require_project_access("write")),
 ):
     """
@@ -317,7 +317,7 @@ async def list_files(
     fields: str | None = Query(None, description="Comma-separated fields to return (e.g. 'id,title,content')"),
     limit: int = Query(50, ge=1, le=200, description="Max results per page"),
     offset: int = Query(0, ge=0, description="Results offset"),
-    _rate_limit: int = Depends(require_rate_limit("agent_read", 2000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_read", 2000, 3600)),
     context: AgentAuthContext = Depends(require_project_access("read")),
 ):
     """
@@ -417,7 +417,7 @@ async def create_file(
     project_id: str,
     file_data: FileCreate,
     background_tasks: BackgroundTasks,
-    _rate_limit: int = Depends(require_rate_limit("agent_write", 1000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_write", 1000, 3600)),
     context: AgentAuthContext = Depends(require_project_access("write")),
 ):
     """
@@ -500,7 +500,7 @@ async def create_file(
 async def get_file(
     file_id: str,
     fields: str | None = Query(None, description="Comma-separated fields to return (e.g. 'id,title,content')"),
-    _rate_limit: int = Depends(require_rate_limit("agent_read", 2000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_read", 2000, 3600)),
     context: AgentAuthContext = Depends(require_scope("read")),
 ):
     """
@@ -561,7 +561,7 @@ async def update_file(
     file_id: str,
     file_data: FileUpdate,
     background_tasks: BackgroundTasks,
-    _rate_limit: int = Depends(require_rate_limit("agent_write", 1000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_write", 1000, 3600)),
     context: AgentAuthContext = Depends(require_scope("write")),
 ):
     """
@@ -655,7 +655,7 @@ async def update_file(
 async def delete_file(
     file_id: str,
     background_tasks: BackgroundTasks,
-    _rate_limit: int = Depends(require_rate_limit("agent_write", 1000, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_write", 1000, 3600)),
     context: AgentAuthContext = Depends(require_scope("write")),
 ):
     """
@@ -739,7 +739,7 @@ async def get_writing_context(
     file_id: str | None = Query(None, description="Focus file ID"),
     query: str | None = Query(None, description="Query for context retrieval"),
     max_items: int = Query(10, ge=1, le=30, description="Max items to return"),
-    _rate_limit: int = Depends(require_rate_limit("agent_context", 500, 3600)),
+    _rate_limit: int = Depends(require_agent_rate_limit("agent_context", 500, 3600)),
     context: AgentAuthContext = Depends(require_project_access("read")),
 ):
     """

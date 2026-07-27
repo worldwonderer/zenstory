@@ -8,10 +8,10 @@ Round3 G7（version-quota）服务层回归测试。
 from datetime import datetime, timedelta
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from core.error_handler import APIException
-from models import File, Project, User
+from models import File, FileVersion, Project, User
 from models.file_version import (
     CHANGE_SOURCE_AI,
     CHANGE_SOURCE_SYSTEM,
@@ -176,8 +176,10 @@ def test_ai_versions_do_not_consume_user_version_quota(db_session: Session):
 
 
 @pytest.mark.integration
-def test_rollback_is_never_blocked_by_version_quota(db_session: Session):
-    """回滚是用户从 AI 改坏的正文里自救的唯一手段，不受额度约束。"""
+def test_rollback_restores_content_without_bypassing_version_quota(
+    db_session: Session,
+):
+    """At full quota rollback succeeds but cannot create unlimited base rows."""
     user = _make_user(db_session, "r3q_rollback")
     _bind_plan(db_session, user, max_versions=1)
     file = _make_file(db_session, user, content="原始正文：好好的一章。")
@@ -205,11 +207,16 @@ def test_rollback_is_never_blocked_by_version_quota(db_session: Session):
     # 额度此刻已满（用户版本 1/1），回滚仍然必须成功
     assert service.check_user_version_quota(db_session, file.id, user.id)[0] is False
 
-    restored_file, new_version = service.rollback_to_version(
+    restored_file, new_version, version_quota_exceeded = service.rollback_to_version(
         db_session, file.id, 1, user_id=user.id
     )
     assert restored_file.content == "原始正文：好好的一章。"
-    assert new_version.version_number == 5
+    assert new_version is None
+    assert version_quota_exceeded is True
 
     db_session.expire_all()
     assert db_session.get(File, file.id).content == "原始正文：好好的一章。"
+    versions = db_session.exec(
+        select(FileVersion).where(FileVersion.file_id == file.id)
+    ).all()
+    assert len(versions) == 4

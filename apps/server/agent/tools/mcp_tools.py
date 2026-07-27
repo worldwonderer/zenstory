@@ -158,15 +158,6 @@ _pending_empty_file_var: contextvars.ContextVar[dict[str, str] | None] = context
 SESSION_ISOLATION_KEY = "isolated_session"
 
 
-# 守卫连续拒绝多少次之后，认为标记已经"陈旧"并自愈清除。
-# 背景：writing_graph 的纠偏配额用尽后不再清除标记（rank 29），而工具层对该标记
-# 是硬拦截，"不带 content 的 create_file + <file> 流式写入"又是本项目文档规定的
-# 标准建档协议——一个永不消失的守卫会让本次请求后续**所有**建档失败。模型连着
-# 两次被拒仍在创建别的文件，说明它已经不打算再补写那个空文件了，此时保留标记
-# 只有坏处。
-_MAX_PENDING_EMPTY_FILE_REJECTIONS = 2
-
-
 class _PendingEmptyFileState:
     """待写入空文件标记的可变持有者，随请求上下文 dict 在所有子任务间共享。
 
@@ -258,13 +249,12 @@ class _PendingEmptyFileState:
                 return False, next(iter(self._reservations.values()))
 
             if self._entries:
+                # Never discard unfinished artifacts merely because the model
+                # repeated an invalid action. The workflow boundary owns recovery
+                # (finish or roll back); forgetting the marker silently leaves an
+                # empty file in the project.
                 self._reject_count += 1
-                if self._reject_count <= _MAX_PENDING_EMPTY_FILE_REJECTIONS:
-                    return False, next(reversed(self._entries.values()))
-                # 守卫已陈旧：放弃这些永远等不到正文的标记，放行本次创建，
-                # 否则本请求后续所有建档都会被硬拒。
-                self._entries.clear()
-                self._reject_count = 0
+                return False, next(reversed(self._entries.values()))
 
             self._reservations[ticket] = title
             return True, None

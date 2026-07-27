@@ -223,10 +223,22 @@ async def stream_request(
     # - an existing queue owned by current user, or
     # - a brand-new queue id (KeyError -> allowed and created later).
     if body.session_id:
-        from agent.core.steering import get_steering_queue_for_user_async
+        from agent.core.steering import (
+            get_steering_queue_for_user_async,
+            has_active_runs_async,
+        )
 
         try:
             await get_steering_queue_for_user_async(body.session_id, current_user.id)
+            if await has_active_runs_async(body.session_id):
+                raise APIException(
+                    error_code=ErrorCode.RESOURCE_CONFLICT,
+                    status_code=409,
+                    detail=(
+                        "This chat session already has an active generation. "
+                        "Stop it or wait for it to finish before sending again."
+                    ),
+                )
         except KeyError:
             # New runtime session id - allow creation in service layer.
             pass
@@ -460,23 +472,6 @@ async def suggest_next_action(
     # Keep authorization behavior consistent with chat/stream endpoints
     await verify_project_access(body.project_id, session, current_user)
 
-    # 配额预检：本端点会真正调用远端 LLM（上下文组装 + acomplete），与 /stream、
-    # /natural-polish 同属付费调用，必须计入 AI 对话额度；否则额度已耗尽的账号
-    # 仍能无限次触发厂商计费。
-    if _should_offload_session_work(session):
-        allowed, used, limit = await asyncio.to_thread(
-            _check_ai_conversation_quota_sync,
-            user_id,
-        )
-    else:
-        allowed, used, limit = quota_service.check_ai_conversation_quota(session, user_id)
-    if not allowed:
-        raise APIException(
-            error_code=ErrorCode.QUOTA_AI_CONVERSATIONS_EXCEEDED,
-            status_code=402,
-            detail=f"AI conversation quota exceeded ({used}/{limit}). Please upgrade your plan.",
-        )
-
     log_with_context(
         logger,
         20,  # INFO
@@ -498,6 +493,27 @@ async def suggest_next_action(
     consumed = False
 
     if llm_backed:
+        # Only provider-backed suggestions need quota. A service without an LLM
+        # returns local fixed text and must remain available at exhausted quota.
+        if _should_offload_session_work(session):
+            allowed, used, limit = await asyncio.to_thread(
+                _check_ai_conversation_quota_sync,
+                user_id,
+            )
+        else:
+            allowed, used, limit = quota_service.check_ai_conversation_quota(
+                session, user_id
+            )
+        if not allowed:
+            raise APIException(
+                error_code=ErrorCode.QUOTA_AI_CONVERSATIONS_EXCEEDED,
+                status_code=402,
+                detail=(
+                    f"AI conversation quota exceeded ({used}/{limit}). "
+                    "Please upgrade your plan."
+                ),
+            )
+
         # 调用前预扣，避免并发请求越过上面的预检把额度打穿。
         if _should_offload_session_work(session):
             consumed = await asyncio.to_thread(

@@ -4,6 +4,7 @@ Writing workflow for zenstory.
 Provides streaming multi-agent orchestration with router, planner, writer, and quality reviewer.
 """
 
+import contextlib
 import os
 from collections.abc import AsyncIterator
 from typing import Any
@@ -75,6 +76,77 @@ def _probe_pending_file_body(file_id: str) -> str:
     if is_deleted:
         return _PENDING_BODY_GONE
     return _PENDING_BODY_EMPTY if not str(content or "").strip() else _PENDING_BODY_WRITTEN
+
+
+def _rollback_unfinished_empty_files(
+    entries: list[dict[str, str]],
+) -> set[str]:
+    """Soft-delete verified empty artifacts when correction cannot continue."""
+    if not entries:
+        return set()
+
+    session = None
+    try:
+        from sqlalchemy import update
+        from sqlmodel import select
+
+        from config.datetime_utils import utcnow
+        from models import File
+
+        session = ToolContext.get_session()
+        project_id = ToolContext.get_project_id()
+        ids = [entry["file_id"] for entry in entries if entry.get("file_id")]
+        if not ids:
+            return set()
+
+        rolled_back: set[str] = set()
+        with session.begin_nested():
+            for file_id in ids:
+                # Read scalar columns rather than an ORM identity-map object,
+                # then include the observed content in the UPDATE predicate.
+                # If a user/other run writes content between verification and
+                # rollback, rowcount becomes zero and their write is preserved.
+                row = session.exec(
+                    select(File.content, File.is_deleted, File.project_id).where(
+                        File.id == file_id
+                    )
+                ).first()
+                if row is None:
+                    continue
+                content, is_deleted, row_project_id = row
+                if (
+                    row_project_id != project_id
+                    or is_deleted
+                    or str(content or "").strip()
+                ):
+                    continue
+
+                result = session.exec(
+                    update(File)
+                    .where(
+                        File.id == file_id,
+                        File.project_id == project_id,
+                        File.is_deleted.is_(False),
+                        File.content == content,
+                    )
+                    .values(is_deleted=True, deleted_at=utcnow())
+                )
+                if result.rowcount == 1:
+                    rolled_back.add(file_id)
+        if rolled_back:
+            session.commit()
+        return rolled_back
+    except Exception as exc:
+        if session is not None:
+            with contextlib.suppress(Exception):
+                session.rollback()
+        logger.warning(
+            "Failed to roll back unfinished empty files",
+            exc_info=True,
+            extra={"error": str(exc)},
+        )
+        return set()
+
 
 # 追加轮提示：openai-agents 不支持向进行中的 run 注入消息，运行期间到达的
 # steering 只能在 run 结束后补一轮才能在本次请求内生效；引导内容本身已作为
@@ -846,12 +918,9 @@ async def run_writing_workflow_streaming(
             # <file>…</file> 流式写入"，模型改用 edit_file(op=append) 写完正文时
             # 标记依然留着，此时按"正文仍为空"重跑会让正文被追加两遍。
             #
-            # 纠偏配额（attempts / iteration）**不能**参与本分支的进入条件：一旦
-            # 配额用尽就整段跳过，pending-empty-file 标记便再也没人清除，而工具层
-            # 对它是硬拦截（mcp_tools 的 create_file、parallel_executor 的建档子
-            # 任务都会直接报错），本次请求后续十几轮协作将再也建不出任何文件。
-            # 所以：进入条件只看"标记是否还在"，进来之后无条件清除标记，配额只决定
-            # 要不要再安排一轮补写。
+            # 纠偏配额（attempts / iteration）**不能**参与本分支的进入条件。
+            # 配额耗尽时必须显式回滚空产物或报告未完成；绝不能只清除标记后继续，
+            # 否则文件树会永久留下一个没有任何失败证据的空文件。
             if (
                 not clarification_stopped
                 and not invalid_handoff_stopped
@@ -870,13 +939,9 @@ async def run_writing_workflow_streaming(
                     entry_state = _probe_pending_file_body(entry_file_id)
                     probed_states.append(entry_state)
                     if entry_state in (_PENDING_BODY_WRITTEN, _PENDING_BODY_GONE):
+                        ToolContext.clear_pending_empty_file(entry_file_id)
                         continue
                     unfinished.append({"file_id": entry_file_id, "title": entry_title})
-
-                # 无条件清除**全部**：下面无论走哪条路，这些守卫都不该被留给后续
-                # 工具调用。（即便安排补写轮，显式的补写指令也已经替代了它的拦截
-                # 作用；且 edit_file 写完正文并不会清除它，留着会导致重复纠偏。）
-                ToolContext.clear_pending_empty_file()
 
                 # 兼容原有单文件日志/提示语：取第一份未完成的作为主对象。
                 pending_title = unfinished[0]["title"] if unfinished else (
@@ -892,8 +957,7 @@ async def run_writing_workflow_streaming(
                     and file_correction_attempts < MAX_FILE_CORRECTION_ATTEMPTS
                 )
                 if not unfinished:
-                    # 正文已经写入（或文件已被删除）：没有可补的内容，只需把没人
-                    # 清理的标记清掉，避免它继续阻塞 create_file / parallel_execute。
+                    # 正文已经写入（或文件已被删除）：对应标记已逐一清除。
                     log_with_context(
                         logger,
                         20,  # INFO
@@ -904,19 +968,45 @@ async def run_writing_workflow_streaming(
                         pending_count=len(pendings),
                     )
                 elif not can_schedule_correction:
-                    # 配额用尽或已是最后一轮：不再补写，但标记必须已经清掉，
-                    # 否则后续 agent 的 create_file 会被工具层一直硬拒。
+                    # 配额用尽或已是最后一轮：回滚能确认的空产物。无法确认/
+                    # 回滚的条目继续保留守卫，并向客户端报告明确的未完成状态。
+                    rolled_back = _rollback_unfinished_empty_files(unfinished)
+                    for entry in unfinished:
+                        if entry["file_id"] in rolled_back:
+                            ToolContext.clear_pending_empty_file(entry["file_id"])
+                    unresolved = [
+                        entry
+                        for entry in unfinished
+                        if entry["file_id"] not in rolled_back
+                    ]
                     log_with_context(
                         logger,
                         30,  # WARNING
-                        "Empty file left unfinished; correction quota exhausted, guard cleared",
+                        "Empty-file correction exhausted",
                         file_id=pending_file_id,
                         title=pending_title,
                         attempts=file_correction_attempts,
                         iteration=iteration,
                         body_state=body_state,
                         unfinished_count=len(unfinished),
+                        rolled_back_count=len(rolled_back),
+                        unresolved_count=len(unresolved),
                     )
+                    if unresolved:
+                        yield StreamEvent(
+                            type=StreamEventType.ITERATION_EXHAUSTED,
+                            data={
+                                "layer": "empty_file_correction",
+                                "iterations_used": file_correction_attempts,
+                                "max_iterations": MAX_FILE_CORRECTION_ATTEMPTS,
+                                "reason": (
+                                    "文件正文补写未完成，且无法安全回滚空文件。"
+                                    "请继续对话完成这些文件。"
+                                ),
+                                "unfinished_files": unresolved,
+                                "last_agent": current_agent_type,
+                            },
+                        )
                 else:
                     file_correction_attempts += 1
                     log_with_context(

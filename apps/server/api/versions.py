@@ -122,7 +122,9 @@ class RollbackResponse(BaseModel):
     message: str
     file_id: str
     restored_version: int
-    new_version_number: int
+    new_version_number: int | None
+    snapshot_created: bool
+    version_quota_exceeded: bool
 
 
 # ==================== API Endpoints ====================
@@ -402,7 +404,8 @@ def rollback_to_version(
     """
     Rollback a file to a previous version.
 
-    Creates a new version with the old content (preserves history).
+    Restores content unconditionally and records a new history snapshot when
+    the user's version quota permits it.
     """
     # Check file exists and user has access
     verify_file_ownership(session, file_id, current_user)
@@ -410,7 +413,7 @@ def rollback_to_version(
     service = get_file_version_service()
 
     try:
-        updated_file, new_version = service.rollback_to_version(
+        updated_file, new_version, version_quota_exceeded = service.rollback_to_version(
             session,
             file_id,
             version_number,
@@ -422,7 +425,11 @@ def rollback_to_version(
             message=f"Successfully rolled back to version {version_number}",
             file_id=file_id,
             restored_version=version_number,
-            new_version_number=new_version.version_number,
+            new_version_number=(
+                new_version.version_number if new_version is not None else None
+            ),
+            snapshot_created=new_version is not None,
+            version_quota_exceeded=version_quota_exceeded,
         )
     except ValueError as e:
         raise APIException(error_code=ErrorCode.VALIDATION_ERROR, status_code=400, detail=str(e)) from e

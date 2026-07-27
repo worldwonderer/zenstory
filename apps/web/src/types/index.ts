@@ -698,7 +698,9 @@ export interface RollbackResponse {
   message: string;
   file_id: string;
   restored_version: number;
-  new_version_number: number;
+  new_version_number: number | null;
+  snapshot_created: boolean;
+  version_quota_exceeded: boolean;
 }
 
 // ==================== Text Quote ====================

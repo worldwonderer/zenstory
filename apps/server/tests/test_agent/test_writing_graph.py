@@ -979,15 +979,21 @@ class TestWritingGraphFileCorrectionDbVerification:
         assert len(calls) == 1, "正文已落库时不得触发纠偏重跑"
 
     @pytest.mark.asyncio
-    async def test_still_empty_body_triggers_rerun(self, db_session):
-        """正文确实为空时，纠偏兜底必须保留。"""
+    async def test_still_empty_body_exhausts_corrections_then_rolls_back(
+        self, db_session
+    ):
+        """正文一直为空时，尝试补写到上限后必须回滚空产物。"""
+        from agent.graph.writing_graph import MAX_FILE_CORRECTION_ATTEMPTS
+
         file = self._make_file(db_session, content="   \n  ")
 
         calls = await self._run(db_session, file.id, file.title)
 
-        assert len(calls) == 2
+        assert len(calls) == 1 + MAX_FILE_CORRECTION_ATTEMPTS
         assert "正文仍为空" in calls[1]["user_message"]
         assert file.id in calls[1]["user_message"]
+        db_session.expire_all()
+        assert db_session.get(type(file), file.id).is_deleted is True
 
     @pytest.mark.asyncio
     async def test_deleted_file_does_not_trigger_rerun(self, db_session):

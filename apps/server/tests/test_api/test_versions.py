@@ -551,6 +551,9 @@ async def test_rollback_is_not_blocked_by_file_version_quota(client: AsyncClient
     payload = rollback_response.json()
     assert payload["success"] is True
     assert payload["restored_version"] == 1
+    assert payload["snapshot_created"] is False
+    assert payload["version_quota_exceeded"] is True
+    assert payload["new_version_number"] is None
 
     # 正文必须真的被恢复（旧实现里 402 会让 file.content 的赋值一起丢掉）
     file_resp = await client.get(f"/api/v1/files/{file_id}", headers=headers)

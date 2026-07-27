@@ -1,10 +1,19 @@
 """Tests for rate limit helper IP extraction behavior."""
 
+from types import SimpleNamespace
+
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 import middleware.rate_limit as rate_limit_module
-from middleware.rate_limit import _rate_limit_store, check_rate_limit, get_client_ip
+from middleware.rate_limit import (
+    _rate_limit_store,
+    check_rate_limit,
+    get_client_ip,
+    require_agent_rate_limit,
+    require_user_rate_limit,
+)
 
 
 def _build_request(
@@ -130,6 +139,46 @@ def test_check_rate_limit_can_scope_without_client_ip():
     assert remaining1 == 0
     assert allowed2 is False
     assert remaining2 == 0
+
+
+@pytest.mark.unit
+def test_user_rate_limit_ignores_untrusted_agent_api_key_header():
+    """Bearer users cannot rotate an unauthenticated header to escape one bucket."""
+    enforce = require_user_rate_limit("agent_stream", 1, 60)
+    user = SimpleNamespace(id="same-user")
+
+    remaining = enforce(
+        _build_request(headers={"X-Agent-API-Key": "aaaaaaaa-first"}),
+        current_user=user,
+    )
+
+    assert remaining == 0
+    with pytest.raises(HTTPException) as exc_info:
+        enforce(
+            _build_request(headers={"X-Agent-API-Key": "bbbbbbbb-second"}),
+            current_user=user,
+        )
+    assert exc_info.value.status_code == 429
+
+
+@pytest.mark.unit
+def test_agent_rate_limit_uses_validated_key_identity_not_raw_header():
+    """Rotating raw header text cannot change a validated Agent key's bucket."""
+    enforce = require_agent_rate_limit("agent_read", 1, 60)
+    context = (None, "same-user", SimpleNamespace(id="validated-key-id"))
+
+    remaining = enforce(
+        _build_request(headers={"X-Agent-API-Key": "attacker-value-one"}),
+        context=context,
+    )
+
+    assert remaining == 0
+    with pytest.raises(HTTPException) as exc_info:
+        enforce(
+            _build_request(headers={"X-Agent-API-Key": "attacker-value-two"}),
+            context=context,
+        )
+    assert exc_info.value.status_code == 429
 
 
 class _FakeRedisClient:

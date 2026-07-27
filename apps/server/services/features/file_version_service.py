@@ -49,6 +49,7 @@ class FileVersionService:
         user_id: str | None = None,
         skip_quota: bool = False,
         quota_source: str | None = None,
+        commit: bool = True,
     ) -> FileVersion:
         """
         Create a new version of a file.
@@ -67,6 +68,9 @@ class FileVersionService:
             quota_source: 配额判定用的来源。缺省时沿用 change_source；
                 当 change_source 可能来自**客户端请求体**时，调用方必须显式传入
                 服务端自己判定的来源（见下方说明），否则配额可被绕过。
+            commit: Whether this service owns the transaction. Content-writing
+                callers pass False, flush the version in their existing locked
+                transaction, and commit content plus snapshot exactly once.
 
         Returns:
             Created FileVersion object
@@ -186,6 +190,10 @@ class FileVersionService:
             )
 
             session.add(version)
+            if not commit:
+                session.flush()
+                return version
+
             try:
                 session.commit()
                 session.refresh(version)
@@ -407,7 +415,7 @@ class FileVersionService:
         file_id: str,
         version_number: int,
         user_id: str,
-    ) -> tuple[File, FileVersion]:
+    ) -> tuple[File, FileVersion | None, bool]:
         """
         Rollback a file to a previous version.
 
@@ -420,7 +428,9 @@ class FileVersionService:
             user_id: User ID for quota checking
 
         Returns:
-            Tuple of (updated File, new FileVersion)
+            Tuple of (updated File, optional new FileVersion,
+            version_quota_exceeded). When user version quota is full the content
+            is still restored, but no snapshot is added.
         """
         # 回滚同样是「读旧内容 -> 整篇覆盖 File.content」的用户侧写入，必须和
         # agent 的 edit_file 走同一条串行化通道；否则 agent 的写入会插在读版本
@@ -451,24 +461,42 @@ class FileVersionService:
             file.updated_at = utcnow()
             session.add(file)
 
-            # Create a new version for the rollback
-            #
-            # 回滚不受版本配额约束：它是用户从「AI 把正文改坏了」里自救的唯一手段，
-            # 一旦被 402 挡住，file.content 的赋值也不会提交，AI 的破坏就变成不可撤销。
-            # 恢复类操作永远优先于额度限制，因此显式 skip_quota。
-            new_version = self.create_version(
-                session=session,
-                file_id=file_id,
-                new_content=content,
-                change_type=CHANGE_TYPE_RESTORE,
-                change_source=CHANGE_SOURCE_USER,
-                change_summary=f"Restored to version {version_number}",
-                force_base=True,  # Force base version for clarity
-                user_id=user_id,
-                skip_quota=True,
+            # Restoration itself is never blocked. The audit snapshot still
+            # belongs to the user's quota, though; otherwise repeated rollbacks
+            # can create unlimited full base rows.
+            has_quota, _used, _limit = self.check_user_version_quota(
+                session, file_id, user_id
             )
+            version_quota_exceeded = not has_quota
+            new_version: FileVersion | None = None
+            if has_quota:
+                try:
+                    with session.begin_nested():
+                        new_version = self.create_version(
+                            session=session,
+                            file_id=file_id,
+                            new_content=content,
+                            change_type=CHANGE_TYPE_RESTORE,
+                            change_source=CHANGE_SOURCE_USER,
+                            change_summary=f"Restored to version {version_number}",
+                            force_base=True,
+                            user_id=user_id,
+                            # The check above ran under the file write lock.
+                            skip_quota=True,
+                            commit=False,
+                        )
+                except Exception:
+                    logger.warning(
+                        "Failed to create rollback snapshot; restored content will persist",
+                        exc_info=True,
+                        extra={"file_id": file_id, "version_number": version_number},
+                    )
+                    new_version = None
 
-        return file, new_version
+            session.commit()
+            session.refresh(file)
+
+        return file, new_version, version_quota_exceeded
 
     def get_version_count(
         self,

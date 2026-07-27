@@ -277,7 +277,13 @@ class FileUpdate(BaseModel):
     order: int | None = None
     metadata: dict | None = None
     change_type: Literal["create", "edit", "ai_edit", "restore", "auto_save"] | None = None
-    change_source: Literal["user", "ai", "system"] | None = None
+    change_source: Literal["user", "ai", "system"] | None = Field(
+        default=None,
+        description=(
+            "Deprecated client hint retained for compatibility. Authenticated "
+            "PUT versions are attributed to the user; use change_type for intent."
+        ),
+    )
     change_summary: str | None = None
     skip_version: bool = False
     base_updated_at: datetime | None = Field(
@@ -790,7 +796,9 @@ def update_file(
     # 请求参数校验必须先于任何写入：change_type/change_source 非法时若等到正文
     # commit 之后才抛 400，就又是一次「内容其实已保存却提示失败」的误导性失败。
     change_type = _resolve_change_type(file_data.change_type)
-    requested_change_source = _resolve_change_source(file_data.change_source)
+    # Validate the deprecated hint for backward compatibility, but never use
+    # client input as the trusted actor.
+    _resolve_change_source(file_data.change_source)
     # 这是带 Bearer token 的用户侧 PUT；客户端可以描述 AI 审阅意图，但不能决定
     # 持久化版本的可信来源。否则伪造 ai/system 会同时绕过配额闸门和 user 行计数。
     # AI 审阅语义由 change_type=ai_edit 保留，版本来源与 POST /versions 一样钉死 user。
@@ -919,45 +927,25 @@ def update_file(
                     operation="update_file_version_quota",
                 )
 
-        session.commit()
-        session.refresh(file)
-
         if create_version_needed:
             try:
-                file_version_service.create_version(
-                    session=session,
-                    file_id=file.id,
-                    new_content=file.content,
-                    change_type=change_type,
-                    change_source=change_source,
-                    change_summary=change_summary,
-                    user_id=current_user.id,
-                    # commit 之后在服务层的 per-file 行锁内再校验一次，闭合两个
-                    # 并发 PUT 都在首轮预检看到同一个余额的 TOCTOU 窗口。
-                    quota_source=CHANGE_SOURCE_USER,
-                )
-            except APIException as exc:
-                if exc.error_code == ErrorCode.QUOTA_FILE_VERSIONS_EXCEEDED:
-                    # 正文已经成功提交；竞态中的后到请求只跳过快照，并沿用 200 +
-                    # version_quota_exceeded 契约，不能把已保存正文报告成失败。
-                    session.rollback()
-                    version_quota_exceeded = True
-                    log_with_context(
-                        logger,
-                        logging.INFO,
-                        "File version quota reached after concurrent content save",
+                # A savepoint preserves the product contract that snapshot
+                # failures do not block content saves, while the outer locked
+                # transaction still commits content and a successful snapshot
+                # atomically.
+                with session.begin_nested():
+                    file_version_service.create_version(
+                        session=session,
+                        file_id=file.id,
+                        new_content=file.content,
+                        change_type=change_type,
+                        change_source=change_source,
+                        change_summary=change_summary,
                         user_id=current_user.id,
-                        file_id=file.id,
-                        operation="update_file_version_quota_race",
-                    )
-                else:
-                    log_with_context(
-                        logger,
-                        logging.WARNING,
-                        "Failed to create file version after content update",
-                        error=str(exc),
-                        file_id=file.id,
-                        operation="update_file_create_version",
+                        # Quota was checked above while holding the same file lock.
+                        skip_quota=True,
+                        quota_source=CHANGE_SOURCE_USER,
+                        commit=False,
                     )
             except Exception as e:
                 log_with_context(
@@ -968,6 +956,9 @@ def update_file(
                     file_id=file.id,
                     operation="update_file_create_version",
                 )
+
+        session.commit()
+        session.refresh(file)
 
     if content_changed and file.file_type in {"draft", "script"}:
         try:
@@ -1004,10 +995,7 @@ def update_file(
                     },
                 )
 
-            if (
-                change_type == CHANGE_TYPE_AI_EDIT
-                and requested_change_source == CHANGE_SOURCE_AI
-            ):
+            if change_type == CHANGE_TYPE_AI_EDIT:
                 activation_event_service.record_once(
                     session,
                     user_id=current_user.id,

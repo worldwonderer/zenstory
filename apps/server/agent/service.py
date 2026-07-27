@@ -469,12 +469,16 @@ class AgentService:
         else:
             session_id = requested_session_id or str(uuid.uuid4())
 
-        # Initialize steering queue for this session. 同一 chat session 的并发
-        # run 共享同一组队列键，队列生命周期以 run 为单位计数：cleanup 只在
-        # 最后一个持有 run 退出时才真正删除队列。
+        # Claim the session's single generation slot atomically. Chat history
+        # rows have no run/turn sequence and message_count is updated per run,
+        # so concurrent writers to one session would interleave history and
+        # lose increments. Different chat sessions still run concurrently.
         steering_run_id = uuid.uuid4().hex
         steering_queue = await create_steering_queue_async(
-            session_id, user_id, run_id=steering_run_id
+            session_id,
+            user_id,
+            run_id=steering_run_id,
+            exclusive_run=True,
         )
 
         # Initialize tracking variables before try block for exception safety

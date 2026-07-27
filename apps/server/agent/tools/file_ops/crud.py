@@ -469,20 +469,29 @@ class FileCRUD:
         )
 
         self.session.add(file)
-        self.session.commit()
-        self.session.refresh(file)
 
         # Snapshot the initial content so the pre-first-edit original is
         # recoverable via version history, mirroring update_file/edit_file.
         # Empty create + streaming is unaffected: it gets version 1 from the
         # subsequent update_file that writes the streamed body.
         if content:
-            self._create_version(
-                file.id,
-                content,
-                change_type=CHANGE_TYPE_CREATE,
-                change_summary="创建文件",
-            )
+            try:
+                with self.session.begin_nested():
+                    self._create_version(
+                        file.id,
+                        content,
+                        change_type=CHANGE_TYPE_CREATE,
+                        change_summary="创建文件",
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to create initial file version; file will persist",
+                    exc_info=True,
+                    extra={"file_id": file.id, "error": str(exc)},
+                )
+
+        self.session.commit()
+        self.session.refresh(file)
 
         # Fire-and-forget vector index upsert (do not block)
         self._schedule_index_upsert(file, metadata)
@@ -646,20 +655,21 @@ class FileCRUD:
         # Check if content changed
         content_changed = content is not None and content != old_content
 
-        # Keep the version snapshot ordered with the content commit (see
-        # FileEditor._edit_file_impl for the full rationale): on PostgreSQL
-        # snapshot BEFORE commit while the row lock is still held; on SQLite
-        # snapshot after commit, inside the per-file lock, because the
-        # snapshot's independent session must commit while this session holds
-        # no write transaction.
-        if content_changed and is_postgres:
-            self._create_version(id, content)
+        # Stage content and snapshot in one locked transaction. The savepoint
+        # lets content persist even if version generation itself fails.
+        if content_changed:
+            try:
+                with self.session.begin_nested():
+                    self._create_version(id, content)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to create file version; content will persist",
+                    exc_info=True,
+                    extra={"file_id": id, "error": str(exc)},
+                )
 
         self.session.commit()
         self.session.refresh(file)
-
-        if content_changed and not is_postgres:
-            self._create_version(id, content)
 
         # Fire-and-forget vector index upsert (do not block)
         self._schedule_index_upsert(file)
@@ -1143,31 +1153,16 @@ class FileCRUD:
         change_type: str = CHANGE_TYPE_AI_EDIT,
         change_summary: str = "AI 更新文件内容",
     ) -> None:
-        """Create version history using an independent session.
-
-        Uses a separate database session to avoid SQLAlchemy state-machine
-        conflicts when ``parallel_execute`` runs multiple tasks concurrently
-        on the same shared session.
-        """
-        try:
-            from database import create_session
-
-            version_session = create_session()
-            try:
-                version_service = FileVersionService()
-                version_service.create_version(
-                    session=version_session,
-                    file_id=file_id,
-                    new_content=content,
-                    change_type=change_type,
-                    change_source=CHANGE_SOURCE_AI,
-                    change_summary=change_summary,
-                )
-            finally:
-                version_session.close()
-        except Exception as e:
-            # Don't fail the operation if version creation fails
-            logger.warning(f"Failed to create version: {e}")
+        """Stage version history in the caller's content transaction."""
+        FileVersionService().create_version(
+            session=self.session,
+            file_id=file_id,
+            new_content=content,
+            change_type=change_type,
+            change_source=CHANGE_SOURCE_AI,
+            change_summary=change_summary,
+            commit=False,
+        )
 
     def _schedule_index_upsert(
         self,

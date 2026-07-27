@@ -259,6 +259,23 @@ describe('round3 #12 切换项目必须释放流式写入态', () => {
     expect(result.current.streamingContent).toBe('')
   })
 
+  it('切换项目会清掉旧流遗留的 aiEditingFileId', async () => {
+    const { result } = await renderSettled()
+    const startingProjectId = result.current.currentProjectId
+    const otherProjectId = startingProjectId === 'project-1' ? 'project-2' : 'project-1'
+
+    act(() => {
+      result.current.setAiEditingFileId('file-being-edited')
+    })
+    expect(result.current.aiEditingFileId).toBe('file-being-edited')
+
+    act(() => {
+      result.current.setCurrentProjectId(otherProjectId)
+    })
+
+    expect(result.current.aiEditingFileId).toBeNull()
+  })
+
   it('重复设置同一个项目 id 不会误伤正在进行的流式写入', async () => {
     const { result } = await renderSettled()
     const startingProjectId = result.current.currentProjectId!

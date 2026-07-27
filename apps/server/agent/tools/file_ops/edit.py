@@ -379,25 +379,23 @@ class FileEditor:
                 })
                 warnings.append(f"Edit {i}: failed and skipped ({e})")
 
-        # Update file only when content changed. The version snapshot must
-        # stay ordered with the content commit for the same file:
-        # - PostgreSQL: write the snapshot BEFORE committing, because commit
-        #   releases the row lock and a competing edit could then commit and
-        #   snapshot first, leaving the newest version number pointing at
-        #   older content. Snapshot failure never blocks the edit itself.
-        # - SQLite: the in-process per-file lock (see edit_file) covers both
-        #   the commit and the snapshot, but the snapshot's independent
-        #   session must commit while this session holds no write
-        #   transaction, so it runs AFTER the content commit.
+        # Stage content and snapshot in the same transaction while the per-file
+        # lock is held. A savepoint keeps snapshot failures non-blocking without
+        # allowing content and history to describe different writes.
         if content != old_content:
             file.content = content
             file.updated_at = utcnow()
-            if is_postgres:
-                self._create_edit_version(id, content, applied_edits)
+            try:
+                with self.session.begin_nested():
+                    self._create_edit_version(id, content, applied_edits)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to create version for edit_file; content will persist",
+                    exc_info=True,
+                    extra={"file_id": id, "error": str(exc)},
+                )
             self.session.commit()
             self.session.refresh(file)
-            if not is_postgres:
-                self._create_edit_version(id, content, applied_edits)
 
         # 统一补齐 new_preview：replace 类操作的 detail 里叫 new_preview，
         # append/prepend/insert_* 只有 text_preview，前端与 SSE 适配器要两处兼容
@@ -1119,52 +1117,38 @@ class FileEditor:
         content: str,
         applied_edits: list[dict[str, Any]],
     ) -> None:
-        """Create version history for AI edit using an independent session.
+        """Stage AI edit history in the caller's content transaction."""
+        op_summaries = []
+        for detail in applied_edits:
+            op = detail.get("op", "unknown")
+            if op == "replace":
+                op_summaries.append("替换")
+            elif op == "append":
+                op_summaries.append("追加")
+            elif op == "prepend":
+                op_summaries.append("前置")
+            elif op in ("insert_after", "insert_before"):
+                op_summaries.append("插入")
+            elif op == "delete":
+                op_summaries.append("删除")
 
-        Uses a separate database session to avoid SQLAlchemy state-machine
-        conflicts when ``parallel_execute`` runs multiple edit_file tasks
-        concurrently on the same shared session.
-        """
-        try:
-            # Build change summary from edit operations
-            op_summaries = []
-            for detail in applied_edits:
-                op = detail.get("op", "unknown")
-                if op == "replace":
-                    op_summaries.append("替换")
-                elif op == "append":
-                    op_summaries.append("追加")
-                elif op == "prepend":
-                    op_summaries.append("前置")
-                elif op in ("insert_after", "insert_before"):
-                    op_summaries.append("插入")
-                elif op == "delete":
-                    op_summaries.append("删除")
+        change_summary = (
+            f"AI 编辑: {', '.join(op_summaries[:3])}"
+            if op_summaries
+            else "AI 编辑"
+        )
+        if len(op_summaries) > 3:
+            change_summary += f" 等 {len(op_summaries)} 处修改"
 
-            change_summary = f"AI 编辑: {', '.join(op_summaries[:3])}" if op_summaries else "AI 编辑"
-            if len(op_summaries) > 3:
-                change_summary += f" 等 {len(op_summaries)} 处修改"
-
-            # Use an independent session to avoid concurrent-commit conflicts
-            # when multiple parallel edit_file tasks share the same ToolContext session.
-            from database import create_session
-
-            version_session = create_session()
-            try:
-                version_service = FileVersionService()
-                version_service.create_version(
-                    session=version_session,
-                    file_id=file_id,
-                    new_content=content,
-                    change_type=CHANGE_TYPE_AI_EDIT,
-                    change_source=CHANGE_SOURCE_AI,
-                    change_summary=change_summary,
-                )
-            finally:
-                version_session.close()
-        except Exception as e:
-            # Don't fail the edit if version creation fails
-            logger.warning(f"Failed to create version for edit_file: {e}")
+        FileVersionService().create_version(
+            session=self.session,
+            file_id=file_id,
+            new_content=content,
+            change_type=CHANGE_TYPE_AI_EDIT,
+            change_source=CHANGE_SOURCE_AI,
+            change_summary=change_summary,
+            commit=False,
+        )
 
 
 __all__ = [

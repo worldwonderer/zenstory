@@ -22,6 +22,7 @@ import { handleApiError } from "../lib/errorHandler";
 import { toast } from "../lib/toast";
 import { logger } from "../lib/logger";
 import { SimpleEditor } from "./SimpleEditor";
+import type { SaveOutcome } from "./SimpleEditor";
 import { MaterialPreview } from "./MaterialPreview";
 import { ImportMaterialDialog } from "./ImportMaterialDialog";
 import type { File, FileTreeNode } from "../types";
@@ -292,8 +293,10 @@ const EditorComponent: React.FC<EditorProps> = () => {
    * Updates the file via API, syncs local state, and triggers file tree
    * refresh if the title has changed to keep the navigation in sync.
    */
-  const handleSaveFile = async (versionIntent?: FileUpdateVersionIntent) => {
-    if (!file?.id) return;
+  const handleSaveFile = async (
+    versionIntent?: FileUpdateVersionIntent,
+  ): Promise<SaveOutcome> => {
+    if (!file?.id) return "failed";
 
     const titleChanged = editTitle !== file.title;
 
@@ -317,7 +320,7 @@ const EditorComponent: React.FC<EditorProps> = () => {
         if (fileVersionUpgradePrompt.surface === "modal") {
           setShowFileVersionUpgradeModal(true);
         }
-        return;
+        return "failed";
       }
       if (
         error instanceof ApiError &&
@@ -350,11 +353,11 @@ const EditorComponent: React.FC<EditorProps> = () => {
           if (currentContent !== localContent) {
             enterDiffReview(file.id, currentContent, localContent);
             toast.error(t('editor:saveStaleWriteConflict'));
-            return;
+            return "conflict";
           }
         }
         toast.error(t('editor:saveStaleWrite'));
-        return;
+        return "conflict";
       }
       throw error;
     }
@@ -387,6 +390,7 @@ const EditorComponent: React.FC<EditorProps> = () => {
         setSelectedItem({ ...selectedItem, title: editTitle });
       }
     }
+    return "saved";
   };
 
   /**
@@ -406,7 +410,6 @@ const EditorComponent: React.FC<EditorProps> = () => {
       const updated = await fileApi.update(file.id, {
         content: finalContent,
         change_type: "ai_edit",
-        change_source: "ai",
         change_summary: "AI edit (reviewed)",
         // 与 handleSaveFile 对齐的乐观并发令牌。这同样是一次整篇覆盖写，
         // 不带令牌就会无声盖掉审阅期间落库的其它改动。

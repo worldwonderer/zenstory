@@ -23,6 +23,8 @@ const isNearBottom = (el: HTMLElement, thresholdPx = 32) => {
 
 const SIMPLE_EDITOR_MIN_HEIGHT_PX = 200;
 
+export type SaveOutcome = "saved" | "conflict" | "failed";
+
 const restoreContainerScrollTop = (container: HTMLElement | null, prevScrollTop: number | null) => {
   if (!container || prevScrollTop === null) return;
 
@@ -44,7 +46,7 @@ interface SimpleEditorProps {
   content: string;
   onTitleChange: (title: string) => void;
   onContentChange: (content: string) => void;
-  onSave: (versionIntent?: FileUpdateVersionIntent) => Promise<void>;
+  onSave: (versionIntent?: FileUpdateVersionIntent) => Promise<SaveOutcome>;
   readOnly?: boolean;
   isStreaming?: boolean;
   /**
@@ -544,7 +546,13 @@ export const SimpleEditor = ({
           ? { change_type: "edit", change_source: "user", word_count: currentWords }
           : { skip_version: true, word_count: currentWords };
       }
-      await onSave(versionIntent);
+      const outcome = await onSave(versionIntent);
+      if (outcome !== "saved") {
+        // Conflict/failure paths deliberately keep the old baseline, dirty
+        // indicator and pending writing stats. The parent may have opened a
+        // diff review, but no save has completed yet.
+        return;
+      }
 
       if (contentChanged) {
         lastSavedContentRef.current = content;

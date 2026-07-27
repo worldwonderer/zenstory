@@ -303,15 +303,11 @@ class TestRound3SteeringFollowupKeepsAgent:
 
 
 @pytest.mark.unit
-class TestRound3PendingEmptyFileGuardAlwaysCleared:
-    """#29：纠偏配额用尽后也必须清除 pending-empty-file 标记。
-
-    标记在工具层是硬拦截（create_file / parallel_execute 建档子任务直接报错），
-    留着它会让本次请求后续所有协作轮再也建不出任何文件。
-    """
+class TestRound3PendingEmptyFileGuardPreservesFailureEvidence:
+    """An unfinished artifact is rolled back or remains guarded and reported."""
 
     @pytest.mark.asyncio
-    async def test_guard_cleared_after_correction_quota_exhausted(self):
+    async def test_unverifiable_guard_reported_after_correction_quota_exhausted(self):
         from agent.graph.writing_graph import MAX_FILE_CORRECTION_ATTEMPTS
 
         calls: list[str] = []
@@ -331,18 +327,24 @@ class TestRound3PendingEmptyFileGuardAlwaysCleared:
                 # 配额用尽的这一轮请求送审，后续轮次才能观察到残留的标记
                 yield _handoff("quality_reviewer")
 
-        await _run_graph(fake_agent)
+        events = await _run_graph(fake_agent)
 
         assert calls == ["writer"] * (1 + MAX_FILE_CORRECTION_ATTEMPTS) + [
             "quality_reviewer"
         ]
-        assert guard_seen_by_reviewer == [False], (
-            "配额用尽后标记必须已在 agent 边界被清除，否则后续 create_file 全被硬拒"
-        )
+        assert guard_seen_by_reviewer == [True]
+        exhausted = [
+            event
+            for event in events
+            if event.type == StreamEventType.ITERATION_EXHAUSTED
+            and event.data.get("layer") == "empty_file_correction"
+        ]
+        assert exhausted
+        assert exhausted[0].data["unfinished_files"]
 
     @pytest.mark.asyncio
-    async def test_guard_cleared_even_on_final_iteration(self):
-        """最后一轮不再安排补写，同样必须把标记清掉。"""
+    async def test_final_iteration_reports_unverifiable_unfinished_file(self):
+        """最后一轮不能把无法核验的失败证据静默清掉。"""
         from agent.graph.writing_graph import run_writing_workflow_streaming
 
         calls: list[str] = []
@@ -361,13 +363,18 @@ class TestRound3PendingEmptyFileGuardAlwaysCleared:
                 patch("agent.graph.writing_graph.get_next_node", return_value="writer"),
                 patch("agent.graph.writing_graph.run_streaming_agent", new=fake_agent),
             ):
-                _ = [
+                events = [
                     event
                     async for event in run_writing_workflow_streaming(
                         state=state, thread_id="t", max_iterations=1,
                     )
                 ]
             assert calls == ["writer"]
-            assert ToolContext.has_pending_empty_file() is False
+            assert ToolContext.has_pending_empty_file() is True
+            assert any(
+                event.type == StreamEventType.ITERATION_EXHAUSTED
+                and event.data.get("layer") == "empty_file_correction"
+                for event in events
+            )
         finally:
             ToolContext.clear_context()

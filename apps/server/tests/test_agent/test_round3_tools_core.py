@@ -335,12 +335,8 @@ def test_pending_empty_file_marker_is_a_set_not_a_slot():
 
 # --------------------------------------------------------------------------- rank 29
 @pytest.mark.asyncio
-async def test_pending_guard_self_heals_instead_of_blocking_forever(db_session):
-    """rank 29：守卫连续拒绝到上限后必须自愈，不能让本请求后续所有建档永久失败。
-
-    writing_graph 的纠偏配额用尽后不再清除标记，而"不带 content 的 create_file +
-    <file> 流式写入"是本项目的标准建档协议 —— 一个永不消失的守卫会把它整个废掉。
-    """
+async def test_pending_guard_does_not_forget_unfinished_empty_file(db_session):
+    """Repeated invalid creates must not erase evidence of an unfinished file."""
     user, project = _make_user_project(db_session, "selfheal")
 
     ToolContext.set_context(
@@ -357,13 +353,47 @@ async def test_pending_guard_self_heals_instead_of_blocking_forever(db_session):
             )
             statuses.append(_payload(result)["status"])
 
-        # 前两次拒绝仍然生效（守卫本身没有被削弱），第三次拒绝后自愈放行
-        assert statuses == ["success", "error", "error", "success"]
+        assert statuses == ["success", "error", "error", "error"]
 
         pending = ToolContext.get_pending_empty_files()
-        assert [item["title"] for item in pending] == ["第4章"]
+        assert [item["title"] for item in pending] == ["第1章"]
     finally:
         ToolContext.clear_pending_empty_file()
+        ToolContext.clear_context()
+
+
+def test_correction_exhaustion_rolls_back_verified_empty_artifact(db_session):
+    """A verified empty artifact is soft-deleted before its guard is cleared."""
+    from agent.graph.writing_graph import _rollback_unfinished_empty_files
+
+    user, project = _make_user_project(db_session, "empty-rollback")
+    file = File(
+        project_id=project.id,
+        title="未完成章节",
+        file_type="draft",
+        content="",
+    )
+    db_session.add(file)
+    db_session.commit()
+    db_session.refresh(file)
+
+    ToolContext.set_context(
+        session=db_session,
+        user_id=user.id,
+        project_id=project.id,
+        session_id="sess-empty-rollback",
+    )
+    try:
+        rolled_back = _rollback_unfinished_empty_files(
+            [{"file_id": file.id, "title": file.title}]
+        )
+        assert rolled_back == {file.id}
+        db_session.expire_all()
+        persisted = db_session.get(File, file.id)
+        assert persisted is not None
+        assert persisted.is_deleted is True
+        assert persisted.deleted_at is not None
+    finally:
         ToolContext.clear_context()
 
 

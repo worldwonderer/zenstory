@@ -38,6 +38,10 @@ _STEERING_TTL_S: Final[int] = 3600  # session keys expire after 1h of inactivity
 _RUN_HEARTBEAT_TTL_S: Final[int] = _STEERING_TTL_S
 
 
+class SteeringSessionBusyError(RuntimeError):
+    """A chat session already has an active generation run."""
+
+
 def sanitize_steering_content(content: str, max_length: int = MAX_STEERING_MESSAGE_LENGTH) -> str:
     """
     Sanitize and validate steering message content.
@@ -219,6 +223,7 @@ class SteeringQueueManager:
         owner_user_id: str | None = None,
         create_if_missing: bool = True,
         run_id: str | None = None,
+        exclusive_run: bool = False,
     ) -> SteeringQueue:
         """Get or create steering queue for a session."""
         async with self._lock:
@@ -274,6 +279,13 @@ class SteeringQueueManager:
                 # 注册前先回收僵尸持有者，避免崩溃残留把队列永久钉住
                 # （与 _redis_create_sync 的 ZREMRANGEBYSCORE 同语义）。
                 self._reap_stale_runs(session_id, entry)
+                if exclusive_run and any(
+                    active_run_id != run_id
+                    for active_run_id in entry.active_runs
+                ):
+                    raise SteeringSessionBusyError(
+                        f"Steering session {session_id} already has an active run"
+                    )
                 entry.active_runs[run_id] = time.time()
 
             return entry.queue
@@ -327,6 +339,15 @@ class SteeringQueueManager:
                 return False
             self._reap_stale_runs(session_id, entry)
             return any(rid != run_id for rid in entry.active_runs)
+
+    async def has_active_runs(self, session_id: str) -> bool:
+        """Whether a session has any live generation holder."""
+        async with self._lock:
+            entry = self._queues.get(session_id)
+            if entry is None:
+                return False
+            self._reap_stale_runs(session_id, entry)
+            return bool(entry.active_runs)
 
     async def requeue_if_other_active(
         self,
@@ -613,6 +634,57 @@ def _redis_create_sync(
     pipe.execute()
 
 
+_CLAIM_EXCLUSIVE_RUN_SCRIPT: Final[str] = """
+local owner = redis.call('GET', KEYS[2])
+if owner and owner ~= '' and ARGV[2] ~= '' and owner ~= ARGV[2] then
+    return -1
+end
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[3])
+if redis.call('ZCARD', KEYS[1]) > 0 and not redis.call('ZSCORE', KEYS[1], ARGV[1]) then
+    return 0
+end
+redis.call('ZADD', KEYS[1], ARGV[4], ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[5])
+if ARGV[2] ~= '' then
+    redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[5])
+else
+    redis.call('SET', KEYS[2], '', 'EX', ARGV[5], 'NX')
+    redis.call('EXPIRE', KEYS[2], ARGV[5])
+end
+return 1
+"""
+
+
+def _redis_claim_exclusive_run_sync(
+    session_id: str,
+    owner_user_id: str | None,
+    run_id: str,
+) -> None:
+    """Atomically claim the sole active generation slot for a chat session."""
+    from services.infra.redis_client import get_redis_client
+
+    now = time.time()
+    result = get_redis_client().eval(
+        _CLAIM_EXCLUSIVE_RUN_SCRIPT,
+        2,
+        _runs_key(session_id),
+        _owner_key(session_id),
+        run_id,
+        owner_user_id or "",
+        now - _RUN_HEARTBEAT_TTL_S,
+        now,
+        _STEERING_TTL_S,
+    )
+    if int(result) == -1:
+        raise PermissionError(
+            f"Steering session {session_id} does not belong to user {owner_user_id}"
+        )
+    if int(result) == 0:
+        raise SteeringSessionBusyError(
+            f"Steering session {session_id} already has an active run"
+        )
+
+
 def _redis_get_owner_sync(session_id: str) -> str | None:
     from services.infra.redis_client import get_redis_client
 
@@ -824,17 +896,33 @@ async def create_steering_queue_async(
     session_id: str,
     owner_user_id: str | None,
     run_id: str | None = None,
+    *,
+    exclusive_run: bool = False,
 ) -> Any:
     """Create/get queue and bind ownership when available.
 
-    run_id 标识一次 stream run 对队列的持有：同一 session 的并发 run 共享
-    队列，cleanup 传入相同 run_id 时只释放自己的持有。
+    ``exclusive_run`` is used by chat generation: one chat session may have
+    only one active writer so history order and message_count remain coherent.
+    Legacy queue callers keep the multi-holder behavior by default.
     """
     if await _redis_available():
-        await asyncio.to_thread(_redis_create_sync, session_id, owner_user_id, run_id)
+        if exclusive_run and run_id:
+            await asyncio.to_thread(
+                _redis_claim_exclusive_run_sync,
+                session_id,
+                owner_user_id,
+                run_id,
+            )
+        else:
+            await asyncio.to_thread(
+                _redis_create_sync, session_id, owner_user_id, run_id
+            )
         return RedisSteeringQueue(session_id, run_id=run_id)
     return await _queue_manager.get_queue(
-        session_id, owner_user_id=owner_user_id, run_id=run_id
+        session_id,
+        owner_user_id=owner_user_id,
+        run_id=run_id,
+        exclusive_run=exclusive_run,
     )
 
 
@@ -871,6 +959,17 @@ async def has_other_active_runs_async(session_id: str, run_id: str) -> bool:
             _redis_has_other_active_runs_sync, session_id, run_id
         )
     return await _queue_manager.has_other_active_runs(session_id, run_id)
+
+
+async def has_active_runs_async(session_id: str) -> bool:
+    """Whether a chat session currently has any live stream run."""
+    if await _redis_available():
+        return await asyncio.to_thread(
+            _redis_has_other_active_runs_sync,
+            session_id,
+            "__active-run-preflight__",
+        )
+    return await _queue_manager.has_active_runs(session_id)
 
 
 async def requeue_steering_if_other_active_async(

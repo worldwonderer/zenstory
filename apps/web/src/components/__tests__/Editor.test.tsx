@@ -488,7 +488,6 @@ describe('Editor', () => {
       expect(api.fileApi.update).toHaveBeenCalledWith('file-1', {
         content: 'Reviewed AI content',
         change_type: 'ai_edit',
-        change_source: 'ai',
         change_summary: 'AI edit (reviewed)',
         base_updated_at: undefined,
       })

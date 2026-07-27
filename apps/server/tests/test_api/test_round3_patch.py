@@ -271,47 +271,62 @@ async def test_concurrent_authenticated_writes_cannot_overrun_single_version_slo
 
 
 @pytest.mark.integration
-async def test_put_reports_quota_race_as_saved_content_without_snapshot(
+async def test_put_persists_content_and_version_in_one_transaction(
     client: AsyncClient,
     db_session: Session,
     monkeypatch,
 ):
-    """首轮预检后余额被并发请求占用时，正文成功、快照跳过且响应不谎报失败。"""
+    """The snapshot must be staged before the content transaction commits."""
     user, file, headers = await _setup_user(
         client,
         db_session,
-        "r3p_put_quota_race_contract",
+        "r3p_put_atomic_snapshot",
     )
-    _bind_plan(db_session, user, max_versions=1)
+    _bind_plan(db_session, user, max_versions=2)
 
-    checks = 0
+    from services.features.file_version_service import FileVersionService
 
-    def staged_quota_check(_service, _session, _file_id, _user_id):
-        nonlocal checks
-        checks += 1
-        return (True, 0, 1) if checks == 1 else (False, 1, 1)
+    events: list[tuple[str, bool | None]] = []
+    original_create_version = FileVersionService.create_version
+    original_commit = Session.commit
 
+    def tracked_create_version(self, *args, **kwargs):
+        events.append(("version", kwargs.get("commit")))
+        return original_create_version(self, *args, **kwargs)
+
+    def tracked_commit(self):
+        events.append(("commit", None))
+        return original_commit(self)
+
+    monkeypatch.setattr(FileVersionService, "create_version", tracked_create_version)
     monkeypatch.setattr(
-        "services.features.file_version_service.FileVersionService.check_user_version_quota",
-        staged_quota_check,
+        Session,
+        "commit",
+        tracked_commit,
     )
 
+    new_content = "正文和版本快照必须在同一个数据库事务中提交。"
     response = await client.put(
         f"/api/v1/files/{file.id}",
-        json={"content": "正文已经保存，但最后一个版本位被并发请求占用。"},
+        json={"content": new_content},
         headers=headers,
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["version_quota_exceeded"] is True
-    assert checks == 2
+    assert response.json()["version_quota_exceeded"] is False
+    assert events[0] == ("version", False)
+    assert events[1] == ("commit", None)
+
     db_session.expire_all()
-    assert db_session.get(File, file.id).content.startswith("正文已经保存")
+    assert db_session.get(File, file.id).content == new_content
+    version = db_session.exec(
+        select(FileVersion).where(FileVersion.file_id == file.id)
+    ).one()
     assert (
-        db_session.exec(
-            select(FileVersion).where(FileVersion.file_id == file.id)
-        ).all()
-        == []
+        FileVersionService().get_content_at_version(
+            db_session, file.id, version.version_number
+        )
+        == new_content
     )
 
 

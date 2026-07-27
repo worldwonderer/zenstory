@@ -172,6 +172,35 @@ async def test_suggest_does_not_charge_when_llm_unavailable(
 
 
 @pytest.mark.integration
+async def test_suggest_fallback_remains_available_when_quota_is_exhausted(
+    client: AsyncClient, db_session: Session
+):
+    """A local fixed fallback has no provider cost and must not require quota."""
+    user, project, token = await _make_user_and_project(
+        client, db_session, "round3_suggest_no_llm_quota_out"
+    )
+    _set_quota_used(db_session, user.id, FREE_AI_CONVERSATION_LIMIT)
+
+    with patch("agent.suggest_service._service", None), patch(
+        "agent.suggest_service.get_llm_client",
+        side_effect=ValueError("DEEPSEEK_API_KEY is required"),
+    ):
+        response = await client.post(
+            "/api/v1/agent/suggest",
+            json={"project_id": str(project.id), "count": 3},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["suggestions"] == [
+        "写下一章的情节发展",
+        "完善角色的人物动机",
+        "设计一个情节转折点",
+    ]
+    assert _read_quota_used(db_session, user.id) == FREE_AI_CONVERSATION_LIMIT
+
+
+@pytest.mark.integration
 async def test_suggest_refunds_quota_when_generation_raises(
     client: AsyncClient, db_session: Session
 ):
@@ -264,6 +293,44 @@ async def test_suggest_rate_limited_per_user(client: AsyncClient, db_session: Se
             headers={"Authorization": f"Bearer {token_b}"},
         )
         assert other_user.status_code == 200
+
+
+@pytest.mark.integration
+async def test_stream_rejects_concurrent_run_for_same_chat_session(
+    client: AsyncClient, db_session: Session
+):
+    """One chat session has one ordered writer; another run receives 409."""
+    from agent.core.steering import (
+        cleanup_steering_queue_async,
+        create_steering_queue_async,
+    )
+
+    user, project, token = await _make_user_and_project(
+        client, db_session, "round3_stream_session_busy"
+    )
+    session_id = "round3-stream-session-busy"
+    await create_steering_queue_async(
+        session_id,
+        user.id,
+        run_id="already-running",
+        exclusive_run=True,
+    )
+    try:
+        response = await client.post(
+            "/api/v1/agent/stream",
+            json={
+                "project_id": str(project.id),
+                "message": "第二个并发请求",
+                "session_id": session_id,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        await cleanup_steering_queue_async(session_id)
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "ERR_RESOURCE_CONFLICT"
+    assert _read_quota_used(db_session, user.id) == 0
 
 
 @pytest.mark.unit

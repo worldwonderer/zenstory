@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 from ipaddress import ip_address
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 
 from services.infra.redis_client import get_redis_client
 from utils.logger import get_logger, log_with_context
@@ -163,15 +163,9 @@ def check_rate_limit(
     """
     Check rate limit for a key.
 
-    For API-key-authenticated requests (X-Agent-API-Key header present),
-    rate limits per API key prefix instead of client IP.
-
     Returns: (allowed, remaining_requests)
     """
-    agent_key = request.headers.get("X-Agent-API-Key")
-    if agent_key:
-        rate_key = f"{key}:ak_{agent_key[:8]}"
-    elif include_client_ip:
+    if include_client_ip:
         client_ip = get_client_ip(request)
         rate_key = f"{key}:{client_ip}"
     else:
@@ -203,7 +197,11 @@ def check_rate_limit(
 
 
 def require_rate_limit(key: str, max_requests: int, window_seconds: int):
-    """Decorator-like function to enforce rate limiting."""
+    """Enforce a generic IP-scoped rate limit.
+
+    Never derive a bucket from authentication headers here: until a credential
+    has been validated, an attacker can rotate arbitrary header values.
+    """
     def check(request: Request):
         allowed, remaining = check_rate_limit(request, key, max_requests, window_seconds)
         if not allowed:
@@ -212,6 +210,42 @@ def require_rate_limit(key: str, max_requests: int, window_seconds: int):
                 detail="Rate limit exceeded. Please try again later."
             )
         return remaining
+    return check
+
+
+def require_agent_rate_limit(key: str, max_requests: int, window_seconds: int):
+    """Enforce pre-auth IP and post-auth Agent-key limits."""
+    # Import lazily to keep the generic middleware usable without loading the
+    # Agent API authentication stack.
+    from services.agent_auth_service import get_agent_user
+
+    pre_auth_limit = require_rate_limit(
+        f"{key}:pre_auth",
+        max_requests,
+        window_seconds,
+    )
+
+    def check(
+        request: Request,
+        _pre_auth_remaining: int = Depends(pre_auth_limit),
+        context=Depends(get_agent_user),
+    ):
+        _session, _user_id, api_key = context
+        allowed, remaining = check_rate_limit(
+            request,
+            f"{key}:agent_key:{api_key.id}",
+            max_requests,
+            window_seconds,
+            include_client_ip=False,
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded. Please try again later.",
+                headers={"Retry-After": str(window_seconds)},
+            )
+        return remaining
+
     return check
 
 

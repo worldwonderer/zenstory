@@ -201,6 +201,25 @@ class _FakeRedis:
         keys = keys_and_args[:numkeys]
         args = keys_and_args[numkeys:]
         runs_key = keys[0]
+        if "ZADD" in script and "local owner" in script:
+            owner = self._impl_get(keys[1])
+            requested_owner = args[1]
+            if owner and owner != requested_owner:
+                return -1
+            self._impl_zremrangebyscore(runs_key, "-inf", args[2])
+            if (
+                self._impl_zcard(runs_key) > 0
+                and self._impl_zscore(runs_key, args[0]) is None
+            ):
+                return 0
+            self._impl_zadd(runs_key, {args[0]: args[3]})
+            self._impl_expire(runs_key, args[4])
+            if requested_owner:
+                self._impl_set(keys[1], requested_owner, ex=args[4])
+            else:
+                self._impl_set(keys[1], "", ex=args[4], nx=True)
+                self._impl_expire(keys[1], args[4])
+            return 1
         if "RPUSH" in script:
             # 原子 hand-back：回收僵尸 -> 确认还有其它 run + owner -> 批量入队。
             self._impl_zremrangebyscore(runs_key, "-inf", args[1])
@@ -288,6 +307,27 @@ _ONE_DAY = 24 * 3600
 # ---------------------------------------------------------------------------
 # Redis 后端
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_redis_exclusive_generation_claim_rejects_second_run(redis_steering):
+    st, _fake = redis_steering
+    session_id = "redis-exclusive-run"
+
+    await st.create_steering_queue_async(
+        session_id,
+        "user-1",
+        run_id="run-a",
+        exclusive_run=True,
+    )
+    with pytest.raises(st.SteeringSessionBusyError):
+        await st.create_steering_queue_async(
+            session_id,
+            "user-1",
+            run_id="run-b",
+            exclusive_run=True,
+        )
 
 
 @pytest.mark.unit

@@ -62,7 +62,11 @@ class FileVersion(SQLModel, table=True):
         description="Type of change: create/edit/ai_edit/restore",
     )
     change_source: str = Field(
-        default="user", description="Who made the change: user/ai/system"
+        default="user",
+        description=(
+            "Trusted actor that persisted the version: user/ai/system. "
+            "Use change_type=ai_edit for user-reviewed AI-originated content."
+        ),
     )
     change_summary: str | None = Field(
         default=None, description="Brief description of changes (can be AI-generated)"
